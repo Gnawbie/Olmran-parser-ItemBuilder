@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Olmran Item Builder / Gaming Log Parser</title>
+<style>
+  :root {
+    --bg: #14171c;
+    --panel: #1c2028;
+    --border: #2c313c;
+    --text: #e6e8eb;
+    --muted: #9aa2ad;
+    --accent: #4f8cff;
+    --accent-hover: #6ea0ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 56px 24px 80px;
+  }
+  h1 {
+    font-size: 2rem;
+    margin: 0 0 4px;
+  }
+  .tagline {
+    color: var(--muted);
+    margin: 0 0 32px;
+    font-size: 1.05rem;
+  }
+  .download-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin-bottom: 36px;
+  }
+  .version {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-bottom: 14px;
+  }
+  .btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 600;
+    padding: 14px 28px;
+    border-radius: 8px;
+    font-size: 1.05rem;
+    transition: background 0.15s ease;
+  }
+  .btn:hover { background: var(--accent-hover); }
+  .btn-secondary {
+    display: inline-block;
+    margin-left: 14px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.95rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .btn-secondary:hover { color: var(--text); }
+  h2 {
+    font-size: 1.2rem;
+    margin: 40px 0 12px;
+  }
+  ul { margin: 0; padding-left: 20px; }
+  li { margin-bottom: 8px; }
+  code {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.9em;
+  }
+  .steps {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 28px;
+  }
+  .steps ol { padding-left: 20px; }
+  .steps li { margin-bottom: 10px; }
+  footer {
+    margin-top: 48px;
+    color: var(--muted);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+  }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Olmran Item Builder</h1>
+    <p class="tagline">Parse Olmran/MUD-style game logs, build a master loot database, and search it for the best equipment for your character.</p>
+
+    <div class="download-card">
+      <div class="version">Latest release: v2.6 &middot; Windows, portable, no install required beyond Python</div>
+      <a class="btn" href="https://github.com/Gnawbie/Olmran-parser-ItemBuilder/releases/download/v2.6/GamingLogParser_v2.6.zip">Download GamingLogParser_v2.6.zip</a>
+      <a class="btn-secondary" href="https://github.com/Gnawbie/Olmran-parser-ItemBuilder/releases">All releases</a>
+    </div>
+
+    <h2>What it does</h2>
+    <ul>
+      <li>Parses CHAT and ACTION logs into Chat, Combat, and Loot data</li>
+      <li>Builds and maintains a Master Loot Database in Excel</li>
+      <li>Item Builder: search that database for the best gear under armor, weapon, level, and realm constraints, with alternate build options</li>
+      <li>Search Logs: find every time an item actually dropped across a whole batch of logs, with a snapshot of what led up to it</li>
+    </ul>
+
+    <h2>Getting started</h2>
+    <div class="steps">
+      <ol>
+        <li>Download the zip above and extract it anywhere on your computer</li>
+        <li>Double-click <code>GamingLogParser_Portable_DEBUG_AutoInstall.bat</code> the first time (installs required packages, then launches)</li>
+        <li>After that, use <code>GamingLogParser_Portable.bat</code> to launch normally</li>
+      </ol>
+    </div>
+    <p>Full setup details (including what gets installed) are in <a href="https://github.com/Gnawbie/Olmran-parser-ItemBuilder/blob/main/INSTALL_INSTRUCTIONS.txt">INSTALL_INSTRUCTIONS.txt</a>, and everything about using the program is in the <a href="https://github.com/Gnawbie/Olmran-parser-ItemBuilder/blob/main/README.md">README</a>.</p>
+
+    <footer>
+      Source on <a href="https://github.com/Gnawbie/Olmran-parser-ItemBuilder">GitHub</a>
+    </footer>
+  </div>
+</body>
+</html>
