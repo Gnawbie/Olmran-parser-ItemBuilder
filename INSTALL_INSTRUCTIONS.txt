@@ -1,0 +1,109 @@
+GAMING LOG PARSER - INSTALLATION INSTRUCTIONS
+================================================
+
+WHAT'S IN THIS PACKAGE
+-----------------------
+  gaming_log_parser.py                       - the program itself
+  GamingLogParser_Portable_DEBUG_AutoInstall.bat  - first-time setup + launcher (shows a console window)
+  GamingLogParser_Portable.bat                - everyday launcher (no console window)
+  Olmran_Community_Eq_and_Stats_List.xlsx     - bundled community equipment database
+  README.md                                   - how to use the program once it's running
+  INSTALL_INSTRUCTIONS.txt                    - this file
+
+Keep all of these files together in the same folder. The program looks for the
+Excel database and reads/writes its own files relative to wherever you put it.
+
+
+FIRST-TIME INSTALL
+-------------------
+1. Extract this ZIP to any folder on your computer (Desktop, Documents, wherever
+   you like - it does not need Administrator rights or a special location).
+2. Double-click GamingLogParser_Portable_DEBUG_AutoInstall.bat
+3. A console window opens and:
+     - Checks whether Python is installed and on your PATH
+     - Installs the Python packages the program needs (see below)
+     - Launches the program
+4. If everything succeeds, the Gaming Log Parser window opens. You're done -
+   from now on, use GamingLogParser_Portable.bat to launch it (see below).
+
+IF THE AUTO-INSTALLER SAYS PYTHON IS MISSING:
+  The auto-installer checks for Python but does NOT install it for you. You'll
+  need to install it yourself first:
+    1. Go to https://www.python.org/downloads/
+    2. Download and run the Windows installer
+    3. IMPORTANT: check the box "Add Python to PATH" during installation
+    4. Re-run GamingLogParser_Portable_DEBUG_AutoInstall.bat
+
+
+WHAT ACTUALLY GETS INSTALLED
+------------------------------
+The auto-installer only installs two Python packages via pip - nothing else
+touches your system, and nothing is installed outside your normal Python
+package directory:
+
+  openpyxl   - REQUIRED. Reads and writes the .xlsx Excel files the program
+               uses for logs, master databases, and build results.
+
+  pillow     - Installed as a precaution / legacy dependency. The current
+               version of the program does not actually use it, but it's
+               harmless to have installed and the installer keeps installing
+               it in case a future version needs it.
+
+Everything else the program uses (tkinter for the window/interface, plus
+Python's built-in re, os, json, pathlib, and datetime modules) ships with a
+normal Python installation already - nothing extra to install for those.
+
+The install command run behind the scenes is:
+  pip install openpyxl pillow --break-system-packages
+(falling back to a plain "pip install openpyxl pillow" if that flag isn't
+supported by your Python install).
+
+
+EVERYDAY USE
+-------------
+After the first-time install above, just double-click
+GamingLogParser_Portable.bat to launch the program. Unlike the auto-installer,
+this one opens no console window - just the program itself. It will tell you
+to re-run the auto-installer if it can't find Python or the required packages.
+
+
+MANUAL INSTALLATION (if you'd rather not use the .bat files)
+---------------------------------------------------------------
+1. Install Python 3.8 or higher from https://www.python.org/downloads/
+   (check "Add Python to PATH" during setup)
+2. Open a Command Prompt in the folder where you extracted this ZIP
+3. Run:      pip install openpyxl pillow
+4. Run:      python gaming_log_parser.py
+
+
+WHERE THE PROGRAM STORES YOUR SETTINGS
+------------------------------------------
+The program saves your last-used folders and Build tab defaults (armor,
+weapon, and dual-wield preferences) to a small config file at:
+
+  %USERPROFILE%\.gaming_log_parser_config.json
+
+(that's your Windows user folder, e.g. C:\Users\YourName\.gaming_log_parser_config.json)
+
+This file is created automatically the first time you close the program and
+updated whenever you use "Set as Default" in the Build tab. Nothing else is
+written outside the folder you extracted the program into and this one file.
+
+To fully uninstall: delete the folder you extracted this ZIP into, and
+optionally delete the config file above if you don't plan to reinstall later.
+
+
+TROUBLESHOOTING
+-----------------
+Program won't start:
+  - Try right-clicking the .bat file and "Run as Administrator"
+  - Confirm Python 3.8+ is installed: open Command Prompt and run "python --version"
+  - Manually install packages: pip install openpyxl pillow
+
+"Missing dependencies" from GamingLogParser_Portable.bat:
+  - Run GamingLogParser_Portable_DEBUG_AutoInstall.bat instead - it will
+    reinstall the required packages and show you exactly what went wrong.
+
+Community equipment list not found:
+  - Make sure Olmran_Community_Eq_and_Stats_List.xlsx is in the same folder
+    as gaming_log_parser.py. If you moved the .py file, move the .xlsx with it.

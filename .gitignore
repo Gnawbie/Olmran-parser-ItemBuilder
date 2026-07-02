@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+
+# Build artifacts / release zips - distributed via GitHub Releases instead
+*.zip
+
+# Old test/scratch data, not part of the release
+prased/
+
+# Local per-user settings (created next to the script when run from source)
+.gaming_log_parser_config.json
