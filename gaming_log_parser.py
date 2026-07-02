@@ -6,7 +6,8 @@ Parses Chat, Combat, and Loot from action and chat .log files
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import re, os, json
+from tkinter import font as tkfont
+import re, os, json, difflib
 from pathlib import Path
 from datetime import datetime
 import openpyxl
@@ -878,6 +879,37 @@ def _spell_tier_rank(variant):
     """Rank of the tier suffix on a wanted-spell string (0 if untiered/any)."""
     m = re.match(r'^.*\.(i|ii|iii)$', variant.strip().lower())
     return _TIER_RANK[m.group(1)] if m else 0
+
+
+class ItemMatchDialog(tk.Toplevel):
+    """Modal dialog listing close-spelling matches for a searched item name,
+    letting the user confirm which one they actually meant."""
+    def __init__(self, parent, query: str, matches: list):
+        super().__init__(parent)
+        self.result = None
+        self.title("Did you mean...?")
+        self.resizable(False, False)
+        self.grab_set()
+
+        ttk.Label(self, text=f"No exact match for '{query}'. Closest matches:",
+                 font=('Arial', 9)).pack(anchor='w', padx=10, pady=(10,4))
+
+        self.listbox = tk.Listbox(self, height=min(6, len(matches)), width=50)
+        for m in matches:
+            self.listbox.insert(tk.END, m)
+        self.listbox.selection_set(0)
+        self.listbox.pack(padx=10, pady=4)
+
+        bf = ttk.Frame(self)
+        bf.pack(pady=10)
+        ttk.Button(bf, text="Use Selected", command=self._confirm).pack(side='left', padx=8)
+        ttk.Button(bf, text="Cancel", command=self.destroy).pack(side='left', padx=8)
+
+    def _confirm(self):
+        sel = self.listbox.curselection()
+        if sel:
+            self.result = self.listbox.get(sel[0])
+        self.destroy()
 
 
 class FieldEditorDialog(tk.Toplevel):
@@ -2103,7 +2135,32 @@ class App(tk.Tk):
     
     # ── BUILD TAB ─────────────────────────────────────────────
     def _build_build_tab(self):
-        t = self.tab_build
+        # The Build tab has more controls than fit in one screen (armor,
+        # weapon, realm constraints, results...), so it's wrapped in a
+        # scrollable canvas rather than clipping anything below Damage Type.
+        outer = self.tab_build
+        build_canvas = tk.Canvas(outer, highlightthickness=0)
+        build_vsb = ttk.Scrollbar(outer, orient='vertical', command=build_canvas.yview)
+        build_canvas.configure(yscrollcommand=build_vsb.set)
+        build_canvas.pack(side='left', fill='both', expand=True)
+        build_vsb.pack(side='right', fill='y')
+
+        t = ttk.Frame(build_canvas)
+        build_canvas_window = build_canvas.create_window((0, 0), window=t, anchor='nw')
+
+        def _on_build_frame_configure(event):
+            build_canvas.configure(scrollregion=build_canvas.bbox('all'))
+        t.bind('<Configure>', _on_build_frame_configure)
+
+        def _on_build_canvas_configure(event):
+            build_canvas.itemconfig(build_canvas_window, width=event.width)
+        build_canvas.bind('<Configure>', _on_build_canvas_configure)
+
+        def _on_build_mousewheel(event):
+            build_canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+        build_canvas.bind('<Enter>', lambda e: build_canvas.bind_all('<MouseWheel>', _on_build_mousewheel))
+        build_canvas.bind('<Leave>', lambda e: build_canvas.unbind_all('<MouseWheel>'))
+
         ttk.Label(t, text="Build Creator",
                   font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0,10))
         
@@ -2187,17 +2244,23 @@ class App(tk.Tk):
         ttk.Label(manual_frame, text="(temporary, until Class Specific/Other1/Other2 lists are compiled)",
                  font=('Arial', 8, 'italic'), foreground='#a33').pack(side='left', padx=4)
 
-        # Spell list - wanted spells flow left-to-right and wrap to new lines as
-        # chips (rather than one per vertical row), filling the available width.
-        spell_list_frame = ttk.Frame(constraints_frame)
-        spell_list_frame.pack(fill='x', pady=4)
-        ttk.Label(spell_list_frame, text="Wanted Spells:", width=12).pack(side='left', anchor='n')
+        # Wanted Spells (narrower, left) and Required Items (right, next to it)
+        # share a row instead of each spanning the full width stacked vertically.
+        wanted_and_required_frame = ttk.Frame(constraints_frame)
+        wanted_and_required_frame.pack(fill='x', pady=4)
 
-        spell_scroll_frame = ttk.Frame(spell_list_frame)
-        spell_scroll_frame.pack(side='left', fill='both', expand=True)
+        # Wanted Spells - chips flow left-to-right and wrap to new lines. This
+        # block expands to take the extra row width, making it the wider of
+        # the two (Required Items stays a fixed, narrower width beside it).
+        wanted_block = ttk.Frame(wanted_and_required_frame)
+        wanted_block.pack(side='left', anchor='n', fill='both', expand=True)
+        ttk.Label(wanted_block, text="Wanted Spells:").pack(anchor='w')
+
+        spell_scroll_frame = ttk.Frame(wanted_block)
+        spell_scroll_frame.pack(fill='both', expand=True)
 
         self.wanted_spells_data = []
-        self.spell_chips_text = tk.Text(spell_scroll_frame, height=4, wrap='word',
+        self.spell_chips_text = tk.Text(spell_scroll_frame, height=4, width=45, wrap='word',
                                         cursor='arrow', state='disabled')
         spell_scroll = ttk.Scrollbar(spell_scroll_frame, orient='vertical',
                                     command=self.spell_chips_text.yview)
@@ -2205,9 +2268,45 @@ class App(tk.Tk):
         self.spell_chips_text.pack(side='left', fill='both', expand=True)
         spell_scroll.pack(side='right', fill='y')
 
-        ttk.Button(spell_list_frame, text="Clear All",
-                  command=self._clear_spell_list).pack(side='left', padx=4, anchor='n')
-        
+        ttk.Button(wanted_block, text="Clear All",
+                  command=self._clear_spell_list).pack(anchor='w', pady=(2,0))
+
+        # Required Items - force specific gear into the build, calculating the
+        # rest of the build around it. Tolerates spelling errors via fuzzy match.
+        # Label + chip box come first (matching Wanted Spells' layout so both
+        # chip areas line up in the same row); the entry to add a new one sits
+        # below the chips instead of above them.
+        required_block = ttk.Frame(wanted_and_required_frame)
+        required_block.pack(side='left', anchor='n', padx=(20,0))
+
+        ttk.Label(required_block, text="Required Items:").pack(anchor='w')
+        required_scroll_frame = ttk.Frame(required_block)
+        required_scroll_frame.pack(fill='both', expand=True)
+
+        self.required_items = []
+        self.required_items_text = tk.Text(required_scroll_frame, height=4, width=25, wrap='word',
+                                           cursor='arrow', state='disabled')
+        required_scroll = ttk.Scrollbar(required_scroll_frame, orient='vertical',
+                                       command=self.required_items_text.yview)
+        self.required_items_text.configure(yscrollcommand=required_scroll.set)
+        self.required_items_text.pack(side='left', fill='both', expand=True)
+        required_scroll.pack(side='right', fill='y')
+
+        required_input_frame = ttk.Frame(required_block)
+        required_input_frame.pack(fill='x', pady=(4,0))
+        ttk.Label(required_input_frame, text="Require Item:").pack(side='left')
+        self.required_item_var = tk.StringVar(value='')
+        required_entry = ttk.Entry(required_input_frame, textvariable=self.required_item_var, width=26)
+        required_entry.pack(side='left', padx=4)
+        required_entry.bind('<Return>', lambda e: self._add_required_item())
+        ttk.Button(required_input_frame, text="Add to Build",
+                  command=self._add_required_item).pack(side='left', padx=4)
+        ttk.Button(required_input_frame, text="Clear All",
+                  command=self._clear_required_items).pack(side='left', padx=4)
+
+        ttk.Label(required_block, text="(e.g. a specific weapon/armor piece - typos are OK, it'll offer close matches)",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w', pady=(2,0))
+
         # Level filters (min/max/specific with mutual exclusion)
         level_frame = ttk.Frame(constraints_frame)
         level_frame.pack(fill='x', pady=(8,4))
@@ -2431,7 +2530,7 @@ class App(tk.Tk):
         
         cols = ('Slot', 'Item', 'Type', 'Spell', 'Level', 'Mob', 'Area', 'Div', 'Alt Options')
         col_widths = {'Slot': 55, 'Item': 200, 'Type': 60, 'Spell': 100, 'Level': 45,
-                     'Mob': 120, 'Area': 120, 'Alt Options': 200}
+                     'Mob': 120, 'Area': 120, 'Alt Options': 280}
         self.search_results_tv = ttk.Treeview(results_frame, columns=cols,
                                              show='headings', height=20)
         for col in cols:
@@ -2561,7 +2660,85 @@ class App(tk.Tk):
             text.window_create(tk.END, window=chip)
             text.insert(tk.END, ' ')
         text.config(state='disabled')
-    
+
+    def _add_required_item(self):
+        """Look up a specific item the user typed in the master database and
+        force it into the build. Falls back to fuzzy matching (tolerating
+        spelling errors) when there's no exact (case-insensitive) match."""
+        query = self.required_item_var.get().strip()
+        if not query:
+            return
+        if not self.master_data:
+            messagebox.showwarning("No Data", "Load a master database first.")
+            return
+
+        exact = [it for it in self.master_data
+                if (it.get('Item') or '').strip().lower() == query.lower()]
+        if exact:
+            self._confirm_and_add_required_item(exact[0])
+            return
+
+        all_names = sorted({(it.get('Item') or '').strip()
+                            for it in self.master_data if it.get('Item')})
+        matches = difflib.get_close_matches(query, all_names, n=5, cutoff=0.5)
+        if not matches:
+            messagebox.showinfo("No Match Found",
+                f"No item found matching '{query}' (even allowing for spelling errors).")
+            return
+
+        if len(matches) == 1:
+            if messagebox.askyesno("Did You Mean?",
+                    f"No exact match for '{query}'.\n\nDid you mean '{matches[0]}'?"):
+                item = next(it for it in self.master_data
+                           if (it.get('Item') or '').strip() == matches[0])
+                self._confirm_and_add_required_item(item)
+            return
+
+        dlg = ItemMatchDialog(self, query, matches)
+        self.wait_window(dlg)
+        if dlg.result:
+            item = next(it for it in self.master_data
+                       if (it.get('Item') or '').strip() == dlg.result)
+            self._confirm_and_add_required_item(item)
+
+    def _confirm_and_add_required_item(self, item):
+        """Add a resolved item (exact or fuzzy-confirmed) to the required list"""
+        name = (item.get('Item') or '').strip()
+        if any((it.get('Item') or '').strip().lower() == name.lower() for it in self.required_items):
+            messagebox.showinfo("Already Added", f"'{name}' is already in your required items list.")
+            return
+        self.required_items.append(item)
+        self.required_item_var.set('')
+        self._render_required_item_chips()
+
+    def _remove_required_item(self, item):
+        """Remove one required-item chip (called by a chip's own ✕ button)"""
+        if item in self.required_items:
+            self.required_items.remove(item)
+            self._render_required_item_chips()
+
+    def _clear_required_items(self):
+        """Clear all required items"""
+        self.required_items = []
+        self._render_required_item_chips()
+
+    def _render_required_item_chips(self):
+        """Redraw the Required Items area as removable chips showing item + slot"""
+        text = self.required_items_text
+        text.config(state='normal')
+        text.delete('1.0', tk.END)
+        for item in self.required_items:
+            label = f"{item.get('Item', '')} ({(item.get('Slot') or '').title()})"
+            chip = ttk.Frame(text, relief='raised', borderwidth=1)
+            ttk.Label(chip, text=label, padding=(4, 1)).pack(side='left')
+            remove_lbl = ttk.Label(chip, text='✕', padding=(4, 1),
+                                   foreground='#a33', cursor='hand2')
+            remove_lbl.pack(side='left')
+            remove_lbl.bind('<Button-1>', lambda e, it=item: self._remove_required_item(it))
+            text.window_create(tk.END, window=chip)
+            text.insert(tk.END, ' ')
+        text.config(state='disabled')
+
     def _browse_search_master(self):
         """Browse for master database to search"""
         path = filedialog.askopenfilename(
@@ -2768,6 +2945,27 @@ class App(tk.Tk):
         for row in results:
             self.search_results_tv.insert('', 'end', values=row)
 
+        self._autosize_results_columns()
+
+    def _autosize_results_columns(self):
+        """Shrink/grow each results column to the minimum width that fits its
+        header and currently displayed cell values - no wasted or cramped space."""
+        tv = self.search_results_tv
+        cols = tv['columns']
+        font = tkfont.Font(font=ttk.Style().lookup('Treeview', 'font') or 'TkDefaultFont')
+        padding = 24  # cell borders/inset allowance
+
+        for idx, col in enumerate(cols):
+            if col == 'Div':
+                continue  # fixed-width visual spacer, not content-driven
+            max_width = font.measure(tv.heading(col)['text'])
+            for iid in tv.get_children():
+                value = tv.item(iid)['values'][idx]
+                w = font.measure(str(value))
+                if w > max_width:
+                    max_width = w
+            tv.column(col, width=max_width + padding)
+
     def _build_dict_to_rows(self, build_dict):
         """Turn a {slot: item} build mapping into result-table rows, listing
         each slot's other tied candidates (from self.optimal_build / self.slot_alternates)
@@ -2781,7 +2979,7 @@ class App(tk.Tk):
             item = build_dict[slot]
             display_slot = 'jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw') else slot
             candidates = [self.optimal_build.get(slot)] + self.slot_alternates.get(slot, [])
-            alt_names = [c.get('Item', '') for c in candidates if c and c is not item]
+            alt_names = [f"{c.get('Item', '')} ({c.get('Spell', '')})" for c in candidates if c and c is not item]
             alt_text = ', '.join(alt_names) if alt_names else '(none)'
             rows.append((
                 display_slot.title(),
@@ -2965,7 +3163,41 @@ class App(tk.Tk):
             
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export results:\n{str(e)}")
-    
+
+    def _assign_required_items(self, build, covered_bases, wanted_bases):
+        """Seed the build dict with user-required items, one per available
+        slot (jewel/claw items fill whichever of their two slots is still
+        open). Returns (crafted_count, used_claw_items) so the rest of the
+        search's Crafted-cap and no-duplicate-claw rules stay consistent."""
+        crafted_count = 0
+        used_claw_items = []
+
+        for item in self.required_items:
+            item_slot = (item.get('Slot') or '').strip().lower()
+            if item_slot == 'jewel':
+                target = 'jewel_1' if 'jewel_1' not in build else ('jewel_2' if 'jewel_2' not in build else None)
+            elif item_slot == 'claw':
+                target = 'claw_1' if 'claw_1' not in build else ('claw_2' if 'claw_2' not in build else None)
+            else:
+                target = item_slot if item_slot and item_slot not in build else None
+
+            if not target:
+                continue  # no free matching slot left for this item
+
+            build[target] = item
+
+            item_spell = (item.get('Spell') or '').lower()
+            for base in wanted_bases:
+                if base in item_spell:
+                    covered_bases.add(base)
+
+            if 'crafted' in (item.get('Realm') or '').strip().lower():
+                crafted_count += 1
+            if item_slot == 'claw':
+                used_claw_items.append(item)
+
+        return crafted_count, used_claw_items
+
     def _find_optimal_build(self):
         """Find optimal item combination that covers ALL wanted spells"""
         if not self.master_data:
@@ -2974,10 +3206,10 @@ class App(tk.Tk):
         
         # Get wanted spells
         wanted_spells = list(self.wanted_spells_data)
-        if not wanted_spells:
-            messagebox.showwarning("No Spells", "Please add at least one wanted spell")
+        if not wanted_spells and not self.required_items:
+            messagebox.showwarning("No Spells", "Please add at least one wanted spell or required item")
             return
-        
+
         # Clear previous results
         self.search_results_tv.delete(*self.search_results_tv.get_children())
         
@@ -3194,8 +3426,13 @@ class App(tk.Tk):
         build = {}
         covered_bases = set()
         self.slot_alternates = {}
-        crafted_count = 0
-        used_claw_items = []  # a claw picked for claw_1 can't also fill claw_2
+
+        # Force any Required Items directly into the build first - they aren't
+        # subject to the other filters (armor/weapon/level/realm), since the
+        # user explicitly asked for them. The rest of the build is calculated
+        # around them: their spells count as covered and their slots are skipped
+        # below, same as anything the greedy search would have picked itself.
+        crafted_count, used_claw_items = self._assign_required_items(build, covered_bases, wanted_bases)
 
         # Slots to fill (including 2 jewel slots). Claw slots are only attempted
         # when 1 Claw / 2 Claw is checked - 2 Claw fills both claw slots (dual-wield).
@@ -3206,6 +3443,9 @@ class App(tk.Tk):
             slots_to_fill += ['claw_1']
 
         for slot in slots_to_fill:
+            if slot in build:
+                continue  # already filled by a Required Item
+
             # For jewel/claw slots, look in the shared 'jewel'/'claw' item groups
             lookup_slot = 'jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw') else slot
 
@@ -3221,7 +3461,7 @@ class App(tk.Tk):
             allow_redundant = slot.startswith('claw')
             best_item = None
             best_matched_bases = []
-            best_key = (0, -1)
+            best_key = (0, -1, -1)
             tied_items = []
 
             for item in items_by_slot[lookup_slot]:
@@ -3241,6 +3481,13 @@ class App(tk.Tk):
                 # of "dexterity.iii" and would misreport a tier-iii item as tier-i.
                 item_tier = _spell_tier_rank(item_spell)
 
+                # Level tie-break: prefer the item closest to Max Level, falling
+                # back to progressively lower levels when nothing sits at the max.
+                try:
+                    item_level_num = int(item.get('Level') or 0)
+                except (ValueError, TypeError):
+                    item_level_num = 0
+
                 matched_bases = []
                 for base, variants in wanted_bases.items():
                     if base in covered_bases and not allow_redundant:
@@ -3251,7 +3498,7 @@ class App(tk.Tk):
                 if not matched_bases:
                     continue
 
-                key = (len(matched_bases), item_tier)
+                key = (len(matched_bases), item_level_num, item_tier)
                 if key > best_key:
                     best_key = key
                     best_item = item
@@ -3298,6 +3545,7 @@ class App(tk.Tk):
         self.last_optimal_results = self._build_dict_to_rows(self.build_variants[0])
         for row in self.last_optimal_results:
             self.search_results_tv.insert('', 'end', values=row)
+        self._autosize_results_columns()
 
         # Show coverage (counted per distinct spell, not per tier requested)
         coverage = len(covered_bases)
@@ -3575,7 +3823,8 @@ class App(tk.Tk):
             )
             self.last_all_results.append(row)
             self.search_results_tv.insert('', 'end', values=row)
-        
+        self._autosize_results_columns()
+
         # Show coverage
         coverage = len(covered_spells)
         total = len(wanted_spells)

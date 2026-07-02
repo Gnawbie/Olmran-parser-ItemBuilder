@@ -1,4 +1,4 @@
-# Gaming Log Parser v2.6
+# Gaming Log Parser v2.7
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -51,6 +51,9 @@ Instead of typing spell names, pick them from category dropdowns, each paired wi
 Click **Add to List** next to whichever dropdown (or the Manual box) you used. Added spells show up as removable chips under **Wanted Spells**, flowing left-to-right and wrapping to new lines as needed — click the ✕ on a chip to remove it, or **Clear All** to start over.
 
 Requesting the same spell at two different tiers (e.g. Dexterity i and Dexterity iii) is treated as one requirement, not two — the search picks whichever single item best satisfies it rather than trying to fill two equipment slots for the same stat.
+
+**Required Items**
+Want a specific piece of gear included no matter what? Type its name under **Require Item:** and click **Add to Build**. It's looked up in the loaded master database (case-insensitive exact match first); if nothing matches exactly, it falls back to a spelling-tolerant fuzzy search and asks you to confirm the closest match (or pick from a short list if there are several similar names). Once added, it shows up as a removable chip under **Required Items** and is forced into its slot on the next search — the rest of the build is then calculated around it, with the rest of the slots filled normally.
 
 **Level Filtering**
 - **Min Level** / **Max Level** — restrict to a level range
@@ -118,7 +121,15 @@ A build can include **at most one Crafted-realm item** — this is enforced auto
 
 ## Version History
 
-### v2.6 (Current)
+### v2.7 (Current)
+- Find Optimal Build now prefers the highest level available (targeting Max Level and falling back to progressively lower levels) as a tie-break when items are otherwise equally good
+- Alt Options in the results table now shows each alternate's spell alongside its item name
+- Results table columns auto-resize to the minimum width needed for their header and current contents
+- Added Required Items: force a specific piece of gear into the build by name, with spelling-tolerant fuzzy matching if there's no exact match; the rest of the build is calculated around it
+- Wanted Spells and Required Items now sit side by side (Wanted Spells wider, both the same height) instead of stacked full-width
+- The Build tab is now scrollable, so armor/weapon/realm constraints and the search controls below Damage Type are reachable regardless of window size
+
+### v2.6
 - Added "Search Logs" to the Parse tab, with a "Drops only" mode: finds every real drop event of an item (using the same drop-detection and prefix-cleaning as the Loot parser) and shows a snapshot from the last timestamp through the drop line
 - Raw-text search mode (any line, not just drops) still available as a fallback
 
