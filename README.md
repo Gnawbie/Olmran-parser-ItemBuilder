@@ -1,5 +1,7 @@
 # Gaming Log Parser v2.6
 
+**[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
+
 A tool for parsing Olmran/MUD-style game logs, extracting loot data, and finding optimal equipment builds.
 
 For installation steps, see **INSTALL_INSTRUCTIONS.txt**. This file covers how to use the program once it's running.
