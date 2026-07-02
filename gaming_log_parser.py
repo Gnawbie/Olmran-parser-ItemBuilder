@@ -1111,7 +1111,10 @@ class App(tk.Tk):
         self._load_config()
 
         self._build_ui()
-        
+
+        # Auto-load the bundled community equipment list on startup, if present
+        self._auto_load_community_list()
+
         # Save config on close
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
     
@@ -2454,6 +2457,31 @@ class App(tk.Tk):
         # Load weapon defaults
         self._load_weapon_defaults()
         
+        # Priority Spell - sits in the existing gap between the spell dropdowns
+        # and "Only Found In", using space that's already there rather than
+        # growing the row. Only offers spells currently in Wanted Spells or
+        # Required Items, shown by their short base name (no .i/.ii/.iii tier
+        # suffix) to save space. Multiple can be added; the viewing area below
+        # is the same width as the dropdown and tall enough to reach down to
+        # the Other2 row of the spell category dropdowns beside it.
+        priority_block = ttk.Frame(spell_and_realm_frame)
+        priority_block.pack(side='left', anchor='n', padx=(20, 0))
+        ttk.Label(priority_block, text="Priority Spell:").pack(anchor='w')
+
+        priority_pick_frame = ttk.Frame(priority_block)
+        priority_pick_frame.pack(anchor='w', pady=(2,0))
+        self.priority_spell_var = tk.StringVar(value='(none)')
+        self.priority_spell_combo = ttk.Combobox(priority_pick_frame, textvariable=self.priority_spell_var,
+                                                 values=['(none)'], state='readonly', width=10)
+        self.priority_spell_combo.pack(side='left')
+        ttk.Button(priority_pick_frame, text="+", width=2,
+                  command=self._add_priority_spell).pack(side='left', padx=(2,0))
+
+        self.priority_spells_data = []
+        self.priority_spells_text = tk.Text(priority_block, height=7, width=20, wrap='word',
+                                            cursor='arrow', state='disabled')
+        self.priority_spells_text.pack(anchor='w', pady=(4,0))
+
         # Realm filter (Only Found In) - placed in the empty space to the right
         # of the spell dropdowns, in the row frame set up alongside spell_block.
         realm_block = ttk.LabelFrame(spell_and_realm_frame, text="Only Found In", padding=8)
@@ -2477,7 +2505,7 @@ class App(tk.Tk):
         ttk.Button(button_frame, text="📋 Show All Matches",
                   command=self._show_all_matches, width=20).pack(side='left', padx=4)
 
-        self.generate_multi_builds_var = tk.BooleanVar(value=False)
+        self.generate_multi_builds_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(button_frame, text="🎲 Generate multiple build options",
                        variable=self.generate_multi_builds_var).pack(side='left', padx=(12,4))
         
@@ -2539,14 +2567,22 @@ class App(tk.Tk):
                 self.search_results_tv.column(col, width=14, stretch=False, anchor='center')
             else:
                 self.search_results_tv.heading(col, text=col)
-                self.search_results_tv.column(col, width=col_widths[col])
-        
-        scroll = ttk.Scrollbar(results_frame, orient='vertical', 
-                              command=self.search_results_tv.yview)
-        self.search_results_tv.configure(yscrollcommand=scroll.set)
-        
-        self.search_results_tv.pack(side='left', fill='both', expand=True)
-        scroll.pack(side='right', fill='y')
+                # stretch=False so each column keeps the width _autosize_results_columns
+                # computes - otherwise ttk redistributes/shrinks columns to fit the
+                # visible area, undoing the sizing and making text unreadable.
+                self.search_results_tv.column(col, width=col_widths[col], stretch=False)
+
+        vsb = ttk.Scrollbar(results_frame, orient='vertical',
+                           command=self.search_results_tv.yview)
+        hsb = ttk.Scrollbar(results_frame, orient='horizontal',
+                           command=self.search_results_tv.xview)
+        self.search_results_tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        self.search_results_tv.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        results_frame.rowconfigure(0, weight=1)
+        results_frame.columnconfigure(0, weight=1)
         
         # Filter controls at bottom
         filter_frame = ttk.Frame(t)
@@ -2567,6 +2603,7 @@ class App(tk.Tk):
         self.optimal_build = {}
         self.slot_alternates = {}
         self.build_variants = []
+        self.items_by_slot = {}
     
     def _remove_items_by_area(self):
         """Remove items from results by area name"""
@@ -2660,6 +2697,49 @@ class App(tk.Tk):
             text.window_create(tk.END, window=chip)
             text.insert(tk.END, ' ')
         text.config(state='disabled')
+        self._refresh_priority_spell_options()
+
+    def _refresh_priority_spell_options(self):
+        """Rebuild the Priority Spell dropdown from whatever's currently in
+        Wanted Spells and Required Items, shown by base name (no tier suffix)"""
+        bases = {_spell_base(s) for s in self.wanted_spells_data}
+        bases.update(_spell_base(item.get('Spell') or '') for item in self.required_items)
+        bases.discard('')
+        values = ['(none)'] + sorted(bases)
+        self.priority_spell_combo['values'] = values
+        if self.priority_spell_var.get() not in values:
+            self.priority_spell_var.set('(none)')
+
+    def _add_priority_spell(self):
+        """Add the spell currently picked in the dropdown to the priority list"""
+        spell = self.priority_spell_var.get()
+        if not spell or spell == '(none)':
+            return
+        if spell not in self.priority_spells_data:
+            self.priority_spells_data.append(spell)
+            self._render_priority_spell_chips()
+
+    def _remove_priority_spell(self, spell):
+        """Remove one priority spell chip (called by a chip's own ✕ button)"""
+        if spell in self.priority_spells_data:
+            self.priority_spells_data.remove(spell)
+            self._render_priority_spell_chips()
+
+    def _render_priority_spell_chips(self):
+        """Redraw the priority spells viewing area as removable chips"""
+        text = self.priority_spells_text
+        text.config(state='normal')
+        text.delete('1.0', tk.END)
+        for spell in self.priority_spells_data:
+            chip = ttk.Frame(text, relief='raised', borderwidth=1)
+            ttk.Label(chip, text=spell, padding=(4, 1)).pack(side='left')
+            remove_lbl = ttk.Label(chip, text='✕', padding=(4, 1),
+                                   foreground='#a33', cursor='hand2')
+            remove_lbl.pack(side='left')
+            remove_lbl.bind('<Button-1>', lambda e, s=spell: self._remove_priority_spell(s))
+            text.window_create(tk.END, window=chip)
+            text.insert(tk.END, ' ')
+        text.config(state='disabled')
 
     def _add_required_item(self):
         """Look up a specific item the user typed in the master database and
@@ -2738,6 +2818,7 @@ class App(tk.Tk):
             text.window_create(tk.END, window=chip)
             text.insert(tk.END, ' ')
         text.config(state='disabled')
+        self._refresh_priority_spell_options()
 
     def _browse_search_master(self):
         """Browse for master database to search"""
@@ -2748,9 +2829,9 @@ class App(tk.Tk):
         if path:
             self.search_master_path.set(path)
     
-    def _use_community_list(self):
-        """Use the bundled community equipment list as master database"""
-        # Look for the community list in common locations
+    def _find_community_list_path(self):
+        """Look for the bundled community equipment list in common locations,
+        returning its absolute path or None if it isn't found."""
         possible_paths = [
             # Same directory as the script
             os.path.join(os.path.dirname(__file__), 'Olmran_Community_Eq_and_Stats_List.xlsx'),
@@ -2759,22 +2840,32 @@ class App(tk.Tk):
             # One level up
             os.path.join(os.path.dirname(__file__), '..', 'Olmran_Community_Eq_and_Stats_List.xlsx'),
         ]
-        
-        community_file = None
         for path in possible_paths:
             if os.path.exists(path):
-                community_file = os.path.abspath(path)
-                break
-        
+                return os.path.abspath(path)
+        return None
+
+    def _use_community_list(self):
+        """Use the bundled community equipment list as master database"""
+        community_file = self._find_community_list_path()
         if not community_file:
-            messagebox.showerror("File Not Found", 
+            messagebox.showerror("File Not Found",
                 "Could not find 'Olmran_Community_Eq_and_Stats_List.xlsx'\n\n"
                 "Please ensure the community equipment list is in the same folder as the program.")
             return
-        
-        # Set the path and auto-load
+
         self.search_master_path.set(community_file)
         self._load_master_for_search()
+
+    def _auto_load_community_list(self):
+        """Silently load the bundled community list at startup if present, so
+        the Build tab is ready to search without an extra click. Unlike the
+        manual button, this doesn't show an error if the file is missing -
+        "Use Community List" is still there to retry normally."""
+        community_file = self._find_community_list_path()
+        if community_file:
+            self.search_master_path.set(community_file)
+            self._load_master_for_search(silent=True)
     
     def _create_new_search_master(self):
         """Create a new master database file from Build tab"""
@@ -2835,16 +2926,19 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror("Create Error", f"Failed to create master file:\n{str(e)}")
     
-    def _load_master_for_search(self):
-        """Load master database into memory for searching"""
+    def _load_master_for_search(self, silent=False):
+        """Load master database into memory for searching. silent=True (used
+        for the startup auto-load) skips the confirmation/error popups -
+        the search status label still reflects what happened either way."""
         path = self.search_master_path.get()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("No File", "Please select a master database file first")
+            if not silent:
+                messagebox.showwarning("No File", "Please select a master database file first")
             return
-        
+
         try:
             wb = openpyxl.load_workbook(path, read_only=True)
-            
+
             # Check for either 'Loot' or 'Equipment' sheet
             sheet_name = None
             if 'Loot' in wb.sheetnames:
@@ -2852,16 +2946,17 @@ class App(tk.Tk):
             elif 'Equipment' in wb.sheetnames:
                 sheet_name = 'Equipment'
             else:
-                messagebox.showerror("No Equipment Sheet", 
-                    "Selected file has no 'Loot' or 'Equipment' sheet")
+                if not silent:
+                    messagebox.showerror("No Equipment Sheet",
+                        "Selected file has no 'Loot' or 'Equipment' sheet")
                 return
-            
+
             ws = wb[sheet_name]
-            
+
             # Read all data
             self.master_data = []
             headers = [cell.value for cell in ws[1]]
-            
+
             for row in ws.iter_rows(min_row=2, values_only=True):
                 item_dict = {}
                 for idx, header in enumerate(headers):
@@ -2869,16 +2964,18 @@ class App(tk.Tk):
                         item_dict[header] = row[idx] or ''
                 if item_dict.get('Item'):  # Only add if has item name
                     self.master_data.append(item_dict)
-            
+
             wb.close()
-            
+
             self.search_status.config(
                 text=f"✓ Loaded {len(self.master_data)} items from {os.path.basename(path)}")
-            messagebox.showinfo("Loaded", 
-                f"Master database loaded!\n{len(self.master_data)} items ready to search")
-            
+            if not silent:
+                messagebox.showinfo("Loaded",
+                    f"Master database loaded!\n{len(self.master_data)} items ready to search")
+
         except Exception as e:
-            messagebox.showerror("Load Error", f"Failed to load master:\n{str(e)}")
+            if not silent:
+                messagebox.showerror("Load Error", f"Failed to load master:\n{str(e)}")
     
     def _clear_armor_defaults(self):
         """Clear saved defaults from config file"""
@@ -2955,21 +3052,30 @@ class App(tk.Tk):
         font = tkfont.Font(font=ttk.Style().lookup('Treeview', 'font') or 'TkDefaultFont')
         padding = 24  # cell borders/inset allowance
 
+        # Divider rows (between stacked build variants) fill every cell with a
+        # long block-character string so it reads as a solid line - that's not
+        # real content, and would otherwise force every column to the same
+        # oversized width to fit it. Skip those rows when measuring.
+        real_rows = [tv.item(iid)['values'] for iid in tv.get_children()
+                    if not str(tv.item(iid)['values'][0]).startswith('█')]
+
         for idx, col in enumerate(cols):
             if col == 'Div':
                 continue  # fixed-width visual spacer, not content-driven
             max_width = font.measure(tv.heading(col)['text'])
-            for iid in tv.get_children():
-                value = tv.item(iid)['values'][idx]
-                w = font.measure(str(value))
+            for values in real_rows:
+                w = font.measure(str(values[idx]))
                 if w > max_width:
                     max_width = w
             tv.column(col, width=max_width + padding)
 
     def _build_dict_to_rows(self, build_dict):
-        """Turn a {slot: item} build mapping into result-table rows, listing
-        each slot's other tied candidates (from self.optimal_build / self.slot_alternates)
-        as its Alt Options rather than the item actually shown in this variant."""
+        """Turn a {slot: item} build mapping into result-table rows. Alt
+        Options lists other items in the same slot that provide the same
+        base spell (any item still within the active level/armor/weapon/realm
+        constraints, not just exact scoring ties) - the spell is only shown
+        for an alternate when its tier differs from the item actually picked,
+        since restating the identical spell/tier is redundant."""
         slot_order = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet',
                      'weapon', 'shield', 'claw_1', 'claw_2']
         rows = []
@@ -2978,9 +3084,31 @@ class App(tk.Tk):
                 continue
             item = build_dict[slot]
             display_slot = 'jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw') else slot
-            candidates = [self.optimal_build.get(slot)] + self.slot_alternates.get(slot, [])
-            alt_names = [f"{c.get('Item', '')} ({c.get('Spell', '')})" for c in candidates if c and c is not item]
+            lookup_slot = 'jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw') else slot
+
+            chosen_spell = (item.get('Spell') or '').lower()
+            chosen_base = _spell_base(chosen_spell)
+            chosen_tier = _spell_tier_rank(chosen_spell)
+
+            seen_names = {(item.get('Item') or '').strip().lower()}
+            alt_names = []
+            for c in self.items_by_slot.get(lookup_slot, []):
+                if c is item:
+                    continue
+                c_spell = (c.get('Spell') or '').lower()
+                if _spell_base(c_spell) != chosen_base:
+                    continue
+                c_name = (c.get('Item') or '').strip()
+                if c_name.lower() in seen_names:
+                    continue
+                seen_names.add(c_name.lower())
+                c_level = c.get('Level', '')
+                if _spell_tier_rank(c_spell) == chosen_tier:
+                    alt_names.append(f"{c_level} - {c_name}")
+                else:
+                    alt_names.append(f"{c_level} - {c_name} ({c.get('Spell', '')})")
             alt_text = ', '.join(alt_names) if alt_names else '(none)'
+
             rows.append((
                 display_slot.title(),
                 item.get('Item', ''),
@@ -2994,8 +3122,26 @@ class App(tk.Tk):
             ))
         return rows
 
+    def _all_variants_rows(self):
+        """Stack every build variant's rows into one list, in the current
+        order of self.build_variants, with a thin black divider row between
+        each build so they're visually separated in the same results table."""
+        # Each cell's text is far longer than any column could ever be, so it
+        # overflows and fills the full cell width edge-to-edge (Treeview just
+        # clips excess rather than wrapping) - that reads as one continuous
+        # black line across the row instead of separate blocks per column.
+        num_cols = len(self.search_results_tv['columns'])
+        divider = tuple('█' * 300 for _ in range(num_cols))
+
+        rows = []
+        for i, variant in enumerate(self.build_variants):
+            if i > 0:
+                rows.append(divider)
+            rows.extend(self._build_dict_to_rows(variant))
+        return rows
+
     def _switch_build_variant(self, event=None):
-        """Show a different generated build variant in the results table"""
+        """Move the selected build variant to the top of the stacked list"""
         label = self.build_variant_var.get()
         try:
             idx = int(label.split()[-1]) - 1
@@ -3004,7 +3150,14 @@ class App(tk.Tk):
         if not (0 <= idx < len(self.build_variants)):
             return
 
-        self.last_optimal_results = self._build_dict_to_rows(self.build_variants[idx])
+        selected = self.build_variants.pop(idx)
+        self.build_variants.insert(0, selected)
+
+        variant_labels = [f"Build {i + 1}" for i in range(len(self.build_variants))]
+        self.build_variant_combo['values'] = variant_labels
+        self.build_variant_var.set(variant_labels[0])
+
+        self.last_optimal_results = self._all_variants_rows()
         self.results_display_mode.set('optimal')
         self._refresh_results_display()
 
@@ -3204,10 +3357,13 @@ class App(tk.Tk):
             messagebox.showwarning("No Data", "Please load a master database first")
             return
         
-        # Get wanted spells
+        # Get wanted spells - Priority Spells are always searched for too, not
+        # just preferred among items that already match a wanted spell, so
+        # they're folded in here before any item filtering happens.
         wanted_spells = list(self.wanted_spells_data)
-        if not wanted_spells and not self.required_items:
-            messagebox.showwarning("No Spells", "Please add at least one wanted spell or required item")
+        priority_spells = list(self.priority_spells_data)
+        if not wanted_spells and not self.required_items and not priority_spells:
+            messagebox.showwarning("No Spells", "Please add at least one wanted spell, priority spell, or required item")
             return
 
         # Clear previous results
@@ -3303,16 +3459,18 @@ class App(tk.Tk):
             if not item_spell:
                 continue
             
-            # Check if item's spell matches any wanted spell (partial match)
+            # Check if item's spell matches any wanted spell OR priority spell -
+            # priority spells must actively be searched for, not just preferred
+            # among items that happen to already match a wanted spell.
             has_wanted_spell = False
-            for wanted in wanted_spells:
+            for wanted in wanted_spells + priority_spells:
                 if wanted in item_spell:
                     has_wanted_spell = True
                     break
-            
+
             if not has_wanted_spell:
                 continue
-            
+
             # Apply level constraints
             if specific_level is not None or min_level is not None or max_level is not None:
                 item_level_str = item.get('Level', '')
@@ -3354,13 +3512,14 @@ class App(tk.Tk):
             if item_slot == 'weapon' or item_slot == 'shield' or item_slot == 'claw':
                 # Weapon style constraint (melee vs direct-caster vs direct-stat)
                 if weapon_style == 'melee':
-                    # Melee weapons do NOT have 'direct' in type
-                    if 'direct' in item_type:
+                    # Melee weapons do NOT have 'direct' in type, and staves are
+                    # their own Parry Staff category, not plain melee weapons.
+                    if 'direct' in item_type or 'staff' in item_type:
                         continue
                 elif weapon_style == 'direct-caster':
-                    # Direct (Caster) weapons HAVE 'direct' in type
-                    # TODO: Will need to exclude stat skills once implemented
-                    if 'direct' not in item_type:
+                    # Direct (Caster) weapons HAVE 'direct' in type, but staves
+                    # belong to Parry Staff even if also marked 'direct'.
+                    if 'direct' not in item_type or 'staff' in item_type:
                         continue
                 elif weapon_style == 'direct-stat':
                     # Parry Staff - NOT YET IMPLEMENTED
@@ -3413,7 +3572,11 @@ class App(tk.Tk):
             if item_slot not in items_by_slot:
                 items_by_slot[item_slot] = []
             items_by_slot[item_slot].append(item)
-        
+
+        # Kept for Alt Options: any other item sharing a slot's spell, within
+        # the same level/armor/weapon/realm constraints already applied above.
+        self.items_by_slot = items_by_slot
+
         # OPTIMAL BUILD ALGORITHM: Greedy approach to cover maximum spells
         # Wanted spells are grouped by base name (stripping .i/.ii/.iii) so that
         # requesting the same spell at two tiers is one requirement, not two -
@@ -3422,6 +3585,13 @@ class App(tk.Tk):
         wanted_bases = {}
         for wanted in wanted_spells:
             wanted_bases.setdefault(_spell_base(wanted), []).append(wanted)
+
+        # Priority Spells are always searched for, not just preferred among
+        # items that already match a wanted spell - merge them in as their own
+        # base so an item providing only a priority spell (nothing else wanted)
+        # still qualifies as a candidate and actively gets sought out.
+        for p in priority_spells:
+            wanted_bases.setdefault(p, []).append(p)
 
         build = {}
         covered_bases = set()
@@ -3461,7 +3631,7 @@ class App(tk.Tk):
             allow_redundant = slot.startswith('claw')
             best_item = None
             best_matched_bases = []
-            best_key = (0, -1, -1)
+            best_key = (-1, 0, -1, -1)
             tied_items = []
 
             for item in items_by_slot[lookup_slot]:
@@ -3498,13 +3668,21 @@ class App(tk.Tk):
                 if not matched_bases:
                     continue
 
-                key = (len(matched_bases), item_level_num, item_tier)
+                priority_matches = sum(1 for p in priority_spells if p in item_spell)
+
+                key = (priority_matches, len(matched_bases), item_level_num, item_tier)
                 if key > best_key:
                     best_key = key
                     best_item = item
                     best_matched_bases = matched_bases
                     tied_items = [item]
-                elif key == best_key:
+                elif key == best_key and set(matched_bases) == set(best_matched_bases):
+                    # Same score/level/tier isn't enough to call this a real
+                    # alternate - it must cover the exact same wanted bases as
+                    # the chosen item, or swapping it into a build variant
+                    # could duplicate one spell across two slots while leaving
+                    # another spell uncovered (e.g. a tied strength.ii item and
+                    # a tied wisdom.ii item aren't interchangeable substitutes).
                     tied_items.append(item)
 
             if best_item:
@@ -3541,8 +3719,16 @@ class App(tk.Tk):
         self.build_variant_var.set(variant_labels[0])
         self.build_variant_combo.config(state='readonly' if len(variant_labels) > 1 else 'disabled')
 
-        # Store and display the primary build (Build 1)
-        self.last_optimal_results = self._build_dict_to_rows(self.build_variants[0])
+        # Switch to the Results tab BEFORE inserting rows - a ttk.Treeview
+        # populated while its Notebook tab isn't yet the active one can fail
+        # to render until something else forces a redraw (e.g. picking a
+        # different build variant), leaving the tab looking empty at first.
+        self.results_display_mode.set('optimal')
+        self.notebook.select(self.tab_results)
+
+        # Store and display every build variant stacked together, separated by
+        # a thin black divider row, with Build 1 on top
+        self.last_optimal_results = self._all_variants_rows()
         for row in self.last_optimal_results:
             self.search_results_tv.insert('', 'end', values=row)
         self._autosize_results_columns()
@@ -3557,10 +3743,6 @@ class App(tk.Tk):
         if len(self.build_variants) > 1:
             status += f" | {len(self.build_variants)} build variants available"
         self.search_status.config(text=status)
-
-        # Set display mode to optimal and switch to Results tab
-        self.results_display_mode.set('optimal')
-        self.notebook.select(self.tab_results)
     
     def _show_all_matches(self):
         """Show ALL items matching criteria (not optimized for spell coverage)"""
@@ -3724,13 +3906,14 @@ class App(tk.Tk):
             if item_slot == 'weapon' or item_slot == 'shield' or item_slot == 'claw':
                 # Weapon style constraint (melee vs direct-caster vs direct-stat)
                 if weapon_style == 'melee':
-                    # Melee weapons do NOT have 'direct' in type
-                    if 'direct' in item_type:
+                    # Melee weapons do NOT have 'direct' in type, and staves are
+                    # their own Parry Staff category, not plain melee weapons.
+                    if 'direct' in item_type or 'staff' in item_type:
                         continue
                 elif weapon_style == 'direct-caster':
-                    # Direct (Caster) weapons HAVE 'direct' in type
-                    # TODO: Will need to exclude stat skills once implemented
-                    if 'direct' not in item_type:
+                    # Direct (Caster) weapons HAVE 'direct' in type, but staves
+                    # belong to Parry Staff even if also marked 'direct'.
+                    if 'direct' not in item_type or 'staff' in item_type:
                         continue
                 elif weapon_style == 'direct-stat':
                     # Parry Staff - NOT YET IMPLEMENTED
@@ -3799,7 +3982,14 @@ class App(tk.Tk):
         
         # Track which spells are covered
         covered_spells = set()
-        
+
+        # Switch to the Results tab BEFORE inserting rows - a ttk.Treeview
+        # populated while its Notebook tab isn't yet the active one can fail
+        # to render until something else forces a redraw, leaving the tab
+        # looking empty at first.
+        self.results_display_mode.set('all')
+        self.notebook.select(self.tab_results)
+
         # Store and display all matching items
         self.last_all_results = []
         for slot, item in all_matches:
@@ -3830,10 +4020,6 @@ class App(tk.Tk):
         total = len(wanted_spells)
         self.search_status.config(
             text=f"All matches show {coverage}/{total} wanted spells | Spells covered: {', '.join(sorted(covered_spells))}")
-        
-        # Set display mode to all and switch to Results tab
-        self.results_display_mode.set('all')
-        self.notebook.select(self.tab_results)
 
 
 

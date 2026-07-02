@@ -1,4 +1,4 @@
-# Gaming Log Parser v2.7
+# Gaming Log Parser v2.8
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -121,7 +121,15 @@ A build can include **at most one Crafted-realm item** — this is enforced auto
 
 ## Version History
 
-### v2.7 (Current)
+### v2.8 (Current)
+- Fixed: the Results tab could appear empty until a different Build Variant was selected - the tab is now switched to before results are inserted
+- Fixed: Melee and Direct (Caster) weapon styles could still pick staff-type weapons meant for the unimplemented Parry Staff style
+- Fixed: "Generate multiple build options" could produce a variant with the same spell duplicated across two slots at different tiers - tied alternates now must cover the exact same wanted spells, not just the same score, to be considered interchangeable
+- Alt Options redesigned: lists any other item in that slot providing the same spell (any tier) within your current level/armor/weapon/realm constraints, shown as "Level - Item Name", with the spell only listed when its tier differs from the item actually picked
+- Priority Spell is now Priority Spells (plural): add multiple spells to prioritize, viewable and removable in a chip list below the dropdown; items providing a priority spell are now always searched for and included when possible, not just preferred among items that already matched a wanted spell
+- Fixed: results table auto-sizing could make every column the same (oversized) width - divider rows between stacked build variants are now excluded from the size calculation, and columns no longer get squeezed by Treeview's default column-stretch behavior
+
+### v2.7
 - Find Optimal Build now prefers the highest level available (targeting Max Level and falling back to progressively lower levels) as a tie-break when items are otherwise equally good
 - Alt Options in the results table now shows each alternate's spell alongside its item name
 - Results table columns auto-resize to the minimum width needed for their header and current contents
