@@ -1,4 +1,4 @@
-# Gaming Log Parser v2.8
+# Gaming Log Parser v2.9
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -121,7 +121,16 @@ A build can include **at most one Crafted-realm item** — this is enforced auto
 
 ## Version History
 
-### v2.8 (Current)
+### v2.9 (Current)
+- Spell matching now qualifies on base spell regardless of tier, so a slot no longer sits empty just because nothing hits the exact tier you requested (e.g. wanting combat.iii but only combat.ii exists) - the "no duplicate spell across slots" rule still applies
+- Added Min Tier / Max Tier, next to the level filters, to bound how far that tier fallback is allowed to reach
+- Tier now takes priority over level when choosing between candidates - the search always prefers the highest available tier first, only comparing level as a secondary tie-break
+- New warning if a wanted spell has no matching item at any tier under your current constraints
+- Added Priority Tier: pair a specific spell with a specific tier (e.g. wisdom + ii) so the search targets that tier for that spell specifically, even over a higher tier that's available - other spells are unaffected
+- New warning when a Priority Tier can't actually be honored (e.g. "wisdom (ii) cannot be used - tier iii used instead")
+- Alt Options column header is now left-aligned instead of centered
+
+### v2.8
 - Fixed: the Results tab could appear empty until a different Build Variant was selected - the tab is now switched to before results are inserted
 - Fixed: Melee and Direct (Caster) weapon styles could still pick staff-type weapons meant for the unimplemented Parry Staff style
 - Fixed: "Generate multiple build options" could produce a variant with the same spell duplicated across two slots at different tiers - tied alternates now must cover the exact same wanted spells, not just the same score, to be considered interchangeable

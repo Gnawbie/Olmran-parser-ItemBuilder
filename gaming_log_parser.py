@@ -2334,8 +2334,20 @@ class App(tk.Tk):
         self.specific_level_entry = ttk.Entry(level_frame, textvariable=self.specific_level_var, width=8)
         self.specific_level_entry.pack(side='left', padx=(0,4))
         self.specific_level_var.trace_add('write', lambda *args: self._update_level_fields())
-        
-        ttk.Label(level_frame, text="(leave blank for no restriction)", 
+
+        # Min/Max Tier - bounds how far the search will fall back when the
+        # exact tier requested for a spell isn't available (blank = unbounded).
+        ttk.Label(level_frame, text="Min Tier:").pack(side='left', padx=(12,4))
+        self.min_tier_var = tk.StringVar(value='')
+        ttk.Combobox(level_frame, textvariable=self.min_tier_var, values=['', 'i', 'ii', 'iii'],
+                    state='readonly', width=5).pack(side='left', padx=(0,8))
+
+        ttk.Label(level_frame, text="Max Tier:").pack(side='left', padx=(0,4))
+        self.max_tier_var = tk.StringVar(value='')
+        ttk.Combobox(level_frame, textvariable=self.max_tier_var, values=['', 'i', 'ii', 'iii'],
+                    state='readonly', width=5).pack(side='left', padx=(0,4))
+
+        ttk.Label(level_frame, text="(leave blank for no restriction)",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=4)
         
         # Armor type constraints
@@ -2482,6 +2494,34 @@ class App(tk.Tk):
                                             cursor='arrow', state='disabled')
         self.priority_spells_text.pack(anchor='w', pady=(4,0))
 
+        # Priority Tier - a second, parallel priority box that pairs a spell
+        # WITH a specific tier (unlike Priority Spell, which ignores tier
+        # entirely). When a spell+tier pair is added here, the search targets
+        # that tier for that spell specifically - even beating a higher tier
+        # that's available - only falling back to other tiers if none of the
+        # priority tiers are available for that spell.
+        priority_tier_block = ttk.Frame(spell_and_realm_frame)
+        priority_tier_block.pack(side='left', anchor='n', padx=(20, 0))
+        ttk.Label(priority_tier_block, text="Priority Tier:").pack(anchor='w')
+
+        priority_tier_pick_frame = ttk.Frame(priority_tier_block)
+        priority_tier_pick_frame.pack(anchor='w', pady=(2,0))
+        self.priority_tier_spell_var = tk.StringVar(value='(none)')
+        self.priority_tier_spell_combo = ttk.Combobox(priority_tier_pick_frame, textvariable=self.priority_tier_spell_var,
+                                                      values=['(none)'], state='readonly', width=10)
+        self.priority_tier_spell_combo.pack(side='left')
+        self.priority_tier_var = tk.StringVar(value='i')
+        self.priority_tier_combo = ttk.Combobox(priority_tier_pick_frame, textvariable=self.priority_tier_var,
+                                                values=['i', 'ii', 'iii'], state='readonly', width=5)
+        self.priority_tier_combo.pack(side='left', padx=(2,0))
+        ttk.Button(priority_tier_pick_frame, text="+", width=2,
+                  command=self._add_priority_tier).pack(side='left', padx=(2,0))
+
+        self.priority_tiers_data = []
+        self.priority_tiers_text = tk.Text(priority_tier_block, height=7, width=20, wrap='word',
+                                           cursor='arrow', state='disabled')
+        self.priority_tiers_text.pack(anchor='w', pady=(4,0))
+
         # Realm filter (Only Found In) - placed in the empty space to the right
         # of the spell dropdowns, in the row frame set up alongside spell_block.
         realm_block = ttk.LabelFrame(spell_and_realm_frame, text="Only Found In", padding=8)
@@ -2566,7 +2606,8 @@ class App(tk.Tk):
                 self.search_results_tv.heading(col, text='')
                 self.search_results_tv.column(col, width=14, stretch=False, anchor='center')
             else:
-                self.search_results_tv.heading(col, text=col)
+                heading_anchor = 'w' if col == 'Alt Options' else 'center'
+                self.search_results_tv.heading(col, text=col, anchor=heading_anchor)
                 # stretch=False so each column keeps the width _autosize_results_columns
                 # computes - otherwise ttk redistributes/shrinks columns to fit the
                 # visible area, undoing the sizing and making text unreadable.
@@ -2700,8 +2741,9 @@ class App(tk.Tk):
         self._refresh_priority_spell_options()
 
     def _refresh_priority_spell_options(self):
-        """Rebuild the Priority Spell dropdown from whatever's currently in
-        Wanted Spells and Required Items, shown by base name (no tier suffix)"""
+        """Rebuild the Priority Spell and Priority Tier spell dropdowns from
+        whatever's currently in Wanted Spells and Required Items, shown by
+        base name (no tier suffix)"""
         bases = {_spell_base(s) for s in self.wanted_spells_data}
         bases.update(_spell_base(item.get('Spell') or '') for item in self.required_items)
         bases.discard('')
@@ -2709,6 +2751,9 @@ class App(tk.Tk):
         self.priority_spell_combo['values'] = values
         if self.priority_spell_var.get() not in values:
             self.priority_spell_var.set('(none)')
+        self.priority_tier_spell_combo['values'] = values
+        if self.priority_tier_spell_var.get() not in values:
+            self.priority_tier_spell_var.set('(none)')
 
     def _add_priority_spell(self):
         """Add the spell currently picked in the dropdown to the priority list"""
@@ -2737,6 +2782,40 @@ class App(tk.Tk):
                                    foreground='#a33', cursor='hand2')
             remove_lbl.pack(side='left')
             remove_lbl.bind('<Button-1>', lambda e, s=spell: self._remove_priority_spell(s))
+            text.window_create(tk.END, window=chip)
+            text.insert(tk.END, ' ')
+        text.config(state='disabled')
+
+    def _add_priority_tier(self):
+        """Add the (spell, tier) pair currently picked to the priority tier list"""
+        spell = self.priority_tier_spell_var.get()
+        tier = self.priority_tier_var.get()
+        if not spell or spell == '(none)' or not tier:
+            return
+        pair = (spell, tier)
+        if pair not in self.priority_tiers_data:
+            self.priority_tiers_data.append(pair)
+            self._render_priority_tier_chips()
+
+    def _remove_priority_tier(self, pair):
+        """Remove one priority tier chip (called by a chip's own ✕ button)"""
+        if pair in self.priority_tiers_data:
+            self.priority_tiers_data.remove(pair)
+            self._render_priority_tier_chips()
+
+    def _render_priority_tier_chips(self):
+        """Redraw the priority tiers viewing area as removable chips"""
+        text = self.priority_tiers_text
+        text.config(state='normal')
+        text.delete('1.0', tk.END)
+        for pair in self.priority_tiers_data:
+            spell, tier = pair
+            chip = ttk.Frame(text, relief='raised', borderwidth=1)
+            ttk.Label(chip, text=f"{spell} ({tier})", padding=(4, 1)).pack(side='left')
+            remove_lbl = ttk.Label(chip, text='✕', padding=(4, 1),
+                                   foreground='#a33', cursor='hand2')
+            remove_lbl.pack(side='left')
+            remove_lbl.bind('<Button-1>', lambda e, p=pair: self._remove_priority_tier(p))
             text.window_create(tk.END, window=chip)
             text.insert(tk.END, ' ')
         text.config(state='disabled')
@@ -3366,14 +3445,29 @@ class App(tk.Tk):
             messagebox.showwarning("No Spells", "Please add at least one wanted spell, priority spell, or required item")
             return
 
+        # Priority Tiers - each entry pairs a specific spell with a specific
+        # tier. For that spell, the search targets that tier (still preferring
+        # the highest of any priority tiers set for it if more than one),
+        # rather than always chasing the single highest tier available. Other
+        # spells are unaffected. Grouped per base spell for quick lookup below.
+        priority_tier_ranks_by_base = {}
+        for spell, tier in self.priority_tiers_data:
+            priority_tier_ranks_by_base.setdefault(spell, set()).add(_TIER_RANK[tier])
+
+        # Base spells (tier stripped) for the early candidate filter below -
+        # a lower/higher tier than exactly requested should still qualify an
+        # item as a candidate, not just an exact tier match.
+        wanted_spell_bases = {_spell_base(w) for w in wanted_spells}
+        wanted_spell_bases.update(priority_spells)
+
         # Clear previous results
         self.search_results_tv.delete(*self.search_results_tv.get_children())
-        
+
         # Get level constraints
         min_level = None
         max_level = None
         specific_level = None
-        
+
         # Check for specific level first (takes precedence)
         specific_level_str = self.specific_level_var.get().strip()
         if specific_level_str:
@@ -3391,7 +3485,7 @@ class App(tk.Tk):
                 except ValueError:
                     messagebox.showwarning("Invalid Level", "Minimum level must be a number")
                     return
-            
+
             max_level_str = self.max_level_var.get().strip()
             if max_level_str:
                 try:
@@ -3399,12 +3493,20 @@ class App(tk.Tk):
                 except ValueError:
                     messagebox.showwarning("Invalid Level", "Maximum level must be a number")
                     return
-            
+
             # Validate min <= max
             if min_level is not None and max_level is not None and min_level > max_level:
                 messagebox.showwarning("Invalid Range", "Minimum level cannot be greater than maximum level")
                 return
-        
+
+        # Min/Max Tier - bounds how far a spell match can fall back to a
+        # different tier than exactly requested (blank side = unbounded).
+        min_tier_rank = _TIER_RANK.get(self.min_tier_var.get()) if self.min_tier_var.get() else None
+        max_tier_rank = _TIER_RANK.get(self.max_tier_var.get()) if self.max_tier_var.get() else None
+        if min_tier_rank is not None and max_tier_rank is not None and min_tier_rank > max_tier_rank:
+            messagebox.showwarning("Invalid Range", "Minimum tier cannot be greater than maximum tier")
+            return
+
         # Get armor type constraints from checkboxes
         armor_constraints = {}
         for slot in ['head', 'cloak', 'body', 'hands', 'legs', 'feet']:
@@ -3459,11 +3561,11 @@ class App(tk.Tk):
             if not item_spell:
                 continue
             
-            # Check if item's spell matches any wanted spell OR priority spell -
-            # priority spells must actively be searched for, not just preferred
-            # among items that happen to already match a wanted spell.
+            # Check if item's spell matches any wanted or priority spell's
+            # base - any tier counts here, so an item at a different tier
+            # than exactly requested still becomes an eligible candidate.
             has_wanted_spell = False
-            for wanted in wanted_spells + priority_spells:
+            for wanted in wanted_spell_bases:
                 if wanted in item_spell:
                     has_wanted_spell = True
                     break
@@ -3631,7 +3733,7 @@ class App(tk.Tk):
             allow_redundant = slot.startswith('claw')
             best_item = None
             best_matched_bases = []
-            best_key = (-1, 0, -1, -1)
+            best_key = (-1, 0, -1, -1, -1)
             tied_items = []
 
             for item in items_by_slot[lookup_slot]:
@@ -3651,6 +3753,14 @@ class App(tk.Tk):
                 # of "dexterity.iii" and would misreport a tier-iii item as tier-i.
                 item_tier = _spell_tier_rank(item_spell)
 
+                # Min/Max Tier constraints (only bound tiered spells - an
+                # untiered spell has no tier to compare, so it's unaffected)
+                if item_tier > 0:
+                    if min_tier_rank is not None and item_tier < min_tier_rank:
+                        continue
+                    if max_tier_rank is not None and item_tier > max_tier_rank:
+                        continue
+
                 # Level tie-break: prefer the item closest to Max Level, falling
                 # back to progressively lower levels when nothing sits at the max.
                 try:
@@ -3658,11 +3768,16 @@ class App(tk.Tk):
                 except (ValueError, TypeError):
                     item_level_num = 0
 
+                # Match on the base spell only - a lower or higher tier than
+                # exactly what was requested still counts, so a slot doesn't
+                # sit empty just because nothing hits the exact tier asked
+                # for. covered_bases still guarantees no base spell is ever
+                # assigned to two slots, regardless of tier.
                 matched_bases = []
-                for base, variants in wanted_bases.items():
+                for base in wanted_bases:
                     if base in covered_bases and not allow_redundant:
                         continue
-                    if any(v in item_spell for v in variants):
+                    if base in item_spell:
                         matched_bases.append(base)
 
                 if not matched_bases:
@@ -3670,7 +3785,21 @@ class App(tk.Tk):
 
                 priority_matches = sum(1 for p in priority_spells if p in item_spell)
 
-                key = (priority_matches, len(matched_bases), item_level_num, item_tier)
+                # Priority Tier: if THIS item's own spell has a priority tier
+                # set for it, matching that tier wins over not matching it,
+                # ahead of the normal "always highest tier" preference - so a
+                # targeted tier (e.g. ii) can beat an available iii for that
+                # spell specifically, only falling back to other tiers if
+                # none of its priority tiers are available. Other spells with
+                # no priority tier entry are unaffected.
+                item_base = _spell_base(item_spell)
+                item_priority_tiers = priority_tier_ranks_by_base.get(item_base)
+                tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
+
+                # Tier is checked before level: prioritize the highest tier
+                # available for the spell, only dropping to a lower tier (or
+                # comparing levels) when nothing at a higher tier qualifies.
+                key = (priority_matches, len(matched_bases), tier_priority_match, item_tier, item_level_num)
                 if key > best_key:
                     best_key = key
                     best_item = item
@@ -3743,7 +3872,39 @@ class App(tk.Tk):
         if len(self.build_variants) > 1:
             status += f" | {len(self.build_variants)} build variants available"
         self.search_status.config(text=status)
-    
+
+        # Warn about any wanted spell no item could satisfy at all, at any
+        # tier, under the current armor/weapon/level/tier/realm constraints -
+        # every other slot was filled, so this really means "nothing exists
+        # for this exact configuration" rather than "not needed".
+        uncovered = sorted(set(wanted_bases) - covered_bases)
+        if uncovered:
+            messagebox.showwarning("No Items For Some Spells",
+                "No items were found (at any tier) for the following spell(s), "
+                "given your current armor/weapon/level/tier/realm constraints:\n\n"
+                + ", ".join(uncovered))
+
+        # Warn about any Priority Tier that couldn't actually be honored - the
+        # spell itself may still be covered (via a fallback tier), just not at
+        # the exact tier that was targeted for it specifically.
+        unmatched_priority_tiers = []
+        for spell, tier in self.priority_tiers_data:
+            if spell not in covered_bases:
+                continue  # already covered by the warning above
+            actual_item = next((it for it in build.values()
+                                if _spell_base((it.get('Spell') or '').lower()) == spell), None)
+            if actual_item is None:
+                continue
+            actual_rank = _spell_tier_rank((actual_item.get('Spell') or '').lower())
+            if actual_rank != _TIER_RANK[tier]:
+                actual_label = next((r for r, n in _TIER_RANK.items() if n == actual_rank), 'untiered')
+                unmatched_priority_tiers.append(
+                    f"{spell} ({tier}) cannot be used - tier {actual_label} used instead")
+
+        if unmatched_priority_tiers:
+            messagebox.showwarning("No Acceptable Gear At Priority Tier",
+                "\n".join(unmatched_priority_tiers))
+
     def _show_all_matches(self):
         """Show ALL items matching criteria (not optimized for spell coverage)"""
         if not self.master_data:
