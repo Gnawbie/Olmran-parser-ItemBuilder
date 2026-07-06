@@ -1207,13 +1207,15 @@ class App(tk.Tk):
         self.tab_export = ttk.Frame(nb, padding=12)
         self.tab_build = ttk.Frame(nb, padding=12)
         self.tab_results = ttk.Frame(nb, padding=12)
+        self.tab_saved = ttk.Frame(nb, padding=12)
 
         nb.add(self.tab_parse,  text='▶  Parse')
         nb.add(self.tab_fields, text='⚙  Fields')
         nb.add(self.tab_export, text='💾  Export')
         nb.add(self.tab_build, text='🔨  Build')
         nb.add(self.tab_results, text='📊  Results')  # Always visible
-        
+        nb.add(self.tab_saved, text='📌  Saved Builds')  # One tab holds every save
+
         self.notebook = nb  # Store reference to notebook
 
         self._build_parse_tab()
@@ -1221,6 +1223,7 @@ class App(tk.Tk):
         self._build_export_tab()
         self._build_build_tab()
         self._build_results_tab()
+        self._build_saved_builds_tab()
 
     # ── PARSE TAB (FILES + PARSING) ───────────────────────────
     def _build_parse_tab(self):
@@ -2609,8 +2612,10 @@ class App(tk.Tk):
         self.build_variant_combo.pack(side='left', padx=4)
         self.build_variant_combo.bind('<<ComboboxSelected>>', self._switch_build_variant)
         
-        ttk.Button(header_frame, text="📤 Export Results", 
+        ttk.Button(header_frame, text="📤 Export As...",
                   command=self._export_build_results).pack(side='right')
+        ttk.Button(header_frame, text="📌 Save Build",
+                  command=self._save_current_results).pack(side='right', padx=(0,6))
         
         # Results treeview
         results_frame = ttk.LabelFrame(t, text="Suggested Build", padding=10)
@@ -2665,7 +2670,121 @@ class App(tk.Tk):
         self.slot_alternates = {}
         self.build_variants = []
         self.items_by_slot = {}
-    
+
+    # ── SAVED BUILDS TAB ──────────────────────────────────────
+    def _build_saved_builds_tab(self):
+        """One permanent tab that holds every saved build as its own
+        (renamable, removable) panel, rather than spawning a new tab per save."""
+        outer = self.tab_saved
+        ttk.Label(outer, text="Saved Builds",
+                  font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0,10))
+
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient='vertical', command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        self.saved_builds_frame = ttk.Frame(canvas)
+        saved_canvas_window = canvas.create_window((0, 0), window=self.saved_builds_frame, anchor='nw')
+
+        def _on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+        self.saved_builds_frame.bind('<Configure>', _on_frame_configure)
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(saved_canvas_window, width=event.width)
+        canvas.bind('<Configure>', _on_canvas_configure)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+        canvas.bind('<Enter>', lambda e: canvas.bind_all('<MouseWheel>', _on_mousewheel))
+        canvas.bind('<Leave>', lambda e: canvas.unbind_all('<MouseWheel>'))
+
+        self.saved_builds = []  # list of {'name': tk.StringVar, 'headers': [...], 'rows': [...]}
+        self._render_saved_builds()
+
+    def _save_current_results(self):
+        """Add the currently displayed results as a new panel in the one
+        Saved Builds tab."""
+        if not self.search_results_tv.get_children():
+            messagebox.showwarning("No Results", "No build results to save. Run a search first.")
+            return
+
+        headers = self.search_results_tv['columns']
+        rows = []
+        for iid in self.search_results_tv.get_children():
+            values = self.search_results_tv.item(iid)['values']
+            if str(values[0]).startswith('█'):
+                continue  # divider row between stacked build variants
+            rows.append(values)
+
+        counter = getattr(self, 'saved_build_counter', 0) + 1
+        self.saved_build_counter = counter
+        self.saved_builds.append({
+            'name': tk.StringVar(value=f"Save {counter}"),
+            'headers': headers,
+            'rows': rows,
+        })
+        self._render_saved_builds()
+        self.notebook.select(self.tab_saved)
+
+    def _remove_saved_build(self, index):
+        if 0 <= index < len(self.saved_builds):
+            del self.saved_builds[index]
+            self._render_saved_builds()
+
+    def _render_saved_builds(self):
+        """Redraw every saved-build panel in order. Each panel has its own
+        renamable name field, its own results table, and a Remove button."""
+        for child in self.saved_builds_frame.winfo_children():
+            child.destroy()
+
+        if not self.saved_builds:
+            ttk.Label(self.saved_builds_frame,
+                     text="No builds saved yet - use \"Save Build\" from the Results tab.",
+                     foreground='#666').pack(anchor='w', pady=20)
+            return
+
+        for index, save in enumerate(self.saved_builds):
+            panel = ttk.LabelFrame(self.saved_builds_frame, padding=10)
+            panel.pack(fill='x', pady=(0,12), padx=(0,4))
+
+            header_frame = ttk.Frame(panel)
+            header_frame.pack(fill='x', pady=(0,8))
+            ttk.Label(header_frame, text="Name:").pack(side='left', padx=(0,4))
+            ttk.Entry(header_frame, textvariable=save['name'], width=30).pack(side='left', padx=(0,8))
+            ttk.Button(header_frame, text="✕ Remove",
+                      command=lambda i=index: self._remove_saved_build(i)).pack(side='right')
+            ttk.Button(header_frame, text="📤 Export As...",
+                      command=lambda i=index: self._export_saved_build(i)).pack(side='right', padx=(0,6))
+
+            tree_frame = ttk.Frame(panel)
+            tree_frame.pack(fill='both', expand=True)
+
+            cols = save['headers']
+            tv = ttk.Treeview(tree_frame, columns=cols, show='headings', height=min(10, max(3, len(save['rows']))))
+            for col in cols:
+                src_heading = self.search_results_tv.heading(col)
+                src_col = self.search_results_tv.column(col)
+                if col == 'Div':
+                    tv.heading(col, text='')
+                else:
+                    tv.heading(col, text=src_heading['text'], anchor=src_heading['anchor'])
+                tv.column(col, width=src_col['width'], stretch=False)
+
+            vsb2 = ttk.Scrollbar(tree_frame, orient='vertical', command=tv.yview)
+            hsb2 = ttk.Scrollbar(tree_frame, orient='horizontal', command=tv.xview)
+            tv.configure(yscrollcommand=vsb2.set, xscrollcommand=hsb2.set)
+            tv.grid(row=0, column=0, sticky='nsew')
+            vsb2.grid(row=0, column=1, sticky='ns')
+            hsb2.grid(row=1, column=0, sticky='ew')
+            tree_frame.rowconfigure(0, weight=1)
+            tree_frame.columnconfigure(0, weight=1)
+
+            for row in save['rows']:
+                tv.insert('', 'end', values=row)
+
     def _remove_items_by_area(self):
         """Remove items from results by area name"""
         area_filter = self.remove_area_var.get().strip().lower()
@@ -3358,79 +3477,213 @@ class App(tk.Tk):
         if hasattr(self, 'dual_wield_default'):
             self.dual_wield_var.set(self.dual_wield_default)
     
+    def _get_export_data(self):
+        """Collect the currently displayed results as (headers, rows), with
+        the visual Div spacer column and any divider rows (between stacked
+        build variants) stripped out - shared by every "Save As" format."""
+        headers = ['Slot', 'Item', 'Type', 'Spell', 'Level', 'Mob', 'Area', 'Alt Options']
+        rows = []
+        for item_id in self.search_results_tv.get_children():
+            values = list(self.search_results_tv.item(item_id)['values'])
+            if str(values[0]).startswith('█'):
+                continue  # divider row between stacked build variants
+            del values[7]  # drop the Div spacer column
+            rows.append(values)
+        return headers, rows
+
     def _export_build_results(self):
-        """Export build search results to Excel"""
-        # Check if there are results to export
+        """Save the currently displayed build search results as a spreadsheet,
+        HTML page, image, or formatted text document."""
         if not self.search_results_tv.get_children():
             messagebox.showwarning("No Results", "No build results to export. Run a search first.")
             return
-        
-        # Ask for save location
+        headers, rows = self._get_export_data()
+        self._export_data_as(headers, rows, default_name="Build_Results")
+
+    def _export_saved_build(self, index):
+        """Save one specific Saved Builds panel as a spreadsheet, HTML page,
+        image, or formatted text document."""
+        if not (0 <= index < len(self.saved_builds)):
+            return
+        save = self.saved_builds[index]
+        headers = [h for h in save['headers'] if h != 'Div']
+        div_idx = list(save['headers']).index('Div')
+        rows = [[v for i, v in enumerate(row) if i != div_idx] for row in save['rows']]
+        self._export_data_as(headers, rows, default_name=save['name'].get() or "Build_Results")
+
+    def _export_data_as(self, headers, rows, default_name):
+        """Shared "ask for a file, save in whichever format was picked" logic
+        used by both the live Results tab and each Saved Builds panel."""
         from datetime import datetime
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        default_name = f"Build_Results_{timestamp}.xlsx"
-        
+
         path = filedialog.asksaveasfilename(
             title='Export Build Results',
             initialdir=self.last_save_dir,
-            initialfile=default_name,
+            initialfile=f"{default_name}_{timestamp}.xlsx",
             defaultextension='.xlsx',
-            filetypes=[('Excel', '*.xlsx'), ('All', '*.*')])
-        
+            filetypes=[
+                ('Excel Spreadsheet', '*.xlsx'),
+                ('HTML Page', '*.html'),
+                ('Image (PNG)', '*.png'),
+                ('Text Document', '*.txt'),
+                ('All Files', '*.*'),
+            ])
+
         if not path:
             return
-        
+
+        ext = os.path.splitext(path)[1].lower()
+
         try:
-            # Create workbook
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Build Results"
-            
-            # Write headers (skip the visual "Div" spacer column - index 7, not real data)
-            from openpyxl.styles import Font, PatternFill, Alignment
-            headers = ['Slot', 'Item', 'Type', 'Spell', 'Level', 'Mob', 'Area', 'Alt Options']
-            ws.append(headers)
+            if ext == '.xlsx':
+                self._save_results_xlsx(path, headers, rows)
+            elif ext in ('.html', '.htm'):
+                self._save_results_html(path, headers, rows)
+            elif ext == '.png':
+                self._save_results_image(path, headers, rows)
+            elif ext == '.txt':
+                self._save_results_text(path, headers, rows)
+            else:
+                messagebox.showerror("Unknown Format",
+                    f"Unrecognized file extension '{ext}'. Use .xlsx, .html, .png, or .txt.")
+                return
 
-            # Style header row
-            hdr_font = Font(name='Arial', size=11, bold=True, color='FFFFFF')
-            hdr_fill = PatternFill(fill_type='solid', start_color='4472C4', end_color='4472C4')
-            for col_idx, header in enumerate(headers, 1):
-                cell = ws.cell(1, col_idx)
-                cell.font = hdr_font
-                cell.fill = hdr_fill
-                cell.alignment = Alignment(horizontal='center', vertical='center')
-
-            # Write data from treeview
-            for item_id in self.search_results_tv.get_children():
-                values = list(self.search_results_tv.item(item_id)['values'])
-                del values[7]  # drop the Div spacer column
-                ws.append(values)
-            
-            # Auto-size columns
-            for col in ws.columns:
-                max_length = 0
-                column = col[0].column_letter
-                for cell in col:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = min(max_length + 2, 50)
-                ws.column_dimensions[column].width = adjusted_width
-            
-            # Freeze header row
-            ws.freeze_panes = 'A2'
-            
-            # Save
-            wb.save(path)
             self.last_save_dir = os.path.dirname(path)
-            
-            messagebox.showinfo("Exported", 
-                f"Build results exported successfully!\n\n{len(self.search_results_tv.get_children())} items exported to:\n{path}")
-            
+            messagebox.showinfo("Exported",
+                f"Build results exported!\n\n{len(rows)} items exported to:\n{path}")
+
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export results:\n{str(e)}")
+
+    def _save_results_xlsx(self, path, headers, rows):
+        """Save as an Excel spreadsheet"""
+        from openpyxl.styles import Font, PatternFill, Alignment
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Build Results"
+        ws.append(headers)
+
+        hdr_font = Font(name='Arial', size=11, bold=True, color='FFFFFF')
+        hdr_fill = PatternFill(fill_type='solid', start_color='4472C4', end_color='4472C4')
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(1, col_idx)
+            cell.font = hdr_font
+            cell.fill = hdr_fill
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        for row in rows:
+            ws.append(row)
+
+        for col in ws.columns:
+            max_length = max((len(str(c.value)) for c in col if c.value is not None), default=0)
+            ws.column_dimensions[col[0].column_letter].width = min(max_length + 2, 50)
+
+        ws.freeze_panes = 'A2'
+        wb.save(path)
+
+    def _save_results_html(self, path, headers, rows):
+        """Save as a styled standalone HTML page"""
+        import html as html_module
+
+        parts = [
+            '<!DOCTYPE html><html><head><meta charset="utf-8">',
+            '<title>Build Results</title><style>',
+            'body{font-family:Arial,sans-serif;background:#f4f4f4;padding:24px;}',
+            'table{border-collapse:collapse;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.15);}',
+            'th,td{border:1px solid #ccc;padding:6px 12px;text-align:left;font-size:13px;white-space:nowrap;}',
+            'th{background:#4472C4;color:#fff;}',
+            'tr:nth-child(even){background:#f7f7f7;}',
+            '</style></head><body>',
+            '<h2>Build Results</h2><table><tr>',
+        ]
+        parts.append(''.join(f'<th>{html_module.escape(str(h))}</th>' for h in headers))
+        parts.append('</tr>')
+        for row in rows:
+            parts.append('<tr>' + ''.join(f'<td>{html_module.escape(str(v))}</td>' for v in row) + '</tr>')
+        parts.append('</table></body></html>')
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(parts))
+
+    def _save_results_image(self, path, headers, rows):
+        """Save as a rendered PNG table image (drawn directly, not a screen
+        capture, so it doesn't depend on the window being visible/unobstructed)"""
+        from PIL import Image, ImageDraw, ImageFont
+
+        try:
+            font = ImageFont.truetype("arial.ttf", 14)
+            font_bold = ImageFont.truetype("arialbd.ttf", 14)
+        except Exception:
+            font = ImageFont.load_default()
+            font_bold = font
+
+        padding = 10
+        row_height = 26
+        measurer = ImageDraw.Draw(Image.new('RGB', (10, 10)))
+        col_widths = []
+        for i, header in enumerate(headers):
+            width = measurer.textlength(str(header), font=font_bold)
+            for row in rows:
+                width = max(width, measurer.textlength(str(row[i]), font=font))
+            col_widths.append(int(width) + padding * 2)
+
+        total_width = sum(col_widths)
+        total_height = row_height * (len(rows) + 1)
+
+        img = Image.new('RGB', (total_width, total_height), 'white')
+        draw = ImageDraw.Draw(img)
+
+        draw.rectangle([0, 0, total_width, row_height], fill=(68, 114, 196))
+        x = 0
+        for i, header in enumerate(headers):
+            draw.text((x + padding, (row_height - 14) // 2), str(header), fill='white', font=font_bold)
+            x += col_widths[i]
+
+        y = row_height
+        for r_idx, row in enumerate(rows):
+            if r_idx % 2 == 1:
+                draw.rectangle([0, y, total_width, y + row_height], fill=(245, 245, 245))
+            x = 0
+            for i, value in enumerate(row):
+                draw.text((x + padding, y + (row_height - 14) // 2), str(value), fill='black', font=font)
+                x += col_widths[i]
+            y += row_height
+
+        x = 0
+        for w in col_widths:
+            x += w
+            draw.line([(x, 0), (x, total_height)], fill=(200, 200, 200))
+        y = 0
+        for _ in range(len(rows) + 2):
+            draw.line([(0, y), (total_width, y)], fill=(200, 200, 200))
+            y += row_height
+
+        img.save(path)
+
+    def _save_results_text(self, path, headers, rows):
+        """Save as a plain text document with aligned, fixed-width columns
+        so the formatting/structure survives in any text editor."""
+        col_widths = []
+        for i, header in enumerate(headers):
+            width = len(str(header))
+            for row in rows:
+                width = max(width, len(str(row[i])))
+            col_widths.append(width)
+
+        def format_row(values):
+            return '  '.join(str(v).ljust(col_widths[i]) for i, v in enumerate(values))
+
+        lines = ["Build Results", ""]
+        header_line = format_row(headers)
+        lines.append(header_line)
+        lines.append('-' * len(header_line))
+        for row in rows:
+            lines.append(format_row(row))
+
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
 
     def _assign_required_items(self, build, covered_bases, wanted_bases):
         """Seed the build dict with user-required items, one per available

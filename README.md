@@ -1,4 +1,4 @@
-# Gaming Log Parser v3.0
+# Gaming Log Parser v3.1
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -121,7 +121,12 @@ A build can include **at most one Crafted-realm item** — this is enforced auto
 
 ## Version History
 
-### v3.0 (Current)
+### v3.1 (Current)
+- Results tab: "Export As..." now supports four formats - Excel Spreadsheet, HTML Page, Image (PNG), and a fixed-width aligned Text Document - not just Excel
+- Fixed: exporting a build with multiple stacked build variants used to include the black divider rows as garbage rows of block characters; they're now correctly excluded from every export format
+- Added a permanent "Saved Builds" tab: click "Save Build" from the Results tab to add the current results as a panel there (rather than spawning a new notebook tab per save). Each panel has its own renamable name, its own "Export As..." (all four formats), and a Remove button
+
+### v3.0
 - Parry Staff is now implemented: it matches staff-type weapons and works like any other gear slot (picked purely by wanted spells), exempt from the Weapon/Shield/Two-Handed/Claw build-config checkboxes and Damage Type constraints
 - New spell category: Class Specific populated with 22 combat-enhance skills (backstab, bash, berzerk, crush, etc.)
 - Other1 renamed to General Skills, populated with climb/hide/jump/swim/percept/sneak.enhance
