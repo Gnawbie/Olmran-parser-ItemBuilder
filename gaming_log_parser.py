@@ -827,15 +827,24 @@ CHAT_SOURCES   = ['Timestamp','Channel','Speaker','Target','Message','File']
 COMBAT_SOURCES = ['Timestamp','Location','Attacker','Target','Action','Damage','Spell','Event','Full','File']
 LOOT_SOURCES   = ['Realm','Area','Mob','Item','Slot','Type','Spell','Level','Damage','Timer','Fumble','Accuracy','Defense','Sigil','SigilLvl','Weight','Notes','Timestamp','Location','Source','Quantity','Silver','Event','Full','File']
 
-# Spell name options for the Build tab category dropdowns. Populate the empty
-# lists (Class Specific, Other1, Other2) whenever the full spell lists are
-# available - no other code changes are needed, the dropdowns pick them up automatically.
+# Spell name options for the Build tab category dropdowns.
 SPELL_CATEGORIES = {
-    'Basic':          ['Agility', 'Dexterity', 'Constitution', 'Intelligence', 'Wisdom', 'Strength', 'Bless', 'Evade', 'Combat'],
-    'Class Specific': [],
-    'Shields/Buffs':  ['Protect', 'Blur', 'Shield', 'Tough.skin', 'Vitalize', 'Regenerate'],
-    'Other1':         [],
-    'Other2':         [],
+    'Basic':          ['Agility', 'Dexterity', 'Constitution', 'Intelligence', 'Wisdom', 'Strength', 'Bless', 'Evade', 'Combat', 'Tough.skin'],
+    'Class Specific': ['Backstab.enhance', 'Bash.enhance', 'Berzerk.enhance', 'Crush.enhance',
+                       'Double.enhance', 'Fired.enhance', 'Improve.enhance', 'Leathers.enhance',
+                       'Lockpick.enhance', 'Mark.enhance', 'Martialarts.enhance', 'Maul.enhance',
+                       'Melee.enhance', 'Pummel.enhance', 'Rake.enhance', 'Repair.enhance',
+                       'Slash.enhance', 'Tap.enhance', 'Thrust.enhance', 'Track.enhance',
+                       'Volley.enhance', 'Weapons.enhance'],
+    'Shields/Buffs':  ['Protect', 'Blur', 'Shield', 'Vitalize', 'Regenerate',
+                      'Bleed.resist', 'Disease.resist', 'Poison.resist'],
+    'General Skills': ['Climb.enhance', 'Hide.enhance', 'Jump.enhance', 'Swim.enhance',
+                       'Percept.enhance', 'Sneak.enhance'],
+    # Protects use minor/normal/improved instead of i/ii/iii - minor and
+    # improved are a PREFIX on the spell (e.g. "minor.cold.protect"), not a
+    # suffix; "normal" is the bare spell name with no prefix at all.
+    'Protects':       ['Cold.protect', 'Earth.protect', 'Elemental.protect', 'Fire.protect',
+                       'Lightning.protect', 'Mental.protect', 'Shock.protect', 'Water.protect'],
 }
 
 SPELL_TIERS = ['(any)', 'i', 'ii', 'iii']
@@ -845,11 +854,24 @@ SPELL_CATEGORY_PARTIAL_NOTE = {
     'Shields/Buffs': '(more added soon)',
 }
 
-# Spells (lowercase) that only go up to a certain tier - the tier dropdown is
-# restricted to these values whenever the spell is selected. Default is SPELL_TIERS.
+# Spells (lowercase) whose tier dropdown is restricted (or extended) beyond
+# the default SPELL_TIERS whenever that spell is selected.
+PROTECT_SPELLS = ['cold.protect', 'earth.protect', 'elemental.protect', 'fire.protect',
+                  'lightning.protect', 'mental.protect', 'shock.protect', 'water.protect']
+# Protects show minor/normal/improved as friendlier labels, but these map
+# directly onto the ordinary .i/.ii/.iii suffix everything else uses - no
+# special parsing, so there's no confusion around the word "protect" itself.
+PROTECT_TIERS = ['(any)', 'minor', 'normal', 'improved']
+PROTECT_TIER_TO_SUFFIX = {'minor': 'i', 'normal': 'ii', 'improved': 'iii'}
+# TODO: some improved.spell (tier iii) Protects aren't showing up in build
+# search results - root cause not yet diagnosed, fix deferred (2026-07-05).
+
 SPELL_TIER_RESTRICTIONS = {
     'agility': ['(any)', 'i', 'ii'],
     'bless': ['(any)', 'i', 'ii'],
+    # disease.resist is the only spell that goes up to tier iv
+    'disease.resist': ['(any)', 'i', 'ii', 'iii', 'iv'],
+    **{spell: PROTECT_TIERS for spell in PROTECT_SPELLS},
 }
 
 # A build can include at most this many items from the "Crafted" realm.
@@ -865,19 +887,19 @@ SPELL_VALUE_OVERRIDES = {
     'evade': 'evade.enhance',
 }
 
-_TIER_RANK = {'i': 1, 'ii': 2, 'iii': 3}
+_TIER_RANK = {'i': 1, 'ii': 2, 'iii': 3, 'iv': 4}
 
 
 def _spell_base(spell):
-    """Strip a trailing .i/.ii/.iii tier suffix so different tiers of the same
-    wanted spell are recognized as one requirement, not two."""
-    m = re.match(r'^(.*)\.(i|ii|iii)$', spell.strip().lower())
+    """Strip a trailing .i/.ii/.iii/.iv tier suffix so different tiers of the
+    same wanted spell are recognized as one requirement, not two."""
+    m = re.match(r'^(.*)\.(i|ii|iii|iv)$', spell.strip().lower())
     return m.group(1) if m else spell.strip().lower()
 
 
 def _spell_tier_rank(variant):
     """Rank of the tier suffix on a wanted-spell string (0 if untiered/any)."""
-    m = re.match(r'^.*\.(i|ii|iii)$', variant.strip().lower())
+    m = re.match(r'^.*\.(i|ii|iii|iv)$', variant.strip().lower())
     return _TIER_RANK[m.group(1)] if m else 0
 
 
@@ -2234,9 +2256,8 @@ class App(tk.Tk):
                 ttk.Label(spell_input_frame, text=SPELL_CATEGORY_PARTIAL_NOTE[category],
                          font=('Arial', 8, 'italic'), foreground='#888').pack(side='left', padx=4)
 
-        # TEMPORARY manual entry - covers spells not yet in a category dropdown
-        # (mainly Class Specific / Other1 / Other2). Remove this row once those
-        # lists are fully compiled and every spell has a proper dropdown home.
+        # Manual entry - fallback for any spell not covered by the category
+        # dropdowns above.
         manual_frame = ttk.Frame(spell_block)
         manual_frame.pack(fill='x', pady=2)
         ttk.Label(manual_frame, text="Manual:", width=12).pack(side='left')
@@ -2244,8 +2265,6 @@ class App(tk.Tk):
         ttk.Entry(manual_frame, textvariable=self.manual_spell_var, width=22).pack(side='left', padx=4)
         ttk.Button(manual_frame, text="Add to List",
                   command=self._add_manual_spell).pack(side='left', padx=4)
-        ttk.Label(manual_frame, text="(temporary, until Class Specific/Other1/Other2 lists are compiled)",
-                 font=('Arial', 8, 'italic'), foreground='#a33').pack(side='left', padx=4)
 
         # Wanted Spells (narrower, left) and Required Items (right, next to it)
         # share a row instead of each spanning the full width stacked vertically.
@@ -2415,15 +2434,13 @@ class App(tk.Tk):
         ttk.Radiobutton(weapon_style_frame, text="Direct (Caster)", 
                        variable=self.weapon_style_var, value='direct-caster').pack(side='left', padx=4)
         
-        # Parry Staff (formerly "Direct (Stat)") with note
-        direct_stat_frame = ttk.Frame(weapon_style_frame)
-        direct_stat_frame.pack(side='left')
-        ttk.Radiobutton(direct_stat_frame, text="Parry Staff",
+        # Parry Staff: caster utility staves holding non-offensive spells.
+        # Works like any other gear slot (picked purely by wanted spells,
+        # not build-config/damage-type), rather than as a combat weapon.
+        ttk.Radiobutton(weapon_style_frame, text="Parry Staff",
                        variable=self.weapon_style_var, value='direct-stat').pack(side='left', padx=4)
-        ttk.Label(direct_stat_frame, text="[not yet implemented]",
-                 foreground='#888', font=('Arial', 8)).pack(side='left', padx=2)
-        
-        ttk.Radiobutton(weapon_style_frame, text="Any", 
+
+        ttk.Radiobutton(weapon_style_frame, text="Any",
                        variable=self.weapon_style_var, value='').pack(side='left', padx=4)
         
         # Build configuration (checkboxes)
@@ -2475,7 +2492,7 @@ class App(tk.Tk):
         # Required Items, shown by their short base name (no .i/.ii/.iii tier
         # suffix) to save space. Multiple can be added; the viewing area below
         # is the same width as the dropdown and tall enough to reach down to
-        # the Other2 row of the spell category dropdowns beside it.
+        # the Protects row of the spell category dropdowns beside it.
         priority_block = ttk.Frame(spell_and_realm_frame)
         priority_block.pack(side='left', anchor='n', padx=(20, 0))
         ttk.Label(priority_block, text="Priority Spell:").pack(anchor='w')
@@ -2514,6 +2531,9 @@ class App(tk.Tk):
         self.priority_tier_combo = ttk.Combobox(priority_tier_pick_frame, textvariable=self.priority_tier_var,
                                                 values=['i', 'ii', 'iii'], state='readonly', width=5)
         self.priority_tier_combo.pack(side='left', padx=(2,0))
+        # Narrow the tier options to whatever's valid for the selected spell,
+        # same as the category dropdowns (e.g. Protects -> minor/normal/improved)
+        self.priority_tier_spell_var.trace_add('write', lambda *args: self._update_priority_tier_options())
         ttk.Button(priority_tier_pick_frame, text="+", width=2,
                   command=self._add_priority_tier).pack(side='left', padx=(2,0))
 
@@ -2684,6 +2704,16 @@ class App(tk.Tk):
         if self.category_tier_vars[category].get() not in allowed:
             self.category_tier_vars[category].set(allowed[0])
 
+    def _update_priority_tier_options(self):
+        """Same as _update_tier_options, but for the Priority Tier box's own
+        tier dropdown (e.g. picking a Protect there should offer
+        minor/normal/improved, not the default i/ii/iii)."""
+        spell = self.priority_tier_spell_var.get().strip().lower()
+        allowed = [t for t in SPELL_TIER_RESTRICTIONS.get(spell, SPELL_TIERS) if t != '(any)']
+        self.priority_tier_combo['values'] = allowed
+        if self.priority_tier_var.get() not in allowed:
+            self.priority_tier_var.set(allowed[0])
+
     def _add_categorized_spell(self, category):
         """Add the spell selected in a category dropdown (plus tier) to the wanted spells list"""
         spell = self.category_spell_vars[category].get().strip()
@@ -2692,13 +2722,16 @@ class App(tk.Tk):
 
         combined = SPELL_VALUE_OVERRIDES.get(spell.lower(), spell.lower())
         tier = self.category_tier_vars[category].get()
+        # Protects show friendlier labels (minor/normal/improved) but these
+        # map directly onto the ordinary i/ii/iii suffix - no special format.
+        tier = PROTECT_TIER_TO_SUFFIX.get(tier, tier)
         if tier and tier != '(any)':
             combined = f"{combined}.{tier}"
 
         self._append_wanted_spell(combined)
 
     def _add_manual_spell(self):
-        """TEMPORARY free-text add - remove once Class Specific/Other1/Other2 dropdowns are populated"""
+        """Free-text add - fallback for any spell not covered by the category dropdowns"""
         spell = self.manual_spell_var.get().strip()
         if not spell:
             return
@@ -2792,6 +2825,9 @@ class App(tk.Tk):
         tier = self.priority_tier_var.get()
         if not spell or spell == '(none)' or not tier:
             return
+        # Protects show friendlier labels (minor/normal/improved) but these
+        # map directly onto the ordinary i/ii/iii tier rank used everywhere else.
+        tier = PROTECT_TIER_TO_SUFFIX.get(tier, tier)
         pair = (spell, tier)
         if pair not in self.priority_tiers_data:
             self.priority_tiers_data.append(pair)
@@ -3612,63 +3648,71 @@ class App(tk.Tk):
             
             # Apply weapon/shield/claw constraints
             if item_slot == 'weapon' or item_slot == 'shield' or item_slot == 'claw':
-                # Weapon style constraint (melee vs direct-caster vs direct-stat)
-                if weapon_style == 'melee':
-                    # Melee weapons do NOT have 'direct' in type, and staves are
-                    # their own Parry Staff category, not plain melee weapons.
-                    if 'direct' in item_type or 'staff' in item_type:
-                        continue
-                elif weapon_style == 'direct-caster':
-                    # Direct (Caster) weapons HAVE 'direct' in type, but staves
-                    # belong to Parry Staff even if also marked 'direct'.
-                    if 'direct' not in item_type or 'staff' in item_type:
-                        continue
-                elif weapon_style == 'direct-stat':
-                    # Parry Staff - NOT YET IMPLEMENTED
-                    # Will filter for stat skills when defined
-                    # For now, skip all items
-                    continue
-                
-                # Build configuration checkboxes
-                # If no checkboxes are selected, accept everything
-                has_any_config = wants_weapon or wants_shield or wants_two_handed or wants_claw_1 or wants_claw_2
+                # Weapon style constraint - only meaningful for the weapon
+                # slot itself (melee vs direct-caster vs direct-stat/Parry Staff)
+                if item_slot == 'weapon':
+                    if weapon_style == 'melee':
+                        # Melee weapons do NOT have 'direct' in type, and staves are
+                        # their own Parry Staff category, not plain melee weapons.
+                        if 'direct' in item_type or 'staff' in item_type:
+                            continue
+                    elif weapon_style == 'direct-caster':
+                        # Direct (Caster) weapons HAVE 'direct' in type, but staves
+                        # belong to Parry Staff even if also marked 'direct'.
+                        if 'direct' not in item_type or 'staff' in item_type:
+                            continue
+                    elif weapon_style == 'direct-stat':
+                        # Parry Staff: caster utility staves holding non-offensive
+                        # spells. Works like any other gear slot - just needs to
+                        # be a staff-type item, picked purely by wanted spells.
+                        if 'staff' not in item_type:
+                            continue
 
-                if has_any_config:
-                    slot_accepted = False
+                # Build configuration checkboxes and Damage Type only apply to
+                # actual combat weapons (melee/direct-caster) - Parry Staff
+                # isn't a combat weapon (no 1h/2h/dual-wield/damage-type
+                # concept for it), so it's exempt from both, same as any
+                # other gear slot like head/cloak.
+                if not (item_slot == 'weapon' and weapon_style == 'direct-stat'):
+                    # If no checkboxes are selected, accept everything
+                    has_any_config = wants_weapon or wants_shield or wants_two_handed or wants_claw_1 or wants_claw_2
 
-                    if item_slot == 'weapon':
-                        # Regular 1h weapons
-                        if wants_weapon and '1h' in item_type:
-                            slot_accepted = True
-                        # Two-handed weapons
-                        if wants_two_handed and '2h' in item_type:
-                            slot_accepted = True
-                        # Dual-wield: need 1h weapons for both hands
-                        if wants_dual_wield and '1h' in item_type:
-                            slot_accepted = True
+                    if has_any_config:
+                        slot_accepted = False
 
-                    elif item_slot == 'shield':
-                        # Shields
-                        if wants_shield:
-                            slot_accepted = True
+                        if item_slot == 'weapon':
+                            # Regular 1h weapons
+                            if wants_weapon and '1h' in item_type:
+                                slot_accepted = True
+                            # Two-handed weapons
+                            if wants_two_handed and '2h' in item_type:
+                                slot_accepted = True
+                            # Dual-wield: need 1h weapons for both hands
+                            if wants_dual_wield and '1h' in item_type:
+                                slot_accepted = True
 
-                    elif item_slot == 'claw':
-                        # Claws - 1 Claw fills one claw slot, 2 Claw fills both
-                        if wants_claw_1 or wants_claw_2:
-                            slot_accepted = True
+                        elif item_slot == 'shield':
+                            # Shields
+                            if wants_shield:
+                                slot_accepted = True
 
-                    if not slot_accepted:
-                        continue
+                        elif item_slot == 'claw':
+                            # Claws - 1 Claw fills one claw slot, 2 Claw fills both
+                            if wants_claw_1 or wants_claw_2:
+                                slot_accepted = True
 
-                # Damage type constraints (for weapons/claws only, not shields)
-                if item_slot in ('weapon', 'claw') and weapon_type_constraints:
-                    type_match = False
-                    for weapon_type in weapon_type_constraints:
-                        if weapon_type.lower() in item_type:
-                            type_match = True
-                            break
-                    if not type_match:
-                        continue
+                        if not slot_accepted:
+                            continue
+
+                    # Damage type constraints (for weapons/claws only, not shields)
+                    if item_slot in ('weapon', 'claw') and weapon_type_constraints:
+                        type_match = False
+                        for weapon_type in weapon_type_constraints:
+                            if weapon_type.lower() in item_type:
+                                type_match = True
+                                break
+                        if not type_match:
+                            continue
             
             # Add to slot group
             if item_slot not in items_by_slot:
@@ -4065,63 +4109,71 @@ class App(tk.Tk):
             
             # Apply weapon/shield/claw constraints
             if item_slot == 'weapon' or item_slot == 'shield' or item_slot == 'claw':
-                # Weapon style constraint (melee vs direct-caster vs direct-stat)
-                if weapon_style == 'melee':
-                    # Melee weapons do NOT have 'direct' in type, and staves are
-                    # their own Parry Staff category, not plain melee weapons.
-                    if 'direct' in item_type or 'staff' in item_type:
-                        continue
-                elif weapon_style == 'direct-caster':
-                    # Direct (Caster) weapons HAVE 'direct' in type, but staves
-                    # belong to Parry Staff even if also marked 'direct'.
-                    if 'direct' not in item_type or 'staff' in item_type:
-                        continue
-                elif weapon_style == 'direct-stat':
-                    # Parry Staff - NOT YET IMPLEMENTED
-                    # Will filter for stat skills when defined
-                    # For now, skip all items
-                    continue
-                
-                # Build configuration checkboxes
-                # If no checkboxes are selected, accept everything
-                has_any_config = wants_weapon or wants_shield or wants_two_handed or wants_claw_1 or wants_claw_2
+                # Weapon style constraint - only meaningful for the weapon
+                # slot itself (melee vs direct-caster vs direct-stat/Parry Staff)
+                if item_slot == 'weapon':
+                    if weapon_style == 'melee':
+                        # Melee weapons do NOT have 'direct' in type, and staves are
+                        # their own Parry Staff category, not plain melee weapons.
+                        if 'direct' in item_type or 'staff' in item_type:
+                            continue
+                    elif weapon_style == 'direct-caster':
+                        # Direct (Caster) weapons HAVE 'direct' in type, but staves
+                        # belong to Parry Staff even if also marked 'direct'.
+                        if 'direct' not in item_type or 'staff' in item_type:
+                            continue
+                    elif weapon_style == 'direct-stat':
+                        # Parry Staff: caster utility staves holding non-offensive
+                        # spells. Works like any other gear slot - just needs to
+                        # be a staff-type item, picked purely by wanted spells.
+                        if 'staff' not in item_type:
+                            continue
 
-                if has_any_config:
-                    slot_accepted = False
+                # Build configuration checkboxes and Damage Type only apply to
+                # actual combat weapons (melee/direct-caster) - Parry Staff
+                # isn't a combat weapon (no 1h/2h/dual-wield/damage-type
+                # concept for it), so it's exempt from both, same as any
+                # other gear slot like head/cloak.
+                if not (item_slot == 'weapon' and weapon_style == 'direct-stat'):
+                    # If no checkboxes are selected, accept everything
+                    has_any_config = wants_weapon or wants_shield or wants_two_handed or wants_claw_1 or wants_claw_2
 
-                    if item_slot == 'weapon':
-                        # Regular 1h weapons
-                        if wants_weapon and '1h' in item_type:
-                            slot_accepted = True
-                        # Two-handed weapons
-                        if wants_two_handed and '2h' in item_type:
-                            slot_accepted = True
-                        # Dual-wield: need 1h weapons for both hands
-                        if wants_dual_wield and '1h' in item_type:
-                            slot_accepted = True
+                    if has_any_config:
+                        slot_accepted = False
 
-                    elif item_slot == 'shield':
-                        # Shields
-                        if wants_shield:
-                            slot_accepted = True
+                        if item_slot == 'weapon':
+                            # Regular 1h weapons
+                            if wants_weapon and '1h' in item_type:
+                                slot_accepted = True
+                            # Two-handed weapons
+                            if wants_two_handed and '2h' in item_type:
+                                slot_accepted = True
+                            # Dual-wield: need 1h weapons for both hands
+                            if wants_dual_wield and '1h' in item_type:
+                                slot_accepted = True
 
-                    elif item_slot == 'claw':
-                        # Claws - 1 Claw fills one claw slot, 2 Claw fills both
-                        if wants_claw_1 or wants_claw_2:
-                            slot_accepted = True
+                        elif item_slot == 'shield':
+                            # Shields
+                            if wants_shield:
+                                slot_accepted = True
 
-                    if not slot_accepted:
-                        continue
+                        elif item_slot == 'claw':
+                            # Claws - 1 Claw fills one claw slot, 2 Claw fills both
+                            if wants_claw_1 or wants_claw_2:
+                                slot_accepted = True
 
-                # Damage type constraints (for weapons/claws only, not shields)
-                if item_slot in ('weapon', 'claw') and weapon_type_constraints:
-                    type_match = False
-                    for weapon_type in weapon_type_constraints:
-                        if weapon_type.lower() in item_type:
-                            type_match = True
-                            break
-                    if not type_match:
-                        continue
+                        if not slot_accepted:
+                            continue
+
+                    # Damage type constraints (for weapons/claws only, not shields)
+                    if item_slot in ('weapon', 'claw') and weapon_type_constraints:
+                        type_match = False
+                        for weapon_type in weapon_type_constraints:
+                            if weapon_type.lower() in item_type:
+                                type_match = True
+                                break
+                        if not type_match:
+                            continue
             
             # Add to slot group
             if item_slot not in items_by_slot:
