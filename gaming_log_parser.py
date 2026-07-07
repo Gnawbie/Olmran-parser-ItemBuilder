@@ -3920,6 +3920,13 @@ class App(tk.Tk):
                         # be a staff-type item, picked purely by wanted spells.
                         if 'staff' not in item_type:
                             continue
+                    else:
+                        # Any (no weapon style selected): staves are their own
+                        # Parry Staff category and shouldn't show up as a
+                        # regular weapon pick unless Parry Staff is explicitly
+                        # chosen above.
+                        if 'staff' in item_type:
+                            continue
 
                 # Build configuration checkboxes and Damage Type only apply to
                 # actual combat weapons (melee/direct-caster) - Parry Staff
@@ -4011,91 +4018,265 @@ class App(tk.Tk):
         elif wants_claw_1:
             slots_to_fill += ['claw_1']
 
-        for slot in slots_to_fill:
-            if slot in build:
-                continue  # already filled by a Required Item
+        # Claw slots allow redundant/duplicate spell coverage (dual-wielding
+        # needs a physical item in each hand even if it repeats a spell) so
+        # they don't fit the "each base covered by exactly one slot" model
+        # below - they're filled the old greedy way, after the exact search
+        # settles everything else.
+        exact_slots = [s for s in slots_to_fill if not s.startswith('claw') and s not in build]
+        claw_slots = [s for s in slots_to_fill if s.startswith('claw') and s not in build]
 
-            # For jewel/claw slots, look in the shared 'jewel'/'claw' item groups
-            lookup_slot = 'jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw') else slot
+        # EXACT OPTIMAL BUILD SEARCH: a fixed slot-processing order means a
+        # greedy pass can lock a spell into a lower tier in an early slot even
+        # though a higher tier for it sits unclaimed in a later slot occupied
+        # by something swappable (e.g. strength stuck at .ii on a jewel while
+        # a .iii item exists on boots, because feet hadn't been considered
+        # yet when jewel grabbed its best-available match). Wanted/priority
+        # bases are tracked as a bitmask, one bit each, so the search state -
+        # and therefore what gets memoized - stays small enough to explore
+        # every real combination instead of committing slot-by-slot.
+        base_list = list(wanted_bases.keys())
+        base_bit = {base: (1 << i) for i, base in enumerate(base_list)}
+        initial_covered_bitmask = 0
+        for base in covered_bases:
+            initial_covered_bitmask |= base_bit.get(base, 0)
 
-            if lookup_slot not in items_by_slot:
+        # Score weights: each tier's full possible range is dwarfed by one
+        # unit of the tier above it, so summing these as plain integers along
+        # a search path is equivalent to comparing
+        # (bases_covered, priority_matches, tier_priority_hits, tier, level)
+        # lexicographically, while staying simple/fast integer arithmetic.
+        W_LEVEL = 1
+        W_TIER = 2_000
+        W_TIER_PRIORITY = 200_000
+        W_PRIORITY = 5_000_000
+        W_COVERAGE = 300_000_000
+
+        # Pre-score every item once per lookup slot, collapsing items that are
+        # identical in everything the search cares about (bases matched,
+        # priority/tier-priority hits, tier, crafted-ness) down to their
+        # single highest-level representative - keeps the search fast without
+        # changing which overall score is reachable. Alternates for
+        # "Generate multiple build options" are recomputed from the full
+        # unpruned list further below, so nothing is lost for that.
+        candidates_by_slot = {}
+        for lookup_slot, items in items_by_slot.items():
+            if lookup_slot == 'claw':
                 continue
-
-            # Score each item by how many NEW base spells it covers; break ties
-            # by preferring the item that matches the highest requested tier
-            # ("best fit") so a plain-tier item doesn't edge out a better match.
-            # Claw slots are exempt from the "already covered" skip: dual-wielding
-            # needs a physical item in both hands even if the second one is
-            # spell-redundant, unlike unique slots (head, cloak, etc).
-            allow_redundant = slot.startswith('claw')
-            best_item = None
-            best_matched_bases = []
-            best_key = (-1, 0, -1, -1, -1)
-            tied_items = []
-
-            for item in items_by_slot[lookup_slot]:
-                # A claw already equipped in the other hand can't be picked again.
-                if allow_redundant and any(item is used for used in used_claw_items):
-                    continue
-
-                # Cap on Crafted-realm items across the whole build - once the
-                # limit is reached, Crafted items are no longer eligible picks.
-                item_realm = (item.get('Realm') or '').strip().lower()
-                if 'crafted' in item_realm and crafted_count >= MAX_CRAFTED_ITEMS:
-                    continue
-
+            seen = {}
+            for item in items:
                 item_spell = (item.get('Spell') or '').lower()
-                # The item's own tier, read off its actual spell text - not which
-                # wanted variant matched, since "dexterity.i" is itself a substring
-                # of "dexterity.iii" and would misreport a tier-iii item as tier-i.
                 item_tier = _spell_tier_rank(item_spell)
-
-                # Min/Max Tier constraints (only bound tiered spells - an
-                # untiered spell has no tier to compare, so it's unaffected)
                 if item_tier > 0:
                     if min_tier_rank is not None and item_tier < min_tier_rank:
                         continue
                     if max_tier_rank is not None and item_tier > max_tier_rank:
                         continue
 
-                # Level tie-break: prefer the item closest to Max Level, falling
-                # back to progressively lower levels when nothing sits at the max.
+                item_bitmask = 0
+                for base in base_list:
+                    if base in item_spell:
+                        item_bitmask |= base_bit[base]
+                if not item_bitmask:
+                    continue
+
                 try:
                     item_level_num = int(item.get('Level') or 0)
                 except (ValueError, TypeError):
                     item_level_num = 0
 
-                # Match on the base spell only - a lower or higher tier than
-                # exactly what was requested still counts, so a slot doesn't
-                # sit empty just because nothing hits the exact tier asked
-                # for. covered_bases still guarantees no base spell is ever
-                # assigned to two slots, regardless of tier.
-                matched_bases = []
-                for base in wanted_bases:
-                    if base in covered_bases and not allow_redundant:
-                        continue
-                    if base in item_spell:
-                        matched_bases.append(base)
+                priority_matches = sum(1 for p in priority_spells if p in item_spell)
+                item_base = _spell_base(item_spell)
+                item_priority_tiers = priority_tier_ranks_by_base.get(item_base)
+                tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
+                is_crafted = 'crafted' in (item.get('Realm') or '').strip().lower()
 
+                sig = (item_bitmask, priority_matches, tier_priority_match, item_tier, is_crafted)
+                prev = seen.get(sig)
+                if prev is None or item_level_num > prev[1]:
+                    seen[sig] = (item, item_level_num)
+
+            candidates_by_slot[lookup_slot] = [
+                (item, sig[0], sig[1], sig[2], sig[3], lvl, sig[4])
+                for sig, (item, lvl) in seen.items()
+            ]
+
+        memo = {}
+
+        def solve(idx, covered, crafted_n):
+            if idx == len(exact_slots):
+                return (0, [])
+            key = (idx, covered, crafted_n)
+            cached = memo.get(key)
+            if cached is not None:
+                return cached
+
+            slot = exact_slots[idx]
+            lookup_slot = 'jewel' if slot.startswith('jewel') else slot
+
+            best_score, best_rest = solve(idx + 1, covered, crafted_n)
+            best_choice = None
+
+            for (item, item_bitmask, priority_matches, tier_priority_match,
+                 item_tier, item_level_num, is_crafted) in candidates_by_slot.get(lookup_slot, []):
+                new_bases = item_bitmask & ~covered
+                if not new_bases:
+                    continue
+                if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
+                    continue
+
+                step_score = (bin(new_bases).count('1') * W_COVERAGE
+                              + priority_matches * W_PRIORITY
+                              + tier_priority_match * W_TIER_PRIORITY
+                              + item_tier * W_TIER
+                              + item_level_num * W_LEVEL)
+
+                rest_score, rest_path = solve(idx + 1, covered | new_bases,
+                                               crafted_n + (1 if is_crafted else 0))
+                total = step_score + rest_score
+                if total > best_score:
+                    best_score = total
+                    best_choice = item
+                    best_rest = rest_path
+
+            result = (best_score,
+                      [(slot, best_choice)] + best_rest) if best_choice is not None else (
+                      best_score, [(slot, None)] + best_rest)
+            memo[key] = result
+            return result
+
+        _, assignment = solve(0, initial_covered_bitmask, crafted_count)
+
+        base_covered_by_slot = {}
+        for slot, item in assignment:
+            if item is None:
+                continue
+            build[slot] = item
+            item_spell = (item.get('Spell') or '').lower()
+            for base in base_list:
+                if base in item_spell and base not in covered_bases:
+                    covered_bases.add(base)
+                    base_covered_by_slot[base] = slot
+            if 'crafted' in (item.get('Realm') or '').strip().lower():
+                crafted_count += 1
+
+        # Post-hoc alternates for the exact-search slots: any other item that
+        # would have contributed the exact same NEW bases at the exact same
+        # priority/tier-priority/tier/level score, had it been chosen instead
+        # of the one the search picked - genuinely interchangeable, so
+        # swapping it into a build variant can't duplicate or drop a spell
+        # elsewhere in the build.
+        final_covered_bitmask = 0
+        for base in covered_bases:
+            final_covered_bitmask |= base_bit.get(base, 0)
+
+        for slot, item in assignment:
+            if item is None:
+                continue
+            lookup_slot = 'jewel' if slot.startswith('jewel') else slot
+            this_slot_bitmask = 0
+            for base, owner in base_covered_by_slot.items():
+                if owner == slot:
+                    this_slot_bitmask |= base_bit[base]
+            covered_without_slot = final_covered_bitmask & ~this_slot_bitmask
+
+            item_spell = (item.get('Spell') or '').lower()
+            item_tier = _spell_tier_rank(item_spell)
+            item_is_crafted = 'crafted' in (item.get('Realm') or '').strip().lower()
+            priority_matches = sum(1 for p in priority_spells if p in item_spell)
+            item_base = _spell_base(item_spell)
+            item_priority_tiers = priority_tier_ranks_by_base.get(item_base)
+            tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
+            try:
+                item_level_num = int(item.get('Level') or 0)
+            except (ValueError, TypeError):
+                item_level_num = 0
+            chosen_key = (priority_matches, tier_priority_match, item_tier, item_level_num)
+
+            alternates = []
+            for other in items_by_slot.get(lookup_slot, []):
+                if other is item:
+                    continue
+                other_spell = (other.get('Spell') or '').lower()
+                other_tier = _spell_tier_rank(other_spell)
+                if other_tier > 0:
+                    if min_tier_rank is not None and other_tier < min_tier_rank:
+                        continue
+                    if max_tier_rank is not None and other_tier > max_tier_rank:
+                        continue
+
+                other_is_crafted = 'crafted' in (other.get('Realm') or '').strip().lower()
+                if other_is_crafted and not item_is_crafted and crafted_count >= MAX_CRAFTED_ITEMS:
+                    continue
+
+                new_bases = 0
+                for base in base_list:
+                    if base in other_spell:
+                        new_bases |= base_bit[base]
+                new_bases &= ~covered_without_slot
+                if new_bases != this_slot_bitmask:
+                    continue
+
+                other_priority_matches = sum(1 for p in priority_spells if p in other_spell)
+                other_base = _spell_base(other_spell)
+                other_priority_tiers = priority_tier_ranks_by_base.get(other_base)
+                other_tier_priority_match = 1 if other_priority_tiers and other_tier in other_priority_tiers else 0
+                try:
+                    other_level_num = int(other.get('Level') or 0)
+                except (ValueError, TypeError):
+                    other_level_num = 0
+                other_key = (other_priority_matches, other_tier_priority_match, other_tier, other_level_num)
+                if other_key != chosen_key:
+                    continue
+
+                alternates.append(other)
+
+            if alternates:
+                self.slot_alternates[slot] = alternates
+
+        # Claw slots: unchanged greedy fill (see comment above exact_slots) -
+        # duplicate spell coverage across both hands is fine here, so they're
+        # picked after the rest of the build's coverage is already settled.
+        for slot in claw_slots:
+            lookup_slot = 'claw'
+            if lookup_slot not in items_by_slot:
+                continue
+
+            best_item = None
+            best_matched_bases = []
+            best_key = (-1, 0, -1, -1, -1)
+            tied_items = []
+
+            for item in items_by_slot[lookup_slot]:
+                if any(item is used for used in used_claw_items):
+                    continue
+
+                item_realm = (item.get('Realm') or '').strip().lower()
+                if 'crafted' in item_realm and crafted_count >= MAX_CRAFTED_ITEMS:
+                    continue
+
+                item_spell = (item.get('Spell') or '').lower()
+                item_tier = _spell_tier_rank(item_spell)
+                if item_tier > 0:
+                    if min_tier_rank is not None and item_tier < min_tier_rank:
+                        continue
+                    if max_tier_rank is not None and item_tier > max_tier_rank:
+                        continue
+
+                try:
+                    item_level_num = int(item.get('Level') or 0)
+                except (ValueError, TypeError):
+                    item_level_num = 0
+
+                matched_bases = [base for base in wanted_bases if base in item_spell]
                 if not matched_bases:
                     continue
 
                 priority_matches = sum(1 for p in priority_spells if p in item_spell)
-
-                # Priority Tier: if THIS item's own spell has a priority tier
-                # set for it, matching that tier wins over not matching it,
-                # ahead of the normal "always highest tier" preference - so a
-                # targeted tier (e.g. ii) can beat an available iii for that
-                # spell specifically, only falling back to other tiers if
-                # none of its priority tiers are available. Other spells with
-                # no priority tier entry are unaffected.
                 item_base = _spell_base(item_spell)
                 item_priority_tiers = priority_tier_ranks_by_base.get(item_base)
                 tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
 
-                # Tier is checked before level: prioritize the highest tier
-                # available for the spell, only dropping to a lower tier (or
-                # comparing levels) when nothing at a higher tier qualifies.
                 key = (priority_matches, len(matched_bases), tier_priority_match, item_tier, item_level_num)
                 if key > best_key:
                     best_key = key
@@ -4103,12 +4284,6 @@ class App(tk.Tk):
                     best_matched_bases = matched_bases
                     tied_items = [item]
                 elif key == best_key and set(matched_bases) == set(best_matched_bases):
-                    # Same score/level/tier isn't enough to call this a real
-                    # alternate - it must cover the exact same wanted bases as
-                    # the chosen item, or swapping it into a build variant
-                    # could duplicate one spell across two slots while leaving
-                    # another spell uncovered (e.g. a tied strength.ii item and
-                    # a tied wisdom.ii item aren't interchangeable substitutes).
                     tied_items.append(item)
 
             if best_item:
@@ -4116,14 +4291,11 @@ class App(tk.Tk):
                 covered_bases.update(best_matched_bases)
                 if 'crafted' in (best_item.get('Realm') or '').strip().lower():
                     crafted_count += 1
-                if allow_redundant:
-                    used_claw_items.append(best_item)
-                # Other items that tied for "best fit" in this slot - equally
-                # valid alternate picks for a future build-set selector.
+                used_claw_items.append(best_item)
                 alternates = [it for it in tied_items if it is not best_item]
                 if alternates:
                     self.slot_alternates[slot] = alternates
-        
+
         # Store the primary optimal build, then (if requested) generate additional
         # full build variants by swapping one tied alternate in at a time - lets
         # testers compare a few equally-good builds instead of just one.
@@ -4380,6 +4552,13 @@ class App(tk.Tk):
                         # spells. Works like any other gear slot - just needs to
                         # be a staff-type item, picked purely by wanted spells.
                         if 'staff' not in item_type:
+                            continue
+                    else:
+                        # Any (no weapon style selected): staves are their own
+                        # Parry Staff category and shouldn't show up as a
+                        # regular weapon pick unless Parry Staff is explicitly
+                        # chosen above.
+                        if 'staff' in item_type:
                             continue
 
                 # Build configuration checkboxes and Damage Type only apply to

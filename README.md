@@ -1,4 +1,4 @@
-# Gaming Log Parser v3.1
+# Gaming Log Parser v4.0
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -67,7 +67,7 @@ Want a specific piece of gear included no matter what? Type its name under **Req
 - **Set as Default** / **Clear Default** / **Clear All** manage your saved preferences
 
 **Weapon Constraints**
-- **Weapon Style:** Melee, Direct (Caster), Parry Staff *(not yet implemented)*, or Any
+- **Weapon Style:** Melee, Direct (Caster), Parry Staff, or Any (Any excludes Parry Staffs — pick Parry Staff explicitly to search for one)
 - **Build Config:** Weapon, Shield, Two-Handed, 1 Claw, 2 Claw — check whichever your build actually uses (some classes can only use one claw, others can dual-wield two)
 - **Dual-Wield** sub-option, for finding 1-handed weapons for both hands
 - **Damage Type:** Slashing, Thrusting, Crushing
@@ -78,7 +78,7 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Kaid, C
 A build can include **at most one Crafted-realm item** — this is enforced automatically during the search, not just a filter you have to remember.
 
 **Search**
-- **🎯 Find Optimal Build** — greedy search for the single best item per slot, covering as many wanted spells as possible under your constraints
+- **🎯 Find Optimal Build** — exact search across every slot at once for the combination that covers as many wanted spells as possible (and best satisfies Priority Tier targets) under your constraints, rather than committing slot-by-slot
 - **📋 Show All Matches** — lists every item that matches your filters, without narrowing to one per slot
 - **🎲 Generate multiple build options** (checkbox) — when checked, "Find Optimal Build" also generates up to 5 alternate full builds by swapping in equally-good "tied" items slot by slot, so you can compare a few options instead of just one
 
@@ -105,7 +105,6 @@ A build can include **at most one Crafted-realm item** — this is enforced auto
 - **Caster with Staff:** Direct (Caster) + Cloth armor + Two-Handed + Crushing
 
 ## Known Limitations
-- **Parry Staff** weapon style is not yet implemented
 - **Class Specific**, **Other1**, and **Other2** spell dropdowns are empty until those lists are compiled — use the temporary Manual entry box in the meantime
 - **Event** realm items work like any other realm filter, but there isn't yet dedicated Event-specific logic beyond the Realm column match
 
@@ -121,7 +120,12 @@ A build can include **at most one Crafted-realm item** — this is enforced auto
 
 ## Version History
 
-### v3.1 (Current)
+### v4.0 (Current)
+- Major change to Find Optimal Build: replaced the greedy per-slot search with an exact search that considers every slot at once, so a spell no longer gets stuck at a lower tier in one slot just because a slot processed earlier grabbed the only decent item first while a better-tier item for it sat unclaimed in a different, swappable slot
+- Fixed: Weapon Style "Any" could still pick Parry Staff-type weapons even when Parry Staff wasn't selected; staves are now only used when Parry Staff is explicitly chosen
+- Updated the bundled `Olmran_Community_Eq_and_Stats_List.xlsx` default equipment list, trimmed to just the Equipment sheet
+
+### v3.1
 - Results tab: "Export As..." now supports four formats - Excel Spreadsheet, HTML Page, Image (PNG), and a fixed-width aligned Text Document - not just Excel
 - Fixed: exporting a build with multiple stacked build variants used to include the black divider rows as garbage rows of block characters; they're now correctly excluded from every export format
 - Added a permanent "Saved Builds" tab: click "Save Build" from the Results tab to add the current results as a panel there (rather than spawning a new notebook tab per save). Each panel has its own renamable name, its own "Export As..." (all four formats), and a Remove button
