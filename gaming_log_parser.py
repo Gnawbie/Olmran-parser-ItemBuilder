@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.5"
+VERSION = "5.0.6"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -4882,6 +4882,16 @@ class App(tk.Tk):
         # staying simple/fast integer math. Each step is 10^6 above the
         # last - generously larger than any realistic per-slot total below it.
         W_LEVEL = 1
+        # Jewels have no armor type, and no per-slot Defense/Sigil options
+        # yet (Sigil for jewels isn't implemented), so unlike an armor
+        # slot, a jewel's own level carries no real significance - it's
+        # just whichever one happens to carry the wanted spell. Weighted
+        # above W_LEVEL but below W_TIER so the search still prefers a
+        # jewel over an armor-slot item for the exact same wanted spell
+        # (trying jewels before spreading requirements onto armor slots,
+        # per the user's request), without letting that preference override
+        # a genuine tier difference (a higher spell tier elsewhere still wins).
+        W_JEWEL_PREFERENCE = 10**3
         W_TIER = 10**6
         W_DEFENSE_PRIORITY = 10**12
         W_MELEE_MATCH = 10**18
@@ -5022,6 +5032,7 @@ class App(tk.Tk):
                               + melee_match * W_MELEE_MATCH
                               + defense_priority_match * W_DEFENSE_PRIORITY
                               + effective_item_tier * W_TIER
+                              + (W_JEWEL_PREFERENCE if lookup_slot == 'jewel' else 0)
                               + item_level_num * (W_LEVEL * 2)
                               + (0 if is_redundant_spell else W_LEVEL))
 
