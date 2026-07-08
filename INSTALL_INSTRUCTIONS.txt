@@ -35,16 +35,17 @@ Just double-click OlmranItemBuilder.exe. That's the whole program.
 
 WHERE THE PROGRAM STORES YOUR SETTINGS
 ------------------------------------------
-The program saves your last-used folders and Build tab defaults (armor,
-weapon, and dual-wield preferences) to a small config file at:
+The program saves your last-used folders, Build tab defaults (armor,
+weapon, and dual-wield preferences), and Saved Builds to a small config
+file at:
 
   %USERPROFILE%\.gaming_log_parser_config.json
 
 (that's your Windows user folder, e.g. C:\Users\YourName\.gaming_log_parser_config.json)
 
 This file is created automatically the first time you close the program and
-updated whenever you use "Set as Default" in the Build tab. Nothing else is
-written anywhere on your system.
+updated whenever you use "Set as Default" in the Build tab or save/remove a
+build in the Saved Builds tab. Nothing else is written anywhere on your system.
 
 To fully uninstall: delete OlmranItemBuilder.exe, and optionally delete the
 config file above if you don't plan to reinstall later.

@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.6"
+VERSION = "5.0.7"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1251,16 +1251,25 @@ class App(tk.Tk):
                     self.last_save_dir = config.get('last_save_dir', os.path.expanduser("~"))
                     self.armor_defaults = config.get('armor_defaults', {})
                     self.weapon_combo_defaults = config.get('weapon_combo_defaults', {})
+                    # Raw data only (no tk.StringVar yet - the Saved Builds tab
+                    # isn't built until later in __init__) - _build_saved_builds_tab
+                    # turns this into self.saved_builds.
+                    self._persisted_saved_builds = config.get('saved_builds', [])
+                    self._persisted_saved_build_counter = config.get('saved_build_counter', 0)
             else:
                 self.last_open_dir = os.path.expanduser("~")
                 self.last_save_dir = os.path.expanduser("~")
                 self.armor_defaults = {}
                 self.weapon_combo_defaults = {}
+                self._persisted_saved_builds = []
+                self._persisted_saved_build_counter = 0
         except Exception:
             self.last_open_dir = os.path.expanduser("~")
             self.last_save_dir = os.path.expanduser("~")
             self.armor_defaults = {}
             self.weapon_combo_defaults = {}
+            self._persisted_saved_builds = []
+            self._persisted_saved_build_counter = 0
 
     def _save_config(self):
         """Save configuration to file"""
@@ -1269,7 +1278,13 @@ class App(tk.Tk):
                 'last_open_dir': self.last_open_dir,
                 'last_save_dir': self.last_save_dir,
                 'armor_defaults': getattr(self, 'armor_defaults', {}),
-                'weapon_combo_defaults': getattr(self, 'weapon_combo_defaults', {})
+                'weapon_combo_defaults': getattr(self, 'weapon_combo_defaults', {}),
+                'saved_builds': [
+                    {'name': save['name'].get(), 'headers': list(save['headers']),
+                     'rows': [list(row) for row in save['rows']]}
+                    for save in getattr(self, 'saved_builds', [])
+                ],
+                'saved_build_counter': getattr(self, 'saved_build_counter', 0),
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f)
@@ -3088,7 +3103,16 @@ class App(tk.Tk):
         canvas.bind('<Enter>', lambda e: canvas.bind_all('<MouseWheel>', _on_mousewheel))
         canvas.bind('<Leave>', lambda e: canvas.unbind_all('<MouseWheel>'))
 
-        self.saved_builds = []  # list of {'name': tk.StringVar, 'headers': [...], 'rows': [...]}
+        # list of {'name': tk.StringVar, 'headers': [...], 'rows': [...]} -
+        # restored from the config file so saved builds survive closing and
+        # reopening the program, not just held in memory for the session.
+        self.saved_builds = [
+            {'name': tk.StringVar(value=save.get('name', '')),
+             'headers': save.get('headers', []),
+             'rows': [tuple(row) for row in save.get('rows', [])]}
+            for save in getattr(self, '_persisted_saved_builds', [])
+        ]
+        self.saved_build_counter = getattr(self, '_persisted_saved_build_counter', 0)
         self._render_saved_builds()
 
     def _save_current_results(self):
@@ -3118,11 +3142,13 @@ class App(tk.Tk):
         })
         self._render_saved_builds()
         self.notebook.select(self.tab_saved)
+        self._save_config()
 
     def _remove_saved_build(self, index):
         if 0 <= index < len(self.saved_builds):
             del self.saved_builds[index]
             self._render_saved_builds()
+            self._save_config()
 
     def _render_saved_builds(self):
         """Redraw every saved-build panel in order. Each panel has its own
@@ -4841,7 +4867,12 @@ class App(tk.Tk):
         # with the item list's Slot=weapon items (see items_by_slot['weapon_off']
         # below), but is otherwise treated as an ordinary slot by the exact
         # search, so it's optimized for spell coverage right alongside everything else.
-        slots_to_fill = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet', 'weapon', 'shield']
+        # Claws are their own one-handed weapon - a build using 1 or 2 Claw
+        # doesn't also equip a separate physical weapon/shield, so those two
+        # slots are left out entirely rather than always-filled alongside them.
+        slots_to_fill = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet']
+        if not (wants_claw_1 or wants_claw_2):
+            slots_to_fill += ['weapon', 'shield']
         if wants_dual_wield_1h:
             slots_to_fill.append('weapon_off')
         if wants_claw_2:
