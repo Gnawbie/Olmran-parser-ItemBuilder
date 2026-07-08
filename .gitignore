@@ -4,6 +4,12 @@ __pycache__/
 # Build artifacts / release zips - distributed via GitHub Releases instead
 *.zip
 
+# PyInstaller build output/spec - the .exe itself is a GitHub Release asset,
+# not something tracked in the repo
+build/
+dist/
+*.spec
+
 # Old test/scratch data, not part of the release
 prased/
 

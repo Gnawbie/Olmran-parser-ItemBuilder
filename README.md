@@ -1,4 +1,4 @@
-# Gaming Log Parser v4.9999999999
+# Gaming Log Parser v5.0
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -64,13 +64,14 @@ Want a specific piece of gear included no matter what? Type its name under **Req
 **Armor Constraints**
 - The **All:** row sets an armor type for every slot at once
 - Override individual slots (Head, Cloak, Body, Hands, Legs, Feet) with Cloth / Leather / Studded / Plate
+- Per-slot **Defense** (range) and **Sigil** dropdowns — soft preferences: an item matching them is favored, but a slot is never left empty just because nothing matches
 - **Set as Default** / **Clear Default** / **Clear All** manage your saved preferences
 
 **Weapon Constraints**
-- **Weapon Style:** Melee, Direct (Caster), Parry Staff, or Any (Any excludes Parry Staffs — pick Parry Staff explicitly to search for one)
-- **Build Config:** Weapon, Shield, Two-Handed, 1 Claw, 2 Claw — check whichever your build actually uses (some classes can only use one claw, others can dual-wield two)
-- **Dual-Wield** sub-option, for finding 1-handed weapons for both hands
-- **Damage Type:** Slashing, Thrusting, Crushing
+- **Weapon Types/Combo's** — check whichever your build actually uses: Dual-Wield 1h, 1h/Shield, 2h/Shield, Fired 1h/Shield, Two-Handed, 1 Claw, 2 Claw. Most have their own Style (Melee/Direct/Parry Staff/Fired, where applicable) and Damage Type (Slashing/Thrusting/Crushing) dropdowns
+- Most real weapons and claws carry no Spell at all — these slots always fill with the best available match rather than sitting empty when nothing carries a wanted spell
+- **Melee Weapon Constraints** — soft-preference Damage/Timer/Fumble/Accuracy/Sigil dropdowns, each with an optional Priority checkbox (capped at 3); apply to every weapon style (Melee, Direct, Parry Staff, Fired) and to Claw slots too
+- **Shield Constraints** — Defense and Sigil dropdowns, working exactly like Armor Constraints' per-slot versions
 
 **Only Found In (Realm filter)**
 Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Kaid, Crafted, Glory Bea, or Event to restrict results to items found in those realms. Leave everything unchecked to search all realms.
@@ -116,11 +117,18 @@ A build can include **at most one Crafted-realm item** — this is enforced auto
 
 **Parse results empty** — verify the log actually contains delve output ("You examine X closely") and that CHAT vs ACTION auto-detection picked the right type (check the Parse tab file list).
 
-**Community List not found** — make sure `Olmran_Community_Eq_and_Stats_List.xlsx` is in the same folder as `gaming_log_parser.py`, or use "Browse..." to point at it manually.
+**Community List not found** — as of v5.0 the community list ships bundled inside `OlmranItemBuilder.exe` and loads automatically; if you're instead running from source (`gaming_log_parser.py`), make sure `Olmran_Community_Eq_and_Stats_List.xlsx` is in the same folder, or use "Browse..." to point at it manually.
 
 ## Version History
 
-### v4.9999999999 (Current)
+### v5.0 (Current)
+- Packaged as a standalone `OlmranItemBuilder.exe` via PyInstaller - no Python install, no `pip install` step, no `.bat` launcher files. Just download and double-click; the bundled community equipment list ships inside the .exe itself
+- Fixed: Find Optimal Build could pick a weapon/shield/Parry Staff item purely because its own (otherwise irrelevant) spell had a high tier, making the same spell/tier appear to be "duplicated" into a second slot for no real benefit - fallback items no longer get tier/priority credit for a spell that isn't actually contributing new coverage
+- Fixed: 1 Claw / 2 Claw did not work at all against the real bundled data (claws are stored as `Slot=weapon`/`Type=claw`, not a distinct `Slot=claw` value, so every claw-handling check was silently matching nothing) - claws now correctly fill, respect Melee Weapon Constraints, and support Required Items
+- Moved Bless next to Agility, and added Direct.enhance to Class Specific, in the Basic Constraints spell dropdowns
+- Min Level / Max Level / Specific Level fields are now centered in their shared row
+
+### v4.9999999999
 - Weapon Constraints redesigned: granular per-combo "Weapon Types/Combo's" (Dual-Wield 1h, 1h/Shield, 2h/Shield, Fired 1h/Shield, Two-Handed, 1 Claw/2 Claw), each with its own Style/Damage Type dropdowns where applicable, replacing the old global Weapon Style radios and Damage Type checkboxes
 - Added Melee Weapon Constraints: soft-preference Damage/Timer/Fumble/Accuracy/Sigil dropdowns (each with an optional Priority checkbox, capped at 3) that apply to every weapon style - Melee, Direct, Parry Staff, and Fired alike - and to Claw slots too
 - Added Shield Constraints (Defense + Sigil), reusing the same scoring as Armor Constraints' per-slot Defense/Sigil

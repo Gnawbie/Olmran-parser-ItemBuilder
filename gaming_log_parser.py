@@ -829,9 +829,9 @@ LOOT_SOURCES   = ['Realm','Area','Mob','Item','Slot','Type','Spell','Level','Dam
 
 # Spell name options for the Build tab category dropdowns.
 SPELL_CATEGORIES = {
-    'Basic':          ['Agility', 'Dexterity', 'Constitution', 'Intelligence', 'Wisdom', 'Strength', 'Bless', 'Evade', 'Combat', 'Tough.skin'],
+    'Basic':          ['Agility', 'Bless', 'Dexterity', 'Constitution', 'Intelligence', 'Wisdom', 'Strength', 'Evade', 'Combat', 'Tough.skin'],
     'Class Specific': ['Backstab.enhance', 'Bash.enhance', 'Berzerk.enhance', 'Crush.enhance',
-                       'Double.enhance', 'Fired.enhance', 'Improve.enhance', 'Leathers.enhance',
+                       'Direct.enhance', 'Double.enhance', 'Fired.enhance', 'Improve.enhance', 'Leathers.enhance',
                        'Lockpick.enhance', 'Mark.enhance', 'Martialarts.enhance', 'Maul.enhance',
                        'Melee.enhance', 'Pummel.enhance', 'Rake.enhance', 'Repair.enhance',
                        'Slash.enhance', 'Tap.enhance', 'Thrust.enhance', 'Track.enhance',
@@ -4088,9 +4088,13 @@ class App(tk.Tk):
 
         for item in self.required_items:
             item_slot = (item.get('Slot') or '').strip().lower()
+            item_type = (item.get('Type') or '').strip().lower()
+            # Claws are stored as Slot=weapon/Type=claw in the source data -
+            # there is no Slot='claw' value anywhere in the bundled list.
+            is_claw_item = item_slot == 'weapon' and 'claw' in item_type
             if item_slot == 'jewel':
                 target = 'jewel_1' if 'jewel_1' not in build else ('jewel_2' if 'jewel_2' not in build else None)
-            elif item_slot == 'claw':
+            elif is_claw_item:
                 target = 'claw_1' if 'claw_1' not in build else ('claw_2' if 'claw_2' not in build else None)
             else:
                 target = item_slot if item_slot and item_slot not in build else None
@@ -4107,7 +4111,7 @@ class App(tk.Tk):
 
             if 'crafted' in (item.get('Realm') or '').strip().lower():
                 crafted_count += 1
-            if item_slot == 'claw':
+            if is_claw_item:
                 used_claw_items.append(item)
 
         return crafted_count, used_claw_items
@@ -4367,9 +4371,26 @@ class App(tk.Tk):
             item_type = (item.get('Type') or '').lower()
             item_realm = (item.get('Realm') or '').strip()
 
-            is_combo_mandated_slot = ((item_slot == 'weapon' and any_weapon_combo_active)
+            # Claws are stored in the source data as Slot=weapon/Type=claw,
+            # not a distinct Slot='claw' value - there is no such value
+            # anywhere in the bundled equipment list, so any check against
+            # item_slot == 'claw' can never match a real row.
+            is_claw_item = item_slot == 'weapon' and 'claw' in item_type
+
+            is_combo_mandated_slot = ((item_slot == 'weapon' and not is_claw_item and any_weapon_combo_active)
                                        or (item_slot == 'shield' and any_shield_combo_active)
-                                       or (item_slot == 'claw' and any_claw_combo_active))
+                                       or (is_claw_item and any_claw_combo_active))
+            # Weapon and shield are always in slots_to_fill (see below) even
+            # with no combo checked at all, so they must always be allowed to
+            # fall back to a non-wanted-spell (or spell-less) item too - not
+            # just when a combo happens to be active - otherwise, once
+            # nothing carrying the wanted spell is left, the candidate pool
+            # for these slots would be empty and the exact search's own
+            # zero-new-coverage fallback (further below) would have nothing
+            # to pick from except items already claimed by another slot,
+            # which is what caused the same spell/tier to appear to be
+            # "duplicated" into a second slot for no real benefit.
+            is_always_fill_slot = (item_slot == 'weapon' and not is_claw_item) or item_slot == 'shield'
 
             # Apply realm filter if any selected
             selected_realms = [realm for realm, var in self.realm_filters.items()
@@ -4386,7 +4407,7 @@ class App(tk.Tk):
 
             # Skip items without spells - unless a weapon/shield combo wants
             # this slot filled regardless (most real weapons have no spell).
-            if not item_spell and not is_combo_mandated_slot:
+            if not item_spell and not is_combo_mandated_slot and not is_always_fill_slot:
                 continue
 
             # Check if item's spell matches any wanted or priority spell's
@@ -4398,7 +4419,7 @@ class App(tk.Tk):
                     has_wanted_spell = True
                     break
 
-            if not has_wanted_spell and not is_combo_mandated_slot:
+            if not has_wanted_spell and not is_combo_mandated_slot and not is_always_fill_slot:
                 continue
 
             # Apply level constraints
@@ -4445,83 +4466,89 @@ class App(tk.Tk):
             # Apply weapon/shield/claw constraints. The old global Weapon
             # Style radios and Damage Type checkboxes are gone - Style and
             # Damage Type are now per-combo dropdowns (see each branch below).
-            if item_slot == 'weapon' or item_slot == 'shield' or item_slot == 'claw':
+            if item_slot == 'weapon' or item_slot == 'shield':
                 slot_accepted = True
-                offhand_weapon_accepted = False  # only ever set for item_slot == 'weapon'
+                offhand_weapon_accepted = False  # only ever set for physical (non-claw) weapon items
 
-                # If no combo is checked, accept everything
-                has_any_config = (wants_two_handed or wants_claw_1 or wants_claw_2
-                                   or wants_dual_wield_1h or wants_1h_shield
-                                   or wants_2h_shield or wants_fired_1h_shield)
+                if is_claw_item:
+                    # Claws (Slot=weapon/Type=claw) have no Style or Damage
+                    # Type dropdown - 1 Claw fills one claw slot, 2 Claw
+                    # fills both. Handled entirely separately from the
+                    # physical-weapon sub-matching below, which a Type=claw
+                    # item could never satisfy anyway (its Type string is
+                    # just "claw" - no 1h/2h/offhand/fired substring).
+                    slot_accepted = wants_claw_1 or wants_claw_2
+                else:
+                    # If no combo is checked, accept everything
+                    has_any_config = (wants_two_handed or wants_claw_1 or wants_claw_2
+                                       or wants_dual_wield_1h or wants_1h_shield
+                                       or wants_2h_shield or wants_fired_1h_shield)
 
-                if has_any_config:
-                    slot_accepted = False
+                    if has_any_config:
+                        slot_accepted = False
 
-                    if item_slot == 'weapon':
-                        is_offhand = 'offhand' in item_type
-                        is_1h = '1h' in item_type
-                        is_2h = '2h' in item_type
-                        is_fired = 'fired' in item_type
+                        if item_slot == 'weapon':
+                            is_offhand = 'offhand' in item_type
+                            is_1h = '1h' in item_type
+                            is_2h = '2h' in item_type
+                            is_fired = 'fired' in item_type
 
-                        # Two-handed weapons, gated by their own Style
-                        # (Melee/Direct/Parry/Fired) and Damage Type dropdowns
-                        if wants_two_handed and _two_handed_matches(item_type, item_spell, two_handed_style, two_handed_damage):
-                            slot_accepted = True
-                        # Dual-Wield 1h - main hand: 1h, non-offhand,
-                        # matching the Main dropdown's damage type
-                        if (wants_dual_wield_1h and is_1h and not is_offhand
-                                and _weapon_damage_matches(item_type, dual_wield_1h_main)):
-                            slot_accepted = True
-                        # 1h/Shield: 1h, non-offhand, matching its own
-                        # Style (Melee/Direct - no Parry option here) and
-                        # Damage Type dropdowns. Direct additionally requires
-                        # some spell to be present (see _direct_weapon_eligible).
-                        if (wants_1h_shield and is_1h and not is_offhand
-                                and _weapon_style_matches(item_type, combo_1h_shield_style)
-                                and (combo_1h_shield_style != 'Direct' or _direct_weapon_eligible(item_spell))
-                                and _weapon_damage_matches(item_type, combo_1h_shield_damage)):
-                            slot_accepted = True
-                        # 2h/Shield: 2h, matching its own damage type
-                        if (wants_2h_shield and is_2h
-                                and _weapon_damage_matches(item_type, combo_2h_shield_damage)):
-                            slot_accepted = True
-                        # Fired 1h and Shield: "fired" is its own weapon
-                        # shape, no separate damage type to match.
-                        if wants_fired_1h_shield and is_fired and is_1h and not is_offhand:
-                            slot_accepted = True
+                            # Two-handed weapons, gated by their own Style
+                            # (Melee/Direct/Parry/Fired) and Damage Type dropdowns
+                            if wants_two_handed and _two_handed_matches(item_type, item_spell, two_handed_style, two_handed_damage):
+                                slot_accepted = True
+                            # Dual-Wield 1h - main hand: 1h, non-offhand,
+                            # matching the Main dropdown's damage type
+                            if (wants_dual_wield_1h and is_1h and not is_offhand
+                                    and _weapon_damage_matches(item_type, dual_wield_1h_main)):
+                                slot_accepted = True
+                            # 1h/Shield: 1h, non-offhand, matching its own
+                            # Style (Melee/Direct - no Parry option here) and
+                            # Damage Type dropdowns. Direct additionally requires
+                            # some spell to be present (see _direct_weapon_eligible).
+                            if (wants_1h_shield and is_1h and not is_offhand
+                                    and _weapon_style_matches(item_type, combo_1h_shield_style)
+                                    and (combo_1h_shield_style != 'Direct' or _direct_weapon_eligible(item_spell))
+                                    and _weapon_damage_matches(item_type, combo_1h_shield_damage)):
+                                slot_accepted = True
+                            # 2h/Shield: 2h, matching its own damage type
+                            if (wants_2h_shield and is_2h
+                                    and _weapon_damage_matches(item_type, combo_2h_shield_damage)):
+                                slot_accepted = True
+                            # Fired 1h and Shield: "fired" is its own weapon
+                            # shape, no separate damage type to match.
+                            if wants_fired_1h_shield and is_fired and is_1h and not is_offhand:
+                                slot_accepted = True
 
-                        # Dual-Wield 1h - off hand: offhand-tagged 1h item
-                        # matching the Off-Hand dropdown's damage type.
-                        # Independent of the main-hand outcome above, so
-                        # this same item can be considered for the
-                        # separate weapon_off slot even when it wasn't
-                        # accepted as a main-hand candidate.
-                        if (wants_dual_wield_1h and is_1h and is_offhand
-                                and _weapon_damage_matches(item_type, dual_wield_1h_off)):
-                            offhand_weapon_accepted = True
+                            # Dual-Wield 1h - off hand: offhand-tagged 1h item
+                            # matching the Off-Hand dropdown's damage type.
+                            # Independent of the main-hand outcome above, so
+                            # this same item can be considered for the
+                            # separate weapon_off slot even when it wasn't
+                            # accepted as a main-hand candidate.
+                            if (wants_dual_wield_1h and is_1h and is_offhand
+                                    and _weapon_damage_matches(item_type, dual_wield_1h_off)):
+                                offhand_weapon_accepted = True
 
-                    elif item_slot == 'shield':
-                        # Shields - only implied by a weapon+shield combo
-                        # now (plain "Shield" was removed)
-                        if wants_1h_shield or wants_2h_shield or wants_fired_1h_shield:
-                            slot_accepted = True
-
-                    elif item_slot == 'claw':
-                        # Claws - 1 Claw fills one claw slot, 2 Claw fills
-                        # both; no Style or Damage Type dropdown for either.
-                        if wants_claw_1 or wants_claw_2:
-                            slot_accepted = True
+                        elif item_slot == 'shield':
+                            # Shields - only implied by a weapon+shield combo
+                            # now (plain "Shield" was removed)
+                            if wants_1h_shield or wants_2h_shield or wants_fired_1h_shield:
+                                slot_accepted = True
 
                 if not slot_accepted and not offhand_weapon_accepted:
                     continue
 
-            # Add to slot group. The 'weapon' slot splits into two candidate
-            # pools - main-hand (items_by_slot['weapon']) and, only relevant
-            # when Dual-Wield 1h is checked, off-hand (items_by_slot['weapon_off'])
-            # - since the same physical item can never satisfy both (main
-            # requires non-offhand, off requires offhand), an item lands in
-            # at most one of the two.
-            if item_slot == 'weapon':
+            # Add to slot group. The 'weapon' slot splits into three candidate
+            # pools - main-hand (items_by_slot['weapon']), off-hand (only
+            # relevant when Dual-Wield 1h is checked, items_by_slot['weapon_off']),
+            # and claws (items_by_slot['claw'], Type=claw items only) - since
+            # the same physical item can never satisfy more than one of
+            # these, an item lands in at most one bucket.
+            if is_claw_item:
+                if slot_accepted:
+                    items_by_slot.setdefault('claw', []).append(item)
+            elif item_slot == 'weapon':
                 if slot_accepted:
                     items_by_slot.setdefault('weapon', []).append(item)
                 if offhand_weapon_accepted:
@@ -4716,16 +4743,39 @@ class App(tk.Tk):
                 if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
                     continue
 
+                # An item whose spell is already fully covered elsewhere (new_bases
+                # == 0 - only reachable here via the weapon/weapon_off/shield
+                # fallback above) isn't actually fulfilling that spell, so its
+                # tier/priority standing is meaningless noise - without zeroing
+                # these out, a fallback pick could win purely because its
+                # (unused) spell happens to be a high tier, making the same
+                # spell/tier appear to be "duplicated" into a second slot for
+                # no real benefit. Sigil/Melee/Defense preferences and level
+                # stay live since those never depended on spell coverage.
+                effective_priority_matches = priority_matches if new_bases else 0
+                effective_tier_priority_match = tier_priority_match if new_bases else 0
+                effective_item_tier = item_tier if new_bases else 0
+                # Last-resort tie-break, folded into the level term (doubled
+                # so a genuine 1-level difference still dominates): among
+                # fallback items that are otherwise equal, prefer one whose
+                # spell isn't a duplicate of an already-covered base at all
+                # over one that happens to carry a now-redundant copy of a
+                # wanted spell - purely cosmetic (neither contributes
+                # coverage) but avoids the same spell/tier visibly showing up
+                # in two slots when a spell-unrelated alternative is just as good.
+                is_redundant_spell = 1 if (not new_bases and item_bitmask) else 0
+
                 step_score = (bin(new_bases).count('1') * W_COVERAGE
-                              + priority_matches * W_PRIORITY
-                              + tier_priority_match * W_TIER_PRIORITY
+                              + effective_priority_matches * W_PRIORITY
+                              + effective_tier_priority_match * W_TIER_PRIORITY
                               + sigil_match * W_SIGIL_MATCH
                               + sigil_level * W_SIGIL_LEVEL
                               + melee_priority_match * W_MELEE_PRIORITY_MATCH
                               + melee_match * W_MELEE_MATCH
                               + defense_priority_match * W_DEFENSE_PRIORITY
-                              + item_tier * W_TIER
-                              + item_level_num * W_LEVEL)
+                              + effective_item_tier * W_TIER
+                              + item_level_num * (W_LEVEL * 2)
+                              + (0 if is_redundant_spell else W_LEVEL))
 
                 rest_score, rest_path = solve(idx + 1, covered | new_bases,
                                                crafted_n + (1 if is_crafted else 0))
@@ -5122,9 +5172,13 @@ class App(tk.Tk):
             item_spell = (item.get('Spell') or '').lower()
             item_type = (item.get('Type') or '').lower()
 
-            is_combo_mandated_slot = ((item_slot == 'weapon' and any_weapon_combo_active)
+            # Claws are stored in the source data as Slot=weapon/Type=claw,
+            # not a distinct Slot='claw' value - see _find_optimal_build.
+            is_claw_item = item_slot == 'weapon' and 'claw' in item_type
+
+            is_combo_mandated_slot = ((item_slot == 'weapon' and not is_claw_item and any_weapon_combo_active)
                                        or (item_slot == 'shield' and any_shield_combo_active)
-                                       or (item_slot == 'claw' and any_claw_combo_active))
+                                       or (is_claw_item and any_claw_combo_active))
 
             # Skip items without spells - unless a weapon/shield combo wants
             # this slot filled regardless (most real weapons have no spell).
@@ -5210,69 +5264,71 @@ class App(tk.Tk):
             # Apply weapon/shield/claw constraints. The old global Weapon
             # Style radios and Damage Type checkboxes are gone - Style and
             # Damage Type are now per-combo dropdowns (see each branch below).
-            if item_slot == 'weapon' or item_slot == 'shield' or item_slot == 'claw':
-                # If no combo is checked, accept everything
-                has_any_config = (wants_two_handed or wants_claw_1 or wants_claw_2
-                                   or wants_dual_wield_1h or wants_1h_shield
-                                   or wants_2h_shield or wants_fired_1h_shield)
-
-                if has_any_config:
-                    slot_accepted = False
-
-                    if item_slot == 'weapon':
-                        is_offhand = 'offhand' in item_type
-                        is_1h = '1h' in item_type
-                        is_2h = '2h' in item_type
-                        is_fired = 'fired' in item_type
-
-                        # Two-handed weapons, gated by their own Style
-                        # (Melee/Direct/Parry/Fired) and Damage Type dropdowns
-                        if wants_two_handed and _two_handed_matches(item_type, item_spell, two_handed_style, two_handed_damage):
-                            slot_accepted = True
-                        # Dual-Wield 1h - this is a flat listing (no per-
-                        # slot picking), so main-hand and off-hand
-                        # candidates are just shown together: non-offhand
-                        # matching Main, or offhand-tagged matching Off-Hand.
-                        if (wants_dual_wield_1h and is_1h and not is_offhand
-                                and _weapon_damage_matches(item_type, dual_wield_1h_main)):
-                            slot_accepted = True
-                        if (wants_dual_wield_1h and is_1h and is_offhand
-                                and _weapon_damage_matches(item_type, dual_wield_1h_off)):
-                            slot_accepted = True
-                        # 1h/Shield - Style (Melee/Direct, no Parry) + Damage Type;
-                        # Direct additionally requires some spell to be present
-                        if (wants_1h_shield and is_1h and not is_offhand
-                                and _weapon_style_matches(item_type, combo_1h_shield_style)
-                                and (combo_1h_shield_style != 'Direct' or _direct_weapon_eligible(item_spell))
-                                and _weapon_damage_matches(item_type, combo_1h_shield_damage)):
-                            slot_accepted = True
-                        # 2h/Shield
-                        if (wants_2h_shield and is_2h
-                                and _weapon_damage_matches(item_type, combo_2h_shield_damage)):
-                            slot_accepted = True
-                        # Fired 1h and Shield
-                        if wants_fired_1h_shield and is_fired and is_1h and not is_offhand:
-                            slot_accepted = True
-
-                    elif item_slot == 'shield':
-                        # Shields - only implied by a weapon+shield combo
-                        # now (plain "Shield" was removed)
-                        if wants_1h_shield or wants_2h_shield or wants_fired_1h_shield:
-                            slot_accepted = True
-
-                    elif item_slot == 'claw':
-                        # Claws - 1 Claw fills one claw slot, 2 Claw fills
-                        # both; no Style or Damage Type dropdown for either.
-                        if wants_claw_1 or wants_claw_2:
-                            slot_accepted = True
-
-                    if not slot_accepted:
+            if item_slot == 'weapon' or item_slot == 'shield':
+                if is_claw_item:
+                    # Claws (Slot=weapon/Type=claw) have no Style or Damage
+                    # Type dropdown - 1 Claw / 2 Claw is the only gate.
+                    if not (wants_claw_1 or wants_claw_2):
                         continue
+                else:
+                    # If no combo is checked, accept everything
+                    has_any_config = (wants_two_handed or wants_claw_1 or wants_claw_2
+                                       or wants_dual_wield_1h or wants_1h_shield
+                                       or wants_2h_shield or wants_fired_1h_shield)
 
-            # Add to slot group
-            if item_slot not in items_by_slot:
-                items_by_slot[item_slot] = []
-            items_by_slot[item_slot].append(item)
+                    if has_any_config:
+                        slot_accepted = False
+
+                        if item_slot == 'weapon':
+                            is_offhand = 'offhand' in item_type
+                            is_1h = '1h' in item_type
+                            is_2h = '2h' in item_type
+                            is_fired = 'fired' in item_type
+
+                            # Two-handed weapons, gated by their own Style
+                            # (Melee/Direct/Parry/Fired) and Damage Type dropdowns
+                            if wants_two_handed and _two_handed_matches(item_type, item_spell, two_handed_style, two_handed_damage):
+                                slot_accepted = True
+                            # Dual-Wield 1h - this is a flat listing (no per-
+                            # slot picking), so main-hand and off-hand
+                            # candidates are just shown together: non-offhand
+                            # matching Main, or offhand-tagged matching Off-Hand.
+                            if (wants_dual_wield_1h and is_1h and not is_offhand
+                                    and _weapon_damage_matches(item_type, dual_wield_1h_main)):
+                                slot_accepted = True
+                            if (wants_dual_wield_1h and is_1h and is_offhand
+                                    and _weapon_damage_matches(item_type, dual_wield_1h_off)):
+                                slot_accepted = True
+                            # 1h/Shield - Style (Melee/Direct, no Parry) + Damage Type;
+                            # Direct additionally requires some spell to be present
+                            if (wants_1h_shield and is_1h and not is_offhand
+                                    and _weapon_style_matches(item_type, combo_1h_shield_style)
+                                    and (combo_1h_shield_style != 'Direct' or _direct_weapon_eligible(item_spell))
+                                    and _weapon_damage_matches(item_type, combo_1h_shield_damage)):
+                                slot_accepted = True
+                            # 2h/Shield
+                            if (wants_2h_shield and is_2h
+                                    and _weapon_damage_matches(item_type, combo_2h_shield_damage)):
+                                slot_accepted = True
+                            # Fired 1h and Shield
+                            if wants_fired_1h_shield and is_fired and is_1h and not is_offhand:
+                                slot_accepted = True
+
+                        elif item_slot == 'shield':
+                            # Shields - only implied by a weapon+shield combo
+                            # now (plain "Shield" was removed)
+                            if wants_1h_shield or wants_2h_shield or wants_fired_1h_shield:
+                                slot_accepted = True
+
+                        if not slot_accepted:
+                            continue
+
+            # Add to slot group. Claws (Slot=weapon/Type=claw) get their own
+            # 'claw' bucket instead of piling into 'weapon' with everything else.
+            bucket_slot = 'claw' if is_claw_item else item_slot
+            if bucket_slot not in items_by_slot:
+                items_by_slot[bucket_slot] = []
+            items_by_slot[bucket_slot].append(item)
 
         # Display ALL matching items (not just one per slot)
         # Group by slot for better organization
