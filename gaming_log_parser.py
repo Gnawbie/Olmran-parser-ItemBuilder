@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.7"
+VERSION = "5.0.8"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -4870,9 +4870,16 @@ class App(tk.Tk):
         # Claws are their own one-handed weapon - a build using 1 or 2 Claw
         # doesn't also equip a separate physical weapon/shield, so those two
         # slots are left out entirely rather than always-filled alongside them.
+        # Likewise, weapon/shield are only attempted at all if at least one
+        # Weapon Types/Combo's checkbox that implies them is checked - with
+        # nothing checked there's no reason to force a weapon or shield into
+        # the build, so both are left unpopulated rather than always-filled.
         slots_to_fill = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet']
         if not (wants_claw_1 or wants_claw_2):
-            slots_to_fill += ['weapon', 'shield']
+            if any_weapon_combo_active:
+                slots_to_fill.append('weapon')
+            if any_shield_combo_active:
+                slots_to_fill.append('shield')
         if wants_dual_wield_1h:
             slots_to_fill.append('weapon_off')
         if wants_claw_2:

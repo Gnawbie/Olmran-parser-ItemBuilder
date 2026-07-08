@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.0.7
+# Gaming Log Parser v5.0.8
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -75,7 +75,7 @@ Want a specific piece of gear included no matter what? Type its name under **Req
 
 **Weapon Constraints**
 - **Weapon Types/Combo's** — check whichever your build actually uses: Dual-Wield 1h, 1h/Shield, 2h/Shield, Fired 1h/Shield, Two-Handed, 1 Claw, 2 Claw. Most have their own Style (Melee/Direct/Parry Staff/Fired, where applicable) and Damage Type (Slashing/Thrusting/Crushing) dropdowns
-- Most real weapons and claws carry no Spell at all — these slots always fill with the best available match rather than sitting empty when nothing carries a wanted spell
+- Leave everything here unchecked and Weapon/Shield aren't populated at all - check a combo to have that slot (or slots) filled, even with a spell-less item if nothing wanted matches, rather than sitting empty. 1 Claw/2 Claw replace Weapon and Shield entirely (claws are their own one-handed weapon) rather than filling alongside them
 - **Melee Weapon Constraints** — soft-preference Damage/Timer/Fumble/Accuracy/Sigil dropdowns, each with an optional Priority checkbox (capped at 3); apply to every weapon style (Melee, Direct, Parry Staff, Fired) and to Claw slots too
 - **Shield Constraints** — Defense and Sigil dropdowns, working exactly like Armor Constraints' per-slot versions
 
@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.0.7 (Current)
+### v5.0.8 (Current)
+- Weapon and Shield are no longer populated at all if no Weapon Types/Combo's checkbox that implies them is checked - previously they were always filled with the best available item regardless. Two-Handed still fills just the weapon; 1h/Shield, 2h/Shield, and Fired 1h/Shield still fill both
+
+### v5.0.7
 - Checking 1 Claw or 2 Claw now excludes Weapon and Shield from the build entirely - claws are their own one-handed weapon, so a claw build no longer also tries to equip a separate physical weapon/shield
 - Saved Builds now persist across closing and reopening the program (previously lost every time the app closed)
 
