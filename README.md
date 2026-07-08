@@ -114,7 +114,11 @@ A build can include **at most one Crafted-realm item** — this is enforced auto
 
 ## Troubleshooting
 
-**Program won't start** — see INSTALL_INSTRUCTIONS.txt.
+**"Windows protected your PC" / SmartScreen warning on launch** — expected for now, `OlmranItemBuilder.exe` isn't code-signed yet. Click "More info" then "Run anyway". See the [wiki FAQ](https://github.com/Gnawbie/Olmran-parser-ItemBuilder/wiki/FAQ) for details.
+
+**The .exe takes a few seconds to open every time** — expected. It's a PyInstaller "onefile" build that unpacks itself to a temp folder on every launch, not just the first.
+
+**Program won't start otherwise** — see INSTALL_INSTRUCTIONS.txt.
 
 **Files not loading** — check the file extension (.log, .txt, .xlsx), make sure it isn't open in another program, and try copying it somewhere else if the path has unusual characters.
 
