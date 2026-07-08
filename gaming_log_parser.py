@@ -4118,6 +4118,12 @@ class App(tk.Tk):
 
     def _find_optimal_build(self):
         """Find optimal item combination that covers ALL wanted spells"""
+        # Set this immediately, before any validation checks below can
+        # return early - otherwise clicking this button after a previous
+        # "Show All Matches" left the Results tab stuck showing All Matches
+        # results even though Best Per Slot is what was actually clicked.
+        self.results_display_mode.set('optimal')
+
         if not self.master_data:
             messagebox.showwarning("No Data", "Please load a master database first")
             return
@@ -5043,6 +5049,11 @@ class App(tk.Tk):
 
     def _show_all_matches(self):
         """Show ALL items matching criteria (not optimized for spell coverage)"""
+        # Same reasoning as the matching line in _find_optimal_build - set
+        # this before any validation checks below can return early, so the
+        # Results tab's mode always reflects the button actually clicked.
+        self.results_display_mode.set('all')
+
         if not self.master_data:
             messagebox.showwarning("No Data", "Please load a master database first")
             return
