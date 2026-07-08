@@ -12,6 +12,7 @@ dist/
 
 # Old test/scratch data, not part of the release
 prased/
+old/
 
 # Local per-user settings (created next to the script when run from source)
 .gaming_log_parser_config.json
