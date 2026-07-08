@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.3"
+VERSION = "5.0.4"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1219,7 +1219,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"🎮 Olmran Log Parser and Gear Set Creator v{VERSION}")
-        self.geometry("1350x790")
+        self.geometry("1350x815")
         self.minsize(1150, 750)
         self.resizable(True, True)
 
@@ -2935,6 +2935,26 @@ class App(tk.Tk):
         self.specific_level_entry.pack(side='left', padx=(0,4))
         self.specific_level_var.trace_add('write', lambda *args: self._update_level_fields())
 
+        # Specific Level fallback policy - only meaningful (and only
+        # enabled) when Specific Level has a value. Governs what Find
+        # Optimal Build does for a slot when nothing matches the wanted
+        # spell at exactly that level (and, for spells requested at an
+        # explicit tier, at exactly that tier too) - see _find_optimal_build
+        # for how each policy relaxes level/tier and picks the highest
+        # remaining match rather than just the first one found.
+        specific_fallback_frame = ttk.Frame(shared_controls_frame)
+        specific_fallback_frame.pack(pady=(4,0))
+
+        ttk.Label(specific_fallback_frame, text="If no match at Specific Level:").pack(side='left', padx=(0,8))
+        self.specific_level_fallback_var = tk.StringVar(value='none')
+        self.specific_level_fallback_radios = []
+        for label, value in [("Go down a tier", 'tier'), ("Go down in level", 'level'),
+                             ("Both", 'both'), ("Don't populate slot", 'none')]:
+            rb = ttk.Radiobutton(specific_fallback_frame, text=label, value=value,
+                                 variable=self.specific_level_fallback_var)
+            rb.pack(side='left', padx=4)
+            self.specific_level_fallback_radios.append(rb)
+
         shared_button_frame = ttk.Frame(shared_controls_frame)
         shared_button_frame.pack(pady=8)
 
@@ -3873,6 +3893,10 @@ class App(tk.Tk):
             self.min_level_entry.config(state='normal')
             self.max_level_entry.config(state='normal')
             self.specific_level_entry.config(state='normal')
+
+        # The fallback policy only means anything alongside Specific Level.
+        for rb in self.specific_level_fallback_radios:
+            rb.config(state='normal' if has_specific else 'disabled')
     
     def _save_armor_defaults(self):
         """Save current armor and weapon selections as defaults"""
@@ -4539,10 +4563,18 @@ class App(tk.Tk):
                 if item_level_str:
                     try:
                         item_level = int(item_level_str)
-                        
-                        # Check specific level
+
+                        # Check specific level - a fallback policy other than
+                        # "Don't populate slot" widens this to "at or below"
+                        # so lower-level/tier candidates are still in the
+                        # pool for the per-base qualification check further
+                        # below to consider; never above, since fallback
+                        # only ever goes down.
                         if specific_level is not None:
-                            if item_level != specific_level:
+                            if self.specific_level_fallback_var.get() == 'none':
+                                if item_level != specific_level:
+                                    continue
+                            elif item_level > specific_level:
                                 continue
                         # Check min/max range
                         else:
@@ -4687,6 +4719,47 @@ class App(tk.Tk):
         for p in priority_spells:
             wanted_bases.setdefault(p, []).append(p)
 
+        # Specific Level fallback - for each base spell, the set of tiers
+        # explicitly requested (a bare/"(any)" chip or a Priority Spell
+        # contributes no tier, leaving this empty - tier is already
+        # unconstrained for those regardless of the fallback policy below).
+        base_target_tier_ranks = {
+            base: {_spell_tier_rank(w) for w in wanteds if _spell_tier_rank(w) > 0}
+            for base, wanteds in wanted_bases.items()
+        }
+        specific_level_fallback = self.specific_level_fallback_var.get() if specific_level is not None else 'none'
+
+        def _specific_level_qualifies(base, item_level_num, item_tier):
+            """Whether an item carrying `base` at `item_level_num`/`item_tier`
+            counts toward that wanted base under Specific Level - True
+            unconditionally when Specific Level isn't set. Each fallback
+            policy relaxes exactly one or both of level/tier away from an
+            exact match; "Don't populate slot" (or no Specific Level fallback
+            requested) requires both exactly. Levels/tiers are only ever
+            relaxed downward, never up - matching the widened raw level
+            filter above, which never lets an item above Specific Level
+            through in the first place."""
+            if specific_level is None:
+                return True
+            target_ranks = base_target_tier_ranks.get(base)
+            level_exact = (item_level_num == specific_level)
+            tier_exact = (not target_ranks) or (item_tier in target_ranks)
+
+            if specific_level_fallback == 'none':
+                return level_exact and tier_exact
+            if specific_level_fallback == 'tier':
+                if not level_exact:
+                    return False
+                return tier_exact or (bool(target_ranks) and 0 < item_tier <= max(target_ranks))
+            if specific_level_fallback == 'level':
+                if not tier_exact:
+                    return False
+                return item_level_num <= specific_level
+            # 'both' - level and tier can each independently fall short of
+            # exact, as long as neither goes above what was requested.
+            tier_ok = tier_exact or (bool(target_ranks) and 0 < item_tier <= max(target_ranks))
+            return item_level_num <= specific_level and tier_ok
+
         build = {}
         covered_bases = set()
         self.slot_alternates = {}
@@ -4823,9 +4896,14 @@ class App(tk.Tk):
                     if max_tier_rank is not None and item_tier > max_tier_rank:
                         continue
 
+                try:
+                    item_level_num = int(item.get('Level') or 0)
+                except (ValueError, TypeError):
+                    item_level_num = 0
+
                 item_bitmask = 0
                 for base in base_list:
-                    if base in item_spell:
+                    if base in item_spell and _specific_level_qualifies(base, item_level_num, item_tier):
                         item_bitmask |= base_bit[base]
                 # Zero-coverage items are normally useless (they can never
                 # win over "leave the slot empty"), except weapon/shield
@@ -4834,11 +4912,6 @@ class App(tk.Tk):
                 # end up empty just because nothing on it grants a spell.
                 if not item_bitmask and lookup_slot not in ('weapon', 'weapon_off', 'shield'):
                     continue
-
-                try:
-                    item_level_num = int(item.get('Level') or 0)
-                except (ValueError, TypeError):
-                    item_level_num = 0
 
                 priority_matches = sum(1 for p in priority_spells if p in item_spell)
                 item_base = _spell_base(item_spell)

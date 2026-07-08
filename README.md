@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.0.3
+# Gaming Log Parser v5.0.4
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -60,6 +60,12 @@ Want a specific piece of gear included no matter what? Type its name under **Req
 - **Specific Level** — restrict to an exact level
 - Fields grey out automatically depending on which option you're using (Specific vs. Min/Max are mutually exclusive)
 - Leave all three blank for no level restriction
+
+**If no match at Specific Level** (only meaningful, and only enabled, once Specific Level has a value) — controls what Find Optimal Build does for a slot when nothing carries the wanted spell at exactly that level (and, for a spell requested at an explicit tier, at exactly that tier too):
+- **Go down a tier** — keep the level fixed at Specific Level, but accept a lower tier of the wanted spell (iii → ii → i) if the exact tier isn't available there
+- **Go down in level** — keep the exact requested tier, but search downward from Specific Level for the highest level that has it (never picks an arbitrary lower level - always the closest available)
+- **Both** — relax level and tier together, still preferring the highest level / closest tier combination available
+- **Don't populate slot** (default) — no fallback; if nothing matches exactly, the slot is left empty
 
 **Armor Constraints**
 - The **All:** row sets an armor type for every slot at once
@@ -128,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.0.3 (Current)
+### v5.0.4 (Current)
+- Added an "If no match at Specific Level" fallback policy (Go down a tier / Go down in level / Both / Don't populate slot) for Find Optimal Build - when nothing carries a wanted spell at exactly the level (and tier, if one was requested) you specified, this controls whether the search relaxes level, tier, both, or leaves the slot empty. Always picks the highest available level/closest tier, not just the first match found
+
+### v5.0.3
 - Fixed: Crafted-realm items (e.g. Realm = "Crafted - Evil") could show up in results just because another checked realm (like "Evil") happened to be a substring match, even with the Crafted checkbox unchecked, and even when no realm boxes were checked at all - Crafted items now never appear unless the Crafted checkbox is explicitly checked
 
 ### v5.0.2
