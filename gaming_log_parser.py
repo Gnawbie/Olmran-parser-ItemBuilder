@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.9"
+VERSION = "5.0.10"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -2627,28 +2627,38 @@ class App(tk.Tk):
 
         self.shield_defense_var = tk.StringVar(value='Any')
         self.shield_sigil_var = tk.StringVar(value='Any')
+        self.shield_armor_checks = {}
 
+        # Cloth/Leather share the Sigil row, Studded/Plate share the Defense
+        # row - rows packed tight (pady=1) against each other.
         sigil_row = ttk.Frame(shield_box)
-        sigil_row.pack(fill='x', pady=2)
+        sigil_row.pack(fill='x', pady=1)
         ttk.Label(sigil_row, text="Sigil:", width=10).pack(side='left')
         ttk.Combobox(sigil_row, textvariable=self.shield_sigil_var, values=SHIELD_SIGIL_VALUES,
                     state='readonly', width=14).pack(side='left')
-
-        # Armor type "cube" (2x2) of checkboxes, next to the Sigil dropdown.
-        armor_cube = ttk.Frame(sigil_row)
-        armor_cube.pack(side='left', padx=(16, 0))
-        self.shield_armor_checks = {}
-        for i, armor_type in enumerate(['cloth', 'leather', 'studded', 'plate']):
+        # First checkbox in each row (Cloth/Studded) gets a fixed width so
+        # the second one (Leather/Plate) starts at the same x position in
+        # both rows, regardless of "Cloth" vs "Studded" being different
+        # lengths - otherwise Leather and Plate wouldn't line up vertically.
+        first_col_width = 9
+        for armor_type in ('cloth', 'leather'):
             var = tk.BooleanVar(value=False)
             self.shield_armor_checks[armor_type] = var
-            ttk.Checkbutton(armor_cube, text=armor_type.title(), variable=var).grid(
-                row=i // 2, column=i % 2, sticky='w', padx=4, pady=1)
+            kwargs = {'width': first_col_width} if armor_type == 'cloth' else {}
+            ttk.Checkbutton(sigil_row, text=armor_type.title(), variable=var, **kwargs).pack(
+                side='left', padx=(12,0))
 
         defense_row = ttk.Frame(shield_box)
-        defense_row.pack(fill='x', pady=2)
+        defense_row.pack(fill='x', pady=1)
         ttk.Label(defense_row, text="Defense:", width=10).pack(side='left')
         ttk.Combobox(defense_row, textvariable=self.shield_defense_var, values=SHIELD_DEFENSE_LEVELS,
                     state='readonly', width=14).pack(side='left')
+        for armor_type in ('studded', 'plate'):
+            var = tk.BooleanVar(value=False)
+            self.shield_armor_checks[armor_type] = var
+            kwargs = {'width': first_col_width} if armor_type == 'studded' else {}
+            ttk.Checkbutton(defense_row, text=armor_type.title(), variable=var, **kwargs).pack(
+                side='left', padx=(12,0))
 
         # Load weapon defaults
         self._load_weapon_defaults()
