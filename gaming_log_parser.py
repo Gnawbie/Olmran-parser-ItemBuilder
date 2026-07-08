@@ -889,6 +889,103 @@ SPELL_VALUE_OVERRIDES = {
 
 _TIER_RANK = {'i': 1, 'ii': 2, 'iii': 3, 'iv': 4}
 
+DEFENSE_LEVELS = ['much worse', 'worse', 'normal', 'better', 'much better']
+DEFENSE_RANK = {level: i for i, level in enumerate(DEFENSE_LEVELS)}
+
+SIGIL_TYPES = ['Cold', 'Earth', 'Fire', 'Lightning', 'Pain', 'Shock', 'Water']
+
+# Weapon combo damage-type dropdowns (Dual-Wield 1h, 1h/Shield, 2h/Shield).
+# The item list's Type column spells these as "slash"/"thrust"/"crush" (e.g.
+# "offhand slash 1h"), not "slashing"/"thrusting"/"crushing", so matching
+# needs the stem, not the display label, to actually hit anything.
+WEAPON_DAMAGE_TYPES = ['Any', 'Slashing', 'Thrusting', 'Crushing']
+WEAPON_DAMAGE_STEMS = {'Slashing': 'slash', 'Thrusting': 'thrust', 'Crushing': 'crush'}
+
+# Melee Weapon Constraints' Damage dropdown - the item list's Damage column
+# values, best to worst (matches the item list's actual lowercase spelling).
+MELEE_DAMAGE_LEVELS = ['Any', 'Amazing', 'Very Good', 'Good', 'Small']
+
+# Melee Weapon Constraints' Timer dropdown - every distinct value seen in the
+# item list's Timer column (weapon speed in ms). Not all weapons have one -
+# 'Any' covers "no restriction", not "blank" specifically.
+MELEE_TIMER_VALUES = ['Any', '2200', '2300', '2400', '2500', '2600', '2700', '2800', '2900',
+                      '3000', '3100', '3199', '3200', '3300', '3400', '3500', '3599', '3600',
+                      '3700', '3800', '3900', '4000', '4200', '4400', '4500', 'normal']
+
+# Melee Weapon Constraints' Fumble dropdown - the item list's Fumble column values.
+MELEE_FUMBLE_VALUES = ['Any', 'Never', 'Rarely', 'Sometimes', 'Normal', 'Often']
+
+# Melee Weapon Constraints' Accuracy dropdown - the item list's Accuracy
+# column values, best to worst.
+MELEE_ACCURACY_VALUES = ['Any', 'Much Better', 'Better', 'Normal', 'Worse', 'Much Worse']
+
+# Melee Weapon Constraints' Sigil dropdown - same Sigil types as Armor
+# Constraints' per-slot Sigil dropdowns, plus an explicit "None" option
+# (require no Sigil at all) that Armor Constraints doesn't have.
+MELEE_SIGIL_VALUES = ['Any', 'None'] + SIGIL_TYPES
+
+# Shield Constraints' Defense dropdown - a single-value pick (unlike Armor
+# Constraints' Min/Max range), fed into the same _defense_priority_score
+# machinery as an exact one-value range.
+SHIELD_DEFENSE_LEVELS = ['Any'] + DEFENSE_LEVELS
+
+# Shield Constraints' Sigil dropdown - same list/behavior as every other
+# Sigil dropdown in Armor Constraints (no "None" option, unlike Melee's).
+SHIELD_SIGIL_VALUES = ['Any'] + SIGIL_TYPES
+
+
+def _weapon_damage_matches(item_type, choice):
+    """True if choice is 'Any' or its stem appears in item_type (already
+    lowercased by the caller)."""
+    if choice == 'Any':
+        return True
+    return WEAPON_DAMAGE_STEMS.get(choice, '\0') in item_type
+
+
+def _weapon_style_matches(item_type, style):
+    """True if the item's melee-vs-direct classification matches style
+    ('Melee' or 'Direct'). Staff-type items never match either - callers
+    that support a Parry option (currently only Two-Handed) handle staves
+    separately, before calling this."""
+    if 'staff' in item_type:
+        return False
+    is_direct = 'direct' in item_type
+    return is_direct if style == 'Direct' else not is_direct
+
+
+_KNOWN_WANTED_SPELL_BASES = {spell.lower() for spells in SPELL_CATEGORIES.values() for spell in spells}
+
+
+def _direct_weapon_eligible(item_spell):
+    """Direct weapons always carry a spell in-game, but it's typically a
+    one-off effect that "does its own thing" rather than being one of the
+    program's recognized/pickable spells (see SPELL_CATEGORIES) - so
+    eligibility requires some spell to be present, but specifically NOT one
+    that could be chosen from the Wanted Spells category dropdowns. Default
+    policy until those one-off spells get added to the program; revisit
+    then. Melee/Parry/Fired have no such requirement."""
+    if not item_spell:
+        return False
+    return _spell_base(item_spell) not in _KNOWN_WANTED_SPELL_BASES
+
+
+def _two_handed_matches(item_type, item_spell, style, damage):
+    """Two-Handed eligibility, gated by its own Style (Melee/Direct/Parry/
+    Fired) and Damage Type dropdowns - a first step toward per-combo style
+    selection (see the comment above the UI). Parry (staff-type items) and
+    Fired ("fired 2h") both have no damage-type concept in the item list, so
+    each is matched on its own, ignoring the Damage Type dropdown - Parry
+    also ignores the 2h requirement, since parry staves aren't tagged 2h."""
+    if style == 'Parry':
+        return 'staff' in item_type
+    if '2h' not in item_type:
+        return False
+    if style == 'Fired':
+        return 'fired' in item_type
+    if style == 'Direct' and not _direct_weapon_eligible(item_spell):
+        return False
+    return _weapon_style_matches(item_type, style) and _weapon_damage_matches(item_type, damage)
+
 
 def _spell_base(spell):
     """Strip a trailing .i/.ii/.iii/.iv tier suffix so different tiers of the
@@ -1118,7 +1215,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("🎮 Gaming Log Parser")
-        self.geometry("1350x1000")
+        self.geometry("1350x790")
         self.minsize(1150, 750)
         self.resizable(True, True)
 
@@ -1149,27 +1246,18 @@ class App(tk.Tk):
                     self.last_open_dir = config.get('last_open_dir', os.path.expanduser("~"))
                     self.last_save_dir = config.get('last_save_dir', os.path.expanduser("~"))
                     self.armor_defaults = config.get('armor_defaults', {})
-                    self.weapon_defaults = config.get('weapon_defaults', {})
-                    self.weapon_style_default = config.get('weapon_style_default', '')
-                    self.build_config_defaults = config.get('build_config_defaults', {})
-                    self.dual_wield_default = config.get('dual_wield_default', False)
+                    self.weapon_combo_defaults = config.get('weapon_combo_defaults', {})
             else:
                 self.last_open_dir = os.path.expanduser("~")
                 self.last_save_dir = os.path.expanduser("~")
                 self.armor_defaults = {}
-                self.weapon_defaults = {}
-                self.weapon_style_default = ''
-                self.build_config_defaults = {}
-                self.dual_wield_default = False
+                self.weapon_combo_defaults = {}
         except Exception:
             self.last_open_dir = os.path.expanduser("~")
             self.last_save_dir = os.path.expanduser("~")
             self.armor_defaults = {}
-            self.weapon_defaults = {}
-            self.weapon_style_default = ''
-            self.build_config_defaults = {}
-            self.dual_wield_default = False
-    
+            self.weapon_combo_defaults = {}
+
     def _save_config(self):
         """Save configuration to file"""
         try:
@@ -1177,10 +1265,7 @@ class App(tk.Tk):
                 'last_open_dir': self.last_open_dir,
                 'last_save_dir': self.last_save_dir,
                 'armor_defaults': getattr(self, 'armor_defaults', {}),
-                'weapon_defaults': getattr(self, 'weapon_defaults', {}),
-                'weapon_style_default': getattr(self, 'weapon_style_default', ''),
-                'build_config_defaults': getattr(self, 'build_config_defaults', {}),
-                'dual_wield_default': getattr(self, 'dual_wield_default', False)
+                'weapon_combo_defaults': getattr(self, 'weapon_combo_defaults', {})
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f)
@@ -2163,31 +2248,352 @@ class App(tk.Tk):
     
     # ── BUILD TAB ─────────────────────────────────────────────
     def _build_build_tab(self):
-        # The Build tab has more controls than fit in one screen (armor,
-        # weapon, realm constraints, results...), so it's wrapped in a
-        # scrollable canvas rather than clipping anything below Damage Type.
-        outer = self.tab_build
-        build_canvas = tk.Canvas(outer, highlightthickness=0)
-        build_vsb = ttk.Scrollbar(outer, orient='vertical', command=build_canvas.yview)
-        build_canvas.configure(yscrollcommand=build_vsb.set)
-        build_canvas.pack(side='left', fill='both', expand=True)
-        build_vsb.pack(side='right', fill='y')
+        # The Build tab is getting crowded (armor, weapon, realm, Defense
+        # constraints...), so it's wrapped in a nested Notebook - everything
+        # existing stays on the first sub-tab, unchanged, and a couple of
+        # empty sub-tabs are reserved here so future controls have somewhere
+        # to go without piling further onto one already-busy screen.
+        #
+        # Min/Max/Specific Level and the Find Optimal Build/Show All
+        # Matches/Generate multiple build options controls are shared across
+        # every sub-tab - they're built into shared_controls_frame further
+        # below, packed after (so it stacks directly beneath) the
+        # sub-notebook rather than inside any one sub-tab, so they stay
+        # visible and usable no matter which sub-tab is selected. Neither
+        # this notebook nor shared_controls_frame use expand=True/fill='both'
+        # - each sub-tab already sizes itself to its own content, so letting
+        # the notebook stretch to fill the whole tab would leave a big gap
+        # before shared_controls_frame instead of it sitting right below.
+        self.build_sub_notebook = ttk.Notebook(self.tab_build)
+        self.build_sub_notebook.pack(fill='x')
 
-        t = ttk.Frame(build_canvas)
-        build_canvas_window = build_canvas.create_window((0, 0), window=t, anchor='nw')
+        build_search_subtab = ttk.Frame(self.build_sub_notebook)
+        self.build_sub_notebook.add(build_search_subtab, text='Basic Constraints')
 
-        def _on_build_frame_configure(event):
-            build_canvas.configure(scrollregion=build_canvas.bbox('all'))
-        t.bind('<Configure>', _on_build_frame_configure)
+        # Armor Type Constraints has grown enough (per-slot Defense and
+        # Sigil controls alongside the armor type checkboxes) to warrant its
+        # own sub-tab rather than taking up space on Search.
+        self.build_armor_subtab = ttk.Frame(self.build_sub_notebook, padding=4)
+        self.build_sub_notebook.add(self.build_armor_subtab, text='Armor Constraints')
 
-        def _on_build_canvas_configure(event):
-            build_canvas.itemconfig(build_canvas_window, width=event.width)
-        build_canvas.bind('<Configure>', _on_build_canvas_configure)
+        self.build_weapon_subtab = ttk.Frame(self.build_sub_notebook, padding=4)
+        self.build_sub_notebook.add(self.build_weapon_subtab, text='Weapon Constraints')
 
-        def _on_build_mousewheel(event):
-            build_canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
-        build_canvas.bind('<Enter>', lambda e: build_canvas.bind_all('<MouseWheel>', _on_build_mousewheel))
-        build_canvas.bind('<Leave>', lambda e: build_canvas.unbind_all('<MouseWheel>'))
+        # Armor type constraints - built now (into the Armor Constraints
+        # sub-tab above) even though the rest of the Search sub-tab's
+        # widgets are constructed further below; order of construction
+        # doesn't need to match the tabs' left-to-right order. Wrapped in
+        # its own bordered box, anchored to the top and sized to fit its
+        # content, rather than left to sit in the sub-tab's full (much
+        # taller) notebook viewport - keeps the border tight around what's
+        # actually here instead of one big mostly-empty area.
+        armor_box = ttk.LabelFrame(self.build_armor_subtab, text="Armor Type Constraints", padding=8)
+        armor_box.pack(anchor='n', fill='x')
+
+        armor_header = ttk.Frame(armor_box)
+        armor_header.pack(fill='x', pady=(0,4))
+        ttk.Button(armor_header, text="Set as Default",
+                  command=self._save_armor_defaults).pack(side='left', padx=(0,4))
+        ttk.Button(armor_header, text="Clear Default",
+                  command=self._clear_armor_defaults).pack(side='left', padx=4)
+        ttk.Button(armor_header, text="Clear All",
+                  command=self._clear_all_armor).pack(side='left', padx=4)
+
+        # Create checkbox storage for armor types
+        self.armor_checks = {}
+
+        # "All" row - controls all slots at once
+        all_frame = ttk.Frame(armor_box)
+        all_frame.pack(fill='x', pady=2)
+        ttk.Label(all_frame, text="All:", width=12, font=('Arial', 9, 'bold')).pack(side='left')
+
+        self.armor_all_checks = {}
+        for armor_type in ['cloth', 'leather', 'studded', 'plate']:
+            var = tk.BooleanVar(value=False)
+            self.armor_all_checks[armor_type] = var
+            ttk.Checkbutton(all_frame, text=armor_type.title(),
+                           variable=var,
+                           command=lambda t=armor_type: self._update_all_armor(t)).pack(side='left', padx=4)
+
+        # Defense filter - opt-in constraint on the item list's Defense
+        # column (much worse < worse < normal < better < much better), on
+        # the same row as "All:" so it sits under the armor header buttons
+        # above. In Find Optimal Build this is always a soft preference -
+        # items in range are prioritized when possible, but every slot still
+        # gets filled even if nothing in range is available. In Show All
+        # Matches (a flat listing, no build to fill) it's a hard filter.
+        defense_block = ttk.Frame(all_frame)
+        defense_block.pack(side='left', padx=(20,0))
+
+        self.use_defense_filter_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(defense_block, text="Defense:",
+                       variable=self.use_defense_filter_var).pack(side='left', padx=(0,4))
+
+        self.min_defense_var = tk.StringVar(value='normal')
+        ttk.Combobox(defense_block, textvariable=self.min_defense_var, values=DEFENSE_LEVELS,
+                    state='readonly', width=11).pack(side='left', padx=(0,4))
+
+        ttk.Label(defense_block, text="to").pack(side='left', padx=(0,4))
+
+        self.max_defense_var = tk.StringVar(value=DEFENSE_LEVELS[-1])
+        ttk.Combobox(defense_block, textvariable=self.max_defense_var, values=DEFENSE_LEVELS,
+                    state='readonly', width=11).pack(side='left', padx=(0,8))
+
+        # Armor slots
+        self.slot_defense_controls = {}
+        self.slot_sigil_vars = {}
+        for slot, label in [('head', 'Head'), ('cloak', 'Cloak'), ('body', 'Body'),
+                           ('hands', 'Hands'), ('legs', 'Legs'), ('feet', 'Feet')]:
+            slot_frame = ttk.Frame(armor_box)
+            slot_frame.pack(fill='x', pady=2)
+            ttk.Label(slot_frame, text=f"{label}:", width=12).pack(side='left')
+
+            # Create checkboxes for each armor type
+            self.armor_checks[slot] = {}
+            for armor_type in ['cloth', 'leather', 'studded', 'plate']:
+                var = tk.BooleanVar(value=False)
+                self.armor_checks[slot][armor_type] = var
+                ttk.Checkbutton(slot_frame, text=armor_type.title(),
+                               variable=var).pack(side='left', padx=4)
+
+            # Per-slot Defense - stacks with the global "All:" row Defense
+            # controls above rather than replacing them: if both are active
+            # for this slot, an item must satisfy both hard ranges, and earns
+            # a priority point for each soft range it satisfies.
+            slot_defense_block = ttk.Frame(slot_frame)
+            slot_defense_block.pack(side='left', padx=(20,0))
+
+            use_var = tk.BooleanVar(value=False)
+            min_var = tk.StringVar(value='normal')
+            max_var = tk.StringVar(value=DEFENSE_LEVELS[-1])
+            self.slot_defense_controls[slot] = {
+                'use': use_var, 'min': min_var, 'max': max_var,
+            }
+
+            ttk.Checkbutton(slot_defense_block, text="Defense:",
+                           variable=use_var).pack(side='left', padx=(0,4))
+
+            ttk.Combobox(slot_defense_block, textvariable=min_var, values=DEFENSE_LEVELS,
+                        state='readonly', width=11).pack(side='left', padx=(0,4))
+
+            ttk.Label(slot_defense_block, text="to").pack(side='left', padx=(0,4))
+
+            ttk.Combobox(slot_defense_block, textvariable=max_var, values=DEFENSE_LEVELS,
+                        state='readonly', width=11).pack(side='left', padx=(0,8))
+
+            # Per-slot Sigil - soft preference like Defense: if a Sigil is
+            # picked, the search favors an item carrying that Sigil at the
+            # highest available SigilLvl (1-5) for this slot, but never
+            # excludes other items, so the slot still always gets filled.
+            sigil_var = tk.StringVar(value='Any')
+            self.slot_sigil_vars[slot] = sigil_var
+            ttk.Label(slot_frame, text="Sigil:").pack(side='left', padx=(12,4))
+            ttk.Combobox(slot_frame, textvariable=sigil_var, values=['Any'] + SIGIL_TYPES,
+                        state='readonly', width=11).pack(side='left')
+
+        # Load saved armor defaults
+        self._load_armor_defaults()
+
+        # Weapon Constraints - its own sub-tab, same reasoning as Armor
+        # Type Constraints above: built now, wrapped in a bordered box sized
+        # to its own content rather than the sub-tab's full height. Sits
+        # side by side with Melee Weapon Constraints in the empty space
+        # to the right, rather than stacked full-width.
+        weapon_constraints_row = ttk.Frame(self.build_weapon_subtab)
+        weapon_constraints_row.pack(anchor='n', fill='x')
+
+        weapon_box = ttk.LabelFrame(weapon_constraints_row, text="Weapon Constraints", padding=8)
+        weapon_box.pack(side='left', anchor='n')
+
+        # The old global Weapon Style (Melee/Direct (Caster)/Parry Staff/Any)
+        # has been removed - Style is now per-combo (see Two-Handed and
+        # 1h/Shield below), and more combos will get their own Style dropdown
+        # over time rather than sharing one global control.
+
+        # Weapon Types/Combo's - each pairs a specific weapon shape with its
+        # own damage-type dropdown(s) (where it has one), rather than sharing
+        # the one global Damage Type row below. Dual-Wield 1h needs two
+        # physical weapon slots (main and off hand), each independently
+        # typed; 1h/Shield and 2h/Shield each need one weapon slot plus a
+        # shield, with their own type too. Plain "Weapon" and "Shield" were
+        # removed here - every weapon combination now goes through one of
+        # these named combos instead.
+        combo_header = ttk.Label(weapon_box, text="Weapon Types/Combo's", font=('Arial', 9, 'bold'))
+        combo_header.pack(anchor='w', pady=(6,2))
+
+        dual_wield_frame = ttk.Frame(weapon_box)
+        dual_wield_frame.pack(fill='x', pady=2)
+        self.dual_wield_1h_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(dual_wield_frame, text="Dual-Wield 1h",
+                       variable=self.dual_wield_1h_var, width=14).pack(side='left')
+        ttk.Label(dual_wield_frame, text="Main:").pack(side='left', padx=(8,4))
+        self.dual_wield_1h_main_var = tk.StringVar(value='Any')
+        ttk.Combobox(dual_wield_frame, textvariable=self.dual_wield_1h_main_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+        ttk.Label(dual_wield_frame, text="Off-Hand:").pack(side='left', padx=(8,4))
+        self.dual_wield_1h_off_var = tk.StringVar(value='Any')
+        ttk.Combobox(dual_wield_frame, textvariable=self.dual_wield_1h_off_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+
+        combo_1h_shield_frame = ttk.Frame(weapon_box)
+        combo_1h_shield_frame.pack(fill='x', pady=2)
+        self.combo_1h_shield_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(combo_1h_shield_frame, text="1h/Shield",
+                       variable=self.combo_1h_shield_var, width=14).pack(side='left')
+        ttk.Label(combo_1h_shield_frame, text="Style:").pack(side='left', padx=(8,4))
+        self.combo_1h_shield_style_var = tk.StringVar(value='Melee')
+        ttk.Combobox(combo_1h_shield_frame, textvariable=self.combo_1h_shield_style_var,
+                    values=['Melee', 'Direct'], state='readonly', width=8).pack(side='left')
+        ttk.Label(combo_1h_shield_frame, text="Damage Type:").pack(side='left', padx=(8,4))
+        self.combo_1h_shield_damage_var = tk.StringVar(value='Any')
+        ttk.Combobox(combo_1h_shield_frame, textvariable=self.combo_1h_shield_damage_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+
+        combo_2h_shield_frame = ttk.Frame(weapon_box)
+        combo_2h_shield_frame.pack(fill='x', pady=2)
+        self.combo_2h_shield_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(combo_2h_shield_frame, text="2h/Shield",
+                       variable=self.combo_2h_shield_var, width=14).pack(side='left')
+        ttk.Label(combo_2h_shield_frame, text="Damage Type:").pack(side='left', padx=(8,4))
+        self.combo_2h_shield_damage_var = tk.StringVar(value='Any')
+        ttk.Combobox(combo_2h_shield_frame, textvariable=self.combo_2h_shield_damage_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+
+        # Fired 1h and Shield - "Fired" is its own weapon shape in the item
+        # list (ranged/thrown), with no slash/thrust/crush sub-variant, so
+        # unlike the combos above it needs no damage-type dropdown.
+        combo_fired_1h_shield_frame = ttk.Frame(weapon_box)
+        combo_fired_1h_shield_frame.pack(fill='x', pady=2)
+        self.combo_fired_1h_shield_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(combo_fired_1h_shield_frame, text="Fired 1h/Shield",
+                       variable=self.combo_fired_1h_shield_var).pack(side='left')
+
+        # Two-Handed - moved in from the old Build Config row, now with its
+        # own damage-type dropdown like the combos above, plus a Style
+        # dropdown (Melee/Direct/Parry/Fired) - a first step toward per-combo
+        # style selection; the global Weapon Style row above still governs
+        # everything else for now, but is expected to go away eventually as
+        # more combos get their own Style dropdown like this one. Fired
+        # ("fired 2h" in the item list) has no damage-type sub-variant, so
+        # its Damage Type dropdown greys out when Fired is selected.
+        two_handed_frame = ttk.Frame(weapon_box)
+        two_handed_frame.pack(fill='x', pady=2)
+        self.two_handed_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(two_handed_frame, text="Two-Handed",
+                       variable=self.two_handed_var, width=14).pack(side='left')
+        ttk.Label(two_handed_frame, text="Style:").pack(side='left', padx=(8,4))
+        self.two_handed_style_var = tk.StringVar(value='Melee')
+        ttk.Combobox(two_handed_frame, textvariable=self.two_handed_style_var,
+                    values=['Melee', 'Direct', 'Parry', 'Fired'], state='readonly', width=8).pack(side='left')
+        ttk.Label(two_handed_frame, text="Damage Type:").pack(side='left', padx=(8,4))
+        self.two_handed_damage_var = tk.StringVar(value='Any')
+        self.two_handed_damage_combo = ttk.Combobox(two_handed_frame, textvariable=self.two_handed_damage_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10)
+        self.two_handed_damage_combo.pack(side='left')
+        self.two_handed_style_var.trace_add('write', lambda *args: self._update_two_handed_damage_state())
+
+        # 1 Claw / 2 Claw - moved in from the old Build Config row; no
+        # damage-type dropdown for either, unlike Two-Handed above.
+        claw_frame = ttk.Frame(weapon_box)
+        claw_frame.pack(fill='x', pady=2)
+        self.claw_1_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(claw_frame, text="1 Claw", variable=self.claw_1_var).pack(side='left', padx=(0,4))
+        self.claw_2_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(claw_frame, text="2 Claw", variable=self.claw_2_var).pack(side='left')
+
+        # The old global Damage Type checkboxes (Slashing/Thrusting/Crushing)
+        # have been removed - each combo above now has its own Damage Type
+        # dropdown instead (Claw intentionally has none).
+
+        ttk.Label(weapon_box, text="Fired direct not factored in at this time",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w', pady=(6,0))
+
+        # Right column next to Weapon Constraints, holding Melee Weapon
+        # Constraints on top and Shield Constraints stacked below it.
+        right_column = ttk.Frame(weapon_constraints_row)
+        right_column.pack(side='left', anchor='n', padx=(20,0))
+
+        # Melee Weapon Constraints - soft preferences that apply to any
+        # weapon-style pick (Melee/Direct/Parry/Fired all use these, despite
+        # the section's name). These never exclude a weapon outright - the
+        # search always matches as many as it can and still fills the slot
+        # with the best available item even if none match. "Priority" bumps
+        # a constraint above the unchecked ones when scoring candidates;
+        # capped at 3 checked at once - the remaining unchecked boxes grey
+        # out once 3 are checked (see _update_melee_priority_cap).
+        melee_box_label = ttk.Frame(right_column)
+        ttk.Label(melee_box_label, text="Melee Weapon Constraints").pack(side='left')
+        ttk.Label(melee_box_label, text="  (Applies to Direct, Parry and Fired weapons as well)",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(side='left')
+        melee_box = ttk.LabelFrame(right_column, labelwidget=melee_box_label, padding=8)
+        melee_box.pack(anchor='n', fill='x')
+
+        self.melee_damage_var = tk.StringVar(value='Any')
+        self.melee_timer_var = tk.StringVar(value='Any')
+        self.melee_fumble_var = tk.StringVar(value='Any')
+        self.melee_accuracy_var = tk.StringVar(value='Any')
+        self.melee_sigil_var = tk.StringVar(value='Any')
+
+        self.melee_damage_priority_var = tk.BooleanVar(value=False)
+        self.melee_timer_priority_var = tk.BooleanVar(value=False)
+        self.melee_fumble_priority_var = tk.BooleanVar(value=False)
+        self.melee_accuracy_priority_var = tk.BooleanVar(value=False)
+        self.melee_sigil_priority_var = tk.BooleanVar(value=False)
+
+        # Keyed collection used only to enforce the "at most 3 Priority
+        # checked" cap - not otherwise part of the per-field wiring below.
+        self.melee_priority_vars = [
+            self.melee_damage_priority_var, self.melee_timer_priority_var,
+            self.melee_fumble_priority_var, self.melee_accuracy_priority_var,
+            self.melee_sigil_priority_var,
+        ]
+        self.melee_priority_checkbuttons = []
+
+        for label, var, values, priority_var in [
+                ('Damage:', self.melee_damage_var, MELEE_DAMAGE_LEVELS, self.melee_damage_priority_var),
+                ('Timer:', self.melee_timer_var, MELEE_TIMER_VALUES, self.melee_timer_priority_var),
+                ('Fumble:', self.melee_fumble_var, MELEE_FUMBLE_VALUES, self.melee_fumble_priority_var),
+                ('Accuracy:', self.melee_accuracy_var, MELEE_ACCURACY_VALUES, self.melee_accuracy_priority_var),
+                ('Sigil:', self.melee_sigil_var, MELEE_SIGIL_VALUES, self.melee_sigil_priority_var)]:
+            row = ttk.Frame(melee_box)
+            row.pack(fill='x', pady=2)
+            ttk.Label(row, text=label, width=10).pack(side='left')
+            ttk.Combobox(row, textvariable=var, values=values, state='readonly', width=14).pack(side='left')
+            priority_cb = ttk.Checkbutton(row, text="Priority", variable=priority_var,
+                                          command=self._update_melee_priority_cap)
+            priority_cb.pack(side='left', padx=(8,0))
+            self.melee_priority_checkbuttons.append(priority_cb)
+
+        # Shield Constraints - Defense works exactly like Armor Constraints'
+        # per-slot Defense (soft preference, fed into the same
+        # _defense_priority_score machinery, just as a single-value range
+        # instead of a user-picked Min/Max); Sigil works like every other
+        # Sigil dropdown (_sigil_priority_score). Neither excludes a shield
+        # outright - same "match as many as possible" philosophy as above.
+        shield_box = ttk.LabelFrame(right_column, text="Shield Constraints", padding=8)
+        shield_box.pack(anchor='n', fill='x', pady=(10,0))
+
+        self.shield_defense_var = tk.StringVar(value='Any')
+        self.shield_sigil_var = tk.StringVar(value='Any')
+
+        for label, var, values in [('Defense:', self.shield_defense_var, SHIELD_DEFENSE_LEVELS),
+                                  ('Sigil:', self.shield_sigil_var, SHIELD_SIGIL_VALUES)]:
+            row = ttk.Frame(shield_box)
+            row.pack(fill='x', pady=2)
+            ttk.Label(row, text=label, width=10).pack(side='left')
+            ttk.Combobox(row, textvariable=var, values=values, state='readonly', width=14).pack(side='left')
+
+        # Load weapon defaults
+        self._load_weapon_defaults()
+
+        # Now that Armor Type Constraints has its own sub-tab, the Search
+        # sub-tab's remaining content fits without needing to scroll, so it's
+        # packed directly (anchored to the top) instead of stretching a
+        # scrollable canvas across the sub-tab's full height and leaving a
+        # big empty area below the last control.
+        outer = build_search_subtab
+        t = ttk.Frame(outer)
+        t.pack(fill='x', anchor='n')
 
         ttk.Label(t, text="Build Creator",
                   font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0,10))
@@ -2332,34 +2738,15 @@ class App(tk.Tk):
         ttk.Label(required_block, text="(e.g. a specific weapon/armor piece - typos are OK, it'll offer close matches)",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w', pady=(2,0))
 
-        # Level filters (min/max/specific with mutual exclusion)
+        # Min/Max/Specific Level moved out to shared_controls_frame below
+        # (see the comment at the top of this method) - Min/Max Tier stays
+        # here since it's specific to this tab's spell/tier matching.
         level_frame = ttk.Frame(constraints_frame)
         level_frame.pack(fill='x', pady=(8,4))
-        
-        # Min Level
-        ttk.Label(level_frame, text="Min Level:", width=12).pack(side='left')
-        self.min_level_var = tk.StringVar(value='')
-        self.min_level_entry = ttk.Entry(level_frame, textvariable=self.min_level_var, width=8)
-        self.min_level_entry.pack(side='left', padx=(0,8))
-        self.min_level_var.trace_add('write', lambda *args: self._update_level_fields())
-        
-        # Max Level
-        ttk.Label(level_frame, text="Max Level:").pack(side='left', padx=(8,4))
-        self.max_level_var = tk.StringVar(value='')
-        self.max_level_entry = ttk.Entry(level_frame, textvariable=self.max_level_var, width=8)
-        self.max_level_entry.pack(side='left', padx=(0,8))
-        self.max_level_var.trace_add('write', lambda *args: self._update_level_fields())
-        
-        # Specific Level
-        ttk.Label(level_frame, text="Specific Level:").pack(side='left', padx=(8,4))
-        self.specific_level_var = tk.StringVar(value='')
-        self.specific_level_entry = ttk.Entry(level_frame, textvariable=self.specific_level_var, width=8)
-        self.specific_level_entry.pack(side='left', padx=(0,4))
-        self.specific_level_var.trace_add('write', lambda *args: self._update_level_fields())
 
         # Min/Max Tier - bounds how far the search will fall back when the
         # exact tier requested for a spell isn't available (blank = unbounded).
-        ttk.Label(level_frame, text="Min Tier:").pack(side='left', padx=(12,4))
+        ttk.Label(level_frame, text="Min Tier:", width=12).pack(side='left')
         self.min_tier_var = tk.StringVar(value='')
         ttk.Combobox(level_frame, textvariable=self.min_tier_var, values=['', 'i', 'ii', 'iii'],
                     state='readonly', width=5).pack(side='left', padx=(0,8))
@@ -2371,124 +2758,7 @@ class App(tk.Tk):
 
         ttk.Label(level_frame, text="(leave blank for no restriction)",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=4)
-        
-        # Armor type constraints
-        armor_header = ttk.Frame(constraints_frame)
-        armor_header.pack(fill='x', pady=(8,4))
-        ttk.Label(armor_header, text="Armor Type Constraints:", 
-                 font=('Arial', 10, 'bold')).pack(side='left')
-        ttk.Button(armor_header, text="Set as Default", 
-                  command=self._save_armor_defaults).pack(side='left', padx=4)
-        ttk.Button(armor_header, text="Clear Default", 
-                  command=self._clear_armor_defaults).pack(side='left', padx=4)
-        ttk.Button(armor_header, text="Clear All", 
-                  command=self._clear_all_armor).pack(side='left', padx=4)
-        
-        # Create checkbox storage for armor types
-        self.armor_checks = {}
-        
-        # "All" row - controls all slots at once
-        all_frame = ttk.Frame(constraints_frame)
-        all_frame.pack(fill='x', pady=2)
-        ttk.Label(all_frame, text="All:", width=12, font=('Arial', 9, 'bold')).pack(side='left')
-        
-        self.armor_all_checks = {}
-        for armor_type in ['cloth', 'leather', 'studded', 'plate']:
-            var = tk.BooleanVar(value=False)
-            self.armor_all_checks[armor_type] = var
-            ttk.Checkbutton(all_frame, text=armor_type.title(), 
-                           variable=var,
-                           command=lambda t=armor_type: self._update_all_armor(t)).pack(side='left', padx=4)
-        
-        # Armor slots
-        for slot, label in [('head', 'Head'), ('cloak', 'Cloak'), ('body', 'Body'), 
-                           ('hands', 'Hands'), ('legs', 'Legs'), ('feet', 'Feet')]:
-            slot_frame = ttk.Frame(constraints_frame)
-            slot_frame.pack(fill='x', pady=2)
-            ttk.Label(slot_frame, text=f"{label}:", width=12).pack(side='left')
-            
-            # Create checkboxes for each armor type
-            self.armor_checks[slot] = {}
-            for armor_type in ['cloth', 'leather', 'studded', 'plate']:
-                var = tk.BooleanVar(value=False)
-                self.armor_checks[slot][armor_type] = var
-                ttk.Checkbutton(slot_frame, text=armor_type.title(), 
-                               variable=var).pack(side='left', padx=4)
-        
-        # Load saved armor defaults
-        self._load_armor_defaults()
-        
-        # Weapon constraints
-        weapon_header = ttk.Frame(constraints_frame)
-        weapon_header.pack(fill='x', pady=(8,4))
-        ttk.Label(weapon_header, text="Weapon Constraints:", 
-                 font=('Arial', 10, 'bold')).pack(side='left')
-        
-        # Create checkbox storage for weapon types
-        self.weapon_checks = {}
-        
-        # Melee vs Direct (radio buttons)
-        weapon_style_frame = ttk.Frame(constraints_frame)
-        weapon_style_frame.pack(fill='x', pady=2)
-        ttk.Label(weapon_style_frame, text="Weapon Style:", width=14).pack(side='left')
-        self.weapon_style_var = tk.StringVar(value='')  # '' = Any
-        ttk.Radiobutton(weapon_style_frame, text="Melee", 
-                       variable=self.weapon_style_var, value='melee').pack(side='left', padx=4)
-        ttk.Radiobutton(weapon_style_frame, text="Direct (Caster)", 
-                       variable=self.weapon_style_var, value='direct-caster').pack(side='left', padx=4)
-        
-        # Parry Staff: caster utility staves holding non-offensive spells.
-        # Works like any other gear slot (picked purely by wanted spells,
-        # not build-config/damage-type), rather than as a combat weapon.
-        ttk.Radiobutton(weapon_style_frame, text="Parry Staff",
-                       variable=self.weapon_style_var, value='direct-stat').pack(side='left', padx=4)
 
-        ttk.Radiobutton(weapon_style_frame, text="Any",
-                       variable=self.weapon_style_var, value='').pack(side='left', padx=4)
-        
-        # Build configuration (checkboxes)
-        weapon_config_frame = ttk.Frame(constraints_frame)
-        weapon_config_frame.pack(fill='x', pady=2)
-        ttk.Label(weapon_config_frame, text="Build Config:", width=14).pack(side='left')
-        
-        self.build_config_checks = {}
-        config_items = [('weapon', 'Weapon'), ('shield', 'Shield'), ('two-handed', 'Two-Handed'),
-                        ('claw_1', '1 Claw'), ('claw_2', '2 Claw')]
-        for config_type, label in config_items:
-            var = tk.BooleanVar(value=False)
-            self.build_config_checks[config_type] = var
-            ttk.Checkbutton(weapon_config_frame, text=label, variable=var,
-                           command=self._update_weapon_config_options).pack(side='left', padx=4)
-        
-        # Dual-wield sub-option (indent under main checkboxes)
-        dualwield_frame = ttk.Frame(constraints_frame)
-        dualwield_frame.pack(fill='x', pady=2)
-        ttk.Label(dualwield_frame, text="", width=14).pack(side='left')  # Spacer for alignment
-        ttk.Label(dualwield_frame, text="↳", foreground='#888').pack(side='left', padx=(0,2))
-        self.dual_wield_var = tk.BooleanVar(value=False)
-        self.dual_wield_cb = ttk.Checkbutton(dualwield_frame, text="Dual-Wield (for Weapon/Two-Handed)", 
-                                              variable=self.dual_wield_var)
-        self.dual_wield_cb.pack(side='left')
-        
-        # Weapon type checkboxes (damage types)
-        self.weapon_type_frame = ttk.Frame(constraints_frame)
-        self.weapon_type_frame.pack(fill='x', pady=2)
-        ttk.Label(self.weapon_type_frame, text="Damage Type:", width=14).pack(side='left')
-        
-        self.weapon_type_checkbuttons = {}
-        for weapon_type in ['slashing', 'thrusting', 'crushing']:
-            var = tk.BooleanVar(value=False)
-            self.weapon_checks[weapon_type] = var
-            cb = ttk.Checkbutton(self.weapon_type_frame, text=weapon_type.title(), 
-                                variable=var)
-            cb.pack(side='left', padx=4)
-            self.weapon_type_checkbuttons[weapon_type] = cb
-        
-        # Note: claw and offhand removed since they're in build config now
-        
-        # Load weapon defaults
-        self._load_weapon_defaults()
-        
         # Priority Spell - sits in the existing gap between the spell dropdowns
         # and "Only Found In", using space that's already there rather than
         # growing the row. Only offers spells currently in Wanted Spells or
@@ -2559,19 +2829,10 @@ class App(tk.Tk):
             ttk.Checkbutton(realm_block, text=realm, variable=var).grid(
                 row=i // cols, column=i % cols, sticky='w', padx=4, pady=2)
         
-        # Search buttons
-        button_frame = ttk.Frame(constraints_frame)
-        button_frame.pack(pady=8)
+        # Find Optimal Build/Show All Matches/Generate multiple build options
+        # moved out to shared_controls_frame below (see the comment at the
+        # top of this method).
 
-        ttk.Button(button_frame, text="🎯 Find Optimal Build",
-                  command=self._find_optimal_build, width=20).pack(side='left', padx=4)
-        ttk.Button(button_frame, text="📋 Show All Matches",
-                  command=self._show_all_matches, width=20).pack(side='left', padx=4)
-
-        self.generate_multi_builds_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(button_frame, text="🎲 Generate multiple build options",
-                       variable=self.generate_multi_builds_var).pack(side='left', padx=(12,4))
-        
         # Status
         self.search_status = ttk.Label(t, text="Load a master database file and add desired spells to begin", 
                                       foreground='#666')
@@ -2579,7 +2840,56 @@ class App(tk.Tk):
         
         # Store loaded data
         self.master_data = []
-    
+
+        # Shared controls - Min/Max/Specific Level and the search buttons -
+        # packed under the sub-notebook rather than inside any one sub-tab,
+        # so they stay visible and usable no matter which of Basic
+        # Constraints/Armor Constraints/Weapon Constraints is selected.
+        # Packed with the default side='top' (not 'bottom') so it stacks
+        # directly beneath the notebook's actual content, rather than being
+        # pinned to the bottom of the whole tab with a gap in between.
+        shared_controls_frame = ttk.Frame(self.tab_build, padding=(0,8,0,0))
+        shared_controls_frame.pack(fill='x')
+
+        shared_level_frame = ttk.Frame(shared_controls_frame)
+        shared_level_frame.pack(fill='x')
+
+        # Centered within shared_level_frame - pack()'s default anchor is
+        # 'center', so this inner frame (not fill='x') sits in the middle
+        # of the row instead of hugging the left edge.
+        level_fields_frame = ttk.Frame(shared_level_frame)
+        level_fields_frame.pack()
+
+        ttk.Label(level_fields_frame, text="Min Level:", width=12).pack(side='left')
+        self.min_level_var = tk.StringVar(value='')
+        self.min_level_entry = ttk.Entry(level_fields_frame, textvariable=self.min_level_var, width=8)
+        self.min_level_entry.pack(side='left', padx=(0,8))
+        self.min_level_var.trace_add('write', lambda *args: self._update_level_fields())
+
+        ttk.Label(level_fields_frame, text="Max Level:").pack(side='left', padx=(8,4))
+        self.max_level_var = tk.StringVar(value='')
+        self.max_level_entry = ttk.Entry(level_fields_frame, textvariable=self.max_level_var, width=8)
+        self.max_level_entry.pack(side='left', padx=(0,8))
+        self.max_level_var.trace_add('write', lambda *args: self._update_level_fields())
+
+        ttk.Label(level_fields_frame, text="Specific Level:").pack(side='left', padx=(8,4))
+        self.specific_level_var = tk.StringVar(value='')
+        self.specific_level_entry = ttk.Entry(level_fields_frame, textvariable=self.specific_level_var, width=8)
+        self.specific_level_entry.pack(side='left', padx=(0,4))
+        self.specific_level_var.trace_add('write', lambda *args: self._update_level_fields())
+
+        shared_button_frame = ttk.Frame(shared_controls_frame)
+        shared_button_frame.pack(pady=8)
+
+        ttk.Button(shared_button_frame, text="🎯 Find Optimal Build",
+                  command=self._find_optimal_build, width=20).pack(side='left', padx=4)
+        ttk.Button(shared_button_frame, text="📋 Show All Matches",
+                  command=self._show_all_matches, width=20).pack(side='left', padx=4)
+
+        self.generate_multi_builds_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(shared_button_frame, text="🎲 Generate multiple build options",
+                       variable=self.generate_multi_builds_var).pack(side='left', padx=(12,4))
+
     # ── RESULTS TAB ───────────────────────────────────────────────
     def _build_results_tab(self):
         t = self.tab_results
@@ -3190,19 +3500,31 @@ class App(tk.Tk):
             # Read all data
             self.master_data = []
             headers = [cell.value for cell in ws[1]]
+            item_col_idx = headers.index('Item') if 'Item' in headers else None
 
-            for row in ws.iter_rows(min_row=2, values_only=True):
+            skipped_struck = 0
+            for row in ws.iter_rows(min_row=2, values_only=False):
+                # Struck-through items in the source sheet mark removed/invalid
+                # entries - skip them so the search never treats them as real.
+                if item_col_idx is not None:
+                    item_cell = row[item_col_idx]
+                    if item_cell.font and item_cell.font.strike:
+                        skipped_struck += 1
+                        continue
+
                 item_dict = {}
                 for idx, header in enumerate(headers):
                     if header and idx < len(row):
-                        item_dict[header] = row[idx] or ''
+                        item_dict[header] = row[idx].value or ''
                 if item_dict.get('Item'):  # Only add if has item name
                     self.master_data.append(item_dict)
 
             wb.close()
 
-            self.search_status.config(
-                text=f"✓ Loaded {len(self.master_data)} items from {os.path.basename(path)}")
+            status_text = f"✓ Loaded {len(self.master_data)} items from {os.path.basename(path)}"
+            if skipped_struck:
+                status_text += f" ({skipped_struck} struck-through skipped)"
+            self.search_status.config(text=status_text)
             if not silent:
                 messagebox.showinfo("Loaded",
                     f"Master database loaded!\n{len(self.master_data)} items ready to search")
@@ -3214,43 +3536,85 @@ class App(tk.Tk):
     def _clear_armor_defaults(self):
         """Clear saved defaults from config file"""
         self.armor_defaults = {}
-        self.weapon_defaults = {}
-        self.weapon_style_default = ''
-        self.build_config_defaults = {}
-        self.dual_wield_default = False
+        self.weapon_combo_defaults = {}
         self._save_config()
         messagebox.showinfo("Defaults Cleared", "Saved armor and weapon defaults have been cleared!")
-    
+
     def _clear_all_armor(self):
         """Clear all armor and weapon checkboxes"""
         # Clear All row
         for armor_type in ['cloth', 'leather', 'studded', 'plate']:
             self.armor_all_checks[armor_type].set(False)
-        
+
         # Clear all individual armor slots
         for slot in ['head', 'cloak', 'body', 'hands', 'legs', 'feet']:
             for armor_type in ['cloth', 'leather', 'studded', 'plate']:
                 self.armor_checks[slot][armor_type].set(False)
-        
-        # Clear weapon damage types
-        for weapon_type in ['slashing', 'thrusting', 'crushing']:
-            self.weapon_checks[weapon_type].set(False)
-        
-        # Clear weapon style
-        self.weapon_style_var.set('')
-        
-        # Clear build config checkboxes
-        for config_type in ['weapon', 'shield', 'two-handed', 'claw_1', 'claw_2']:
-            self.build_config_checks[config_type].set(False)
-        
-        # Clear dual-wield
-        self.dual_wield_var.set(False)
-        
+
+        # Clear Weapon Types/Combo's
+        self.two_handed_var.set(False)
+        self.two_handed_style_var.set('Melee')
+        self.two_handed_damage_var.set('Any')
+        self.claw_1_var.set(False)
+        self.claw_2_var.set(False)
+        self.dual_wield_1h_var.set(False)
+        self.dual_wield_1h_main_var.set('Any')
+        self.dual_wield_1h_off_var.set('Any')
+        self.combo_1h_shield_var.set(False)
+        self.combo_1h_shield_style_var.set('Melee')
+        self.combo_1h_shield_damage_var.set('Any')
+        self.combo_2h_shield_var.set(False)
+        self.combo_2h_shield_damage_var.set('Any')
+        self.combo_fired_1h_shield_var.set(False)
+
+        # Clear Melee Weapon Constraints
+        self.melee_damage_var.set('Any')
+        self.melee_timer_var.set('Any')
+        self.melee_fumble_var.set('Any')
+        self.melee_accuracy_var.set('Any')
+        self.melee_sigil_var.set('Any')
+        self.melee_damage_priority_var.set(False)
+        self.melee_timer_priority_var.set(False)
+        self.melee_fumble_priority_var.set(False)
+        self.melee_accuracy_priority_var.set(False)
+        self.melee_sigil_priority_var.set(False)
+        self._update_melee_priority_cap()
+
+        # Clear Shield Constraints
+        self.shield_defense_var.set('Any')
+        self.shield_sigil_var.set('Any')
+
         # Clear all level filters
         self.min_level_var.set('')
         self.max_level_var.set('')
         self.specific_level_var.set('')
     
+    def _update_two_handed_damage_state(self):
+        """Fired 2h weapons have no damage-type sub-variant. While Style is
+        Fired, the Damage Type dropdown is locked to a single "Fired" value
+        (not one of the shared WEAPON_DAMAGE_TYPES, so it's never a pickable
+        option for any other style) and disabled; switching to any other
+        style restores the normal Any/Slashing/Thrusting/Crushing list."""
+        if self.two_handed_style_var.get() == 'Fired':
+            self.two_handed_damage_combo.config(values=['Fired'], state='disabled')
+            self.two_handed_damage_var.set('Fired')
+        else:
+            self.two_handed_damage_combo.config(values=WEAPON_DAMAGE_TYPES, state='readonly')
+            if self.two_handed_damage_var.get() == 'Fired':
+                self.two_handed_damage_var.set('Any')
+
+    def _update_melee_priority_cap(self):
+        """At most 3 of the 5 Melee Weapon Constraints can be marked Priority
+        at once - once 3 are checked, grey out the remaining unchecked boxes
+        so a 4th can't be picked; un-grey them as soon as one is unchecked."""
+        checked_count = sum(1 for v in self.melee_priority_vars if v.get())
+        at_cap = checked_count >= 3
+        for var, checkbutton in zip(self.melee_priority_vars, self.melee_priority_checkbuttons):
+            if var.get():
+                checkbutton.config(state='normal')
+            else:
+                checkbutton.config(state='disabled' if at_cap else 'normal')
+
     def _update_all_armor(self, armor_type):
         """When an 'All' checkbox is clicked, update all individual slots to match"""
         all_value = self.armor_all_checks[armor_type].get()
@@ -3311,13 +3675,18 @@ class App(tk.Tk):
         for an alternate when its tier differs from the item actually picked,
         since restating the identical spell/tier is redundant."""
         slot_order = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet',
-                     'weapon', 'shield', 'claw_1', 'claw_2']
+                     'weapon', 'weapon_off', 'shield', 'claw_1', 'claw_2']
         rows = []
         for slot in slot_order:
             if slot not in build_dict:
                 continue
             item = build_dict[slot]
-            display_slot = 'jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw') else slot
+            # weapon_off (Dual-Wield 1h's off-hand slot) gets its own label -
+            # unlike jewel/claw's interchangeable pair, main and off-hand
+            # weapons can have different damage types, so distinguishing
+            # them here is useful, not redundant.
+            display_slot = ('jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw')
+                            else 'off-hand' if slot == 'weapon_off' else slot)
             lookup_slot = 'jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw') else slot
 
             chosen_spell = (item.get('Spell') or '').lower()
@@ -3414,11 +3783,6 @@ class App(tk.Tk):
             self.max_level_entry.config(state='normal')
             self.specific_level_entry.config(state='normal')
     
-    def _update_weapon_config_options(self):
-        """Update UI based on build config selections"""
-        # Currently no special logic needed - all damage types are always available
-        pass
-    
     def _save_armor_defaults(self):
         """Save current armor and weapon selections as defaults"""
         self.armor_defaults = {}
@@ -3427,22 +3791,36 @@ class App(tk.Tk):
             for armor_type in ['cloth', 'leather', 'studded', 'plate']:
                 self.armor_defaults[slot][armor_type] = self.armor_checks[slot][armor_type].get()
         
-        # Save weapon defaults
-        self.weapon_defaults = {}
-        for weapon_type in ['slashing', 'thrusting', 'crushing']:
-            self.weapon_defaults[weapon_type] = self.weapon_checks[weapon_type].get()
-        
-        # Save weapon style default
-        self.weapon_style_default = self.weapon_style_var.get()
-        
-        # Save build config defaults (checkboxes)
-        self.build_config_defaults = {}
-        for config_type in ['weapon', 'shield', 'two-handed', 'claw_1', 'claw_2']:
-            self.build_config_defaults[config_type] = self.build_config_checks[config_type].get()
-        
-        # Save dual-wield default
-        self.dual_wield_default = self.dual_wield_var.get()
-        
+        # Save Weapon Types/Combo's defaults
+        self.weapon_combo_defaults = {
+            'two_handed': self.two_handed_var.get(),
+            'two_handed_style': self.two_handed_style_var.get(),
+            'two_handed_damage': self.two_handed_damage_var.get(),
+            'claw_1': self.claw_1_var.get(),
+            'claw_2': self.claw_2_var.get(),
+            'dual_wield_1h': self.dual_wield_1h_var.get(),
+            'dual_wield_1h_main': self.dual_wield_1h_main_var.get(),
+            'dual_wield_1h_off': self.dual_wield_1h_off_var.get(),
+            'combo_1h_shield': self.combo_1h_shield_var.get(),
+            'combo_1h_shield_style': self.combo_1h_shield_style_var.get(),
+            'combo_1h_shield_damage': self.combo_1h_shield_damage_var.get(),
+            'combo_2h_shield': self.combo_2h_shield_var.get(),
+            'combo_2h_shield_damage': self.combo_2h_shield_damage_var.get(),
+            'combo_fired_1h_shield': self.combo_fired_1h_shield_var.get(),
+            'melee_damage': self.melee_damage_var.get(),
+            'melee_timer': self.melee_timer_var.get(),
+            'melee_fumble': self.melee_fumble_var.get(),
+            'melee_accuracy': self.melee_accuracy_var.get(),
+            'melee_sigil': self.melee_sigil_var.get(),
+            'melee_damage_priority': self.melee_damage_priority_var.get(),
+            'melee_timer_priority': self.melee_timer_priority_var.get(),
+            'melee_fumble_priority': self.melee_fumble_priority_var.get(),
+            'melee_accuracy_priority': self.melee_accuracy_priority_var.get(),
+            'melee_sigil_priority': self.melee_sigil_priority_var.get(),
+            'shield_defense': self.shield_defense_var.get(),
+            'shield_sigil': self.shield_sigil_var.get(),
+        }
+
         self._save_config()
         messagebox.showinfo("Defaults Saved", "Armor and weapon preferences saved as defaults!")
     
@@ -3458,25 +3836,40 @@ class App(tk.Tk):
     
     def _load_weapon_defaults(self):
         """Load saved weapon defaults into checkboxes"""
-        if hasattr(self, 'weapon_defaults') and self.weapon_defaults:
-            for weapon_type in ['slashing', 'thrusting', 'crushing']:
-                if weapon_type in self.weapon_defaults:
-                    self.weapon_checks[weapon_type].set(self.weapon_defaults[weapon_type])
-        
-        # Load weapon style default
-        if hasattr(self, 'weapon_style_default'):
-            self.weapon_style_var.set(self.weapon_style_default)
-        
-        # Load build config defaults (checkboxes)
-        if hasattr(self, 'build_config_defaults') and self.build_config_defaults:
-            for config_type in ['weapon', 'shield', 'two-handed', 'claw_1', 'claw_2']:
-                if config_type in self.build_config_defaults:
-                    self.build_config_checks[config_type].set(self.build_config_defaults[config_type])
-        
-        # Load dual-wield default
-        if hasattr(self, 'dual_wield_default'):
-            self.dual_wield_var.set(self.dual_wield_default)
-    
+        # Load Weapon Types/Combo's defaults
+        combos = getattr(self, 'weapon_combo_defaults', None)
+        if combos:
+            self.two_handed_var.set(combos.get('two_handed', False))
+            self.two_handed_style_var.set(combos.get('two_handed_style', 'Melee'))
+            self.two_handed_damage_var.set(combos.get('two_handed_damage', 'Any'))
+            self.claw_1_var.set(combos.get('claw_1', False))
+            self.claw_2_var.set(combos.get('claw_2', False))
+            self.dual_wield_1h_var.set(combos.get('dual_wield_1h', False))
+            self.dual_wield_1h_main_var.set(combos.get('dual_wield_1h_main', 'Any'))
+            self.dual_wield_1h_off_var.set(combos.get('dual_wield_1h_off', 'Any'))
+            self.combo_1h_shield_var.set(combos.get('combo_1h_shield', False))
+            self.combo_1h_shield_style_var.set(combos.get('combo_1h_shield_style', 'Melee'))
+            self.combo_1h_shield_damage_var.set(combos.get('combo_1h_shield_damage', 'Any'))
+            self.combo_2h_shield_var.set(combos.get('combo_2h_shield', False))
+            self.combo_2h_shield_damage_var.set(combos.get('combo_2h_shield_damage', 'Any'))
+            self.combo_fired_1h_shield_var.set(combos.get('combo_fired_1h_shield', False))
+            self.melee_damage_var.set(combos.get('melee_damage', 'Any'))
+            self.melee_timer_var.set(combos.get('melee_timer', 'Any'))
+            self.melee_fumble_var.set(combos.get('melee_fumble', 'Any'))
+            self.melee_accuracy_var.set(combos.get('melee_accuracy', 'Any'))
+            self.melee_sigil_var.set(combos.get('melee_sigil', 'Any'))
+            self.melee_damage_priority_var.set(combos.get('melee_damage_priority', False))
+            self.melee_timer_priority_var.set(combos.get('melee_timer_priority', False))
+            self.melee_fumble_priority_var.set(combos.get('melee_fumble_priority', False))
+            self.melee_accuracy_priority_var.set(combos.get('melee_accuracy_priority', False))
+            self.melee_sigil_priority_var.set(combos.get('melee_sigil_priority', False))
+            self.shield_defense_var.set(combos.get('shield_defense', 'Any'))
+            self.shield_sigil_var.set(combos.get('shield_sigil', 'Any'))
+
+        # .set() doesn't fire the checkboxes' own command callback, so sync
+        # the grey-out state explicitly after a bulk load.
+        self._update_melee_priority_cap()
+
     def _get_export_data(self):
         """Collect the currently displayed results as (headers, rows), with
         the visual Div spacer column and any divider rows (between stacked
@@ -3796,6 +4189,131 @@ class App(tk.Tk):
             messagebox.showwarning("Invalid Range", "Minimum tier cannot be greater than maximum tier")
             return
 
+        # Defense range - always a soft preference here (never excludes an
+        # item, so every slot still gets filled even when nothing in range
+        # is available): checking "Defense:" prioritizes in-range items over
+        # out-of-range ones when the search would otherwise be indifferent.
+        defense_priority_active = self.use_defense_filter_var.get()
+        defense_min_rank = None
+        defense_max_rank = None
+        if defense_priority_active:
+            defense_min_rank = DEFENSE_RANK[self.min_defense_var.get()]
+            defense_max_rank = DEFENSE_RANK[self.max_defense_var.get()]
+            if defense_min_rank > defense_max_rank:
+                messagebox.showwarning("Invalid Range", "Minimum Defense cannot be greater than maximum Defense")
+                return
+
+        # Per-slot Defense - stacks with the global control above rather than
+        # replacing it: an item earns a priority point for each range (global
+        # and/or this slot's own) it satisfies.
+        slot_defense_priority_active = {}
+        slot_defense_min_rank = {}
+        slot_defense_max_rank = {}
+        for slot, controls in self.slot_defense_controls.items():
+            priority_active = controls['use'].get()
+            slot_defense_priority_active[slot] = priority_active
+            if priority_active:
+                min_rank = DEFENSE_RANK[controls['min'].get()]
+                max_rank = DEFENSE_RANK[controls['max'].get()]
+                if min_rank > max_rank:
+                    messagebox.showwarning("Invalid Range",
+                        f"Minimum Defense cannot be greater than maximum Defense ({slot.title()})")
+                    return
+                slot_defense_min_rank[slot] = min_rank
+                slot_defense_max_rank[slot] = max_rank
+
+        # Shield Constraints' Defense - a single-value pick, fed into the
+        # same per-slot machinery above as an exact one-value range.
+        shield_defense_choice = self.shield_defense_var.get()
+        if shield_defense_choice != 'Any':
+            shield_defense_rank = DEFENSE_RANK[shield_defense_choice]
+            slot_defense_priority_active['shield'] = True
+            slot_defense_min_rank['shield'] = shield_defense_rank
+            slot_defense_max_rank['shield'] = shield_defense_rank
+        else:
+            slot_defense_priority_active['shield'] = False
+
+        def _defense_priority_score(item, lookup_slot):
+            """Sum of priority points this item earns toward Defense
+            targets - up to 2 (global + this slot's own), never a hard
+            requirement, so it never keeps a slot from being filled."""
+            score = 0
+            item_defense_rank = None
+            if defense_priority_active or slot_defense_priority_active.get(lookup_slot):
+                item_defense_rank = DEFENSE_RANK.get((item.get('Defense') or '').strip().lower())
+            if defense_priority_active and item_defense_rank is not None and defense_min_rank <= item_defense_rank <= defense_max_rank:
+                score += 1
+            if (slot_defense_priority_active.get(lookup_slot) and item_defense_rank is not None
+                    and slot_defense_min_rank[lookup_slot] <= item_defense_rank <= slot_defense_max_rank[lookup_slot]):
+                score += 1
+            return score
+
+        # Per-slot Sigil - soft preference, same philosophy as Defense: pick
+        # a Sigil type for a slot and the search favors whichever candidate
+        # for that slot carries it at the highest SigilLvl, but an item
+        # without it is still eligible, so the slot never goes unfilled.
+        slot_sigil_choice = {
+            slot: var.get().strip().lower()
+            for slot, var in self.slot_sigil_vars.items()
+            if var.get() != 'Any'
+        }
+        # Shield Constraints' Sigil - same mechanism, just one more slot.
+        if self.shield_sigil_var.get() != 'Any':
+            slot_sigil_choice['shield'] = self.shield_sigil_var.get().strip().lower()
+
+        def _sigil_priority_score(item, lookup_slot):
+            """(sigil_match, sigil_level) for this item against the Sigil
+            chosen for lookup_slot - (0, 0) if none chosen or it doesn't
+            match, never a hard requirement."""
+            wanted_sigil = slot_sigil_choice.get(lookup_slot)
+            if not wanted_sigil:
+                return (0, 0)
+            item_sigil = (item.get('Sigil') or '').strip().lower()
+            if item_sigil != wanted_sigil:
+                return (0, 0)
+            try:
+                sigil_level = int(item.get('SigilLvl') or 0)
+            except (ValueError, TypeError):
+                sigil_level = 0
+            return (1, sigil_level)
+
+        # Melee Weapon Constraints - soft preferences that only apply to
+        # Melee-styled weapons (non-direct, non-staff item type). Never a
+        # hard requirement: the search always matches as many of these as it
+        # can, but still fills the slot with the best available item even if
+        # none match. Priority-checked fields (capped at 3) outscore the rest.
+        melee_constraint_fields = [
+            (self.melee_damage_var.get(), self.melee_damage_priority_var.get(), 'Damage'),
+            (self.melee_timer_var.get(), self.melee_timer_priority_var.get(), 'Timer'),
+            (self.melee_fumble_var.get(), self.melee_fumble_priority_var.get(), 'Fumble'),
+            (self.melee_accuracy_var.get(), self.melee_accuracy_priority_var.get(), 'Accuracy'),
+            (self.melee_sigil_var.get(), self.melee_sigil_priority_var.get(), 'Sigil'),
+        ]
+
+        def _melee_constraint_score(item, item_type):
+            """(priority_matches, normal_matches) toward the Melee Weapon
+            Constraints dropdowns - despite the section's name, these apply
+            to any weapon style (Melee/Direct/Parry/Fired), not just plain
+            Melee ones; Direct and Parry Staff items carry these same stat
+            columns (Damage/Timer/Fumble/Accuracy/Sigil) too. (0, 0) if
+            nothing is set beyond 'Any'."""
+            priority_matches = 0
+            normal_matches = 0
+            for value, is_priority, column in melee_constraint_fields:
+                if value == 'Any':
+                    continue
+                item_value = str(item.get(column) or '').strip()
+                if column == 'Sigil' and value == 'None':
+                    matched = not item_value
+                else:
+                    matched = item_value.lower() == value.lower()
+                if matched:
+                    if is_priority:
+                        priority_matches += 1
+                    else:
+                        normal_matches += 1
+            return (priority_matches, normal_matches)
+
         # Get armor type constraints from checkboxes
         armor_constraints = {}
         for slot in ['head', 'cloak', 'body', 'hands', 'legs', 'feet']:
@@ -3805,34 +4323,54 @@ class App(tk.Tk):
                 if self.armor_checks[slot][armor_type].get():
                     checked_types.append(armor_type)
             armor_constraints[slot] = checked_types  # List of allowed types (empty = any)
-        
-        # Get weapon constraints
-        weapon_style = self.weapon_style_var.get()  # 'melee', 'direct', or ''
-        
-        # Build config checkboxes
-        wants_weapon = self.build_config_checks['weapon'].get()
-        wants_shield = self.build_config_checks['shield'].get()
-        wants_two_handed = self.build_config_checks['two-handed'].get()
-        wants_claw_1 = self.build_config_checks['claw_1'].get()
-        wants_claw_2 = self.build_config_checks['claw_2'].get()
-        wants_dual_wield = self.dual_wield_var.get()
-        
-        # Damage type constraints
-        weapon_type_constraints = []
-        for weapon_type in ['slashing', 'thrusting', 'crushing']:
-            if self.weapon_checks[weapon_type].get():
-                weapon_type_constraints.append(weapon_type)
-        
+
+        # Weapon Types/Combo's - each has its own Style and/or Damage Type
+        # dropdown(s) (Claw has neither); the old global Weapon Style radios
+        # and Damage Type checkboxes have been removed in favor of these.
+        wants_two_handed = self.two_handed_var.get()
+        two_handed_style = self.two_handed_style_var.get()
+        two_handed_damage = self.two_handed_damage_var.get()
+        wants_claw_1 = self.claw_1_var.get()
+        wants_claw_2 = self.claw_2_var.get()
+        wants_dual_wield_1h = self.dual_wield_1h_var.get()
+        dual_wield_1h_main = self.dual_wield_1h_main_var.get()
+        dual_wield_1h_off = self.dual_wield_1h_off_var.get()
+        wants_1h_shield = self.combo_1h_shield_var.get()
+        combo_1h_shield_style = self.combo_1h_shield_style_var.get()
+        combo_1h_shield_damage = self.combo_1h_shield_damage_var.get()
+        wants_2h_shield = self.combo_2h_shield_var.get()
+        combo_2h_shield_damage = self.combo_2h_shield_damage_var.get()
+        # Fired 1h and Shield - "fired" is its own weapon shape in the item
+        # list with no slash/thrust/crush sub-variant, so no dropdown needed.
+        wants_fired_1h_shield = self.combo_fired_1h_shield_var.get()
+
+        # Most real weapons carry no Spell at all, so a checked combo has to
+        # be able to pull one in without relying on the spell-match gate
+        # below - otherwise the "always fill this slot" checkboxes would
+        # never actually fill anything. Weapon-combo items still compete on
+        # spell coverage first when they do have one; a spell-less item is
+        # just the fallback pick when nothing better is available (see the
+        # exact-search scoring, which already ranks coverage above all else).
+        any_weapon_combo_active = (wants_two_handed or wants_dual_wield_1h or wants_1h_shield
+                                    or wants_2h_shield or wants_fired_1h_shield)
+        any_shield_combo_active = wants_1h_shield or wants_2h_shield or wants_fired_1h_shield
+        # Claws also carry no Spell in practice - same reasoning applies.
+        any_claw_combo_active = wants_claw_1 or wants_claw_2
+
         # Filter items by constraints and group by slot
         items_by_slot = {}
         all_slots = ['head', 'jewel', 'jewel', 'cloak', 'body', 'hands', 'legs', 'feet', 'weapon', 'shield']
-        
+
         for item in self.master_data:
             item_slot = (item.get('Slot') or '').lower()
             item_spell = (item.get('Spell') or '').lower()
             item_type = (item.get('Type') or '').lower()
             item_realm = (item.get('Realm') or '').strip()
-            
+
+            is_combo_mandated_slot = ((item_slot == 'weapon' and any_weapon_combo_active)
+                                       or (item_slot == 'shield' and any_shield_combo_active)
+                                       or (item_slot == 'claw' and any_claw_combo_active))
+
             # Apply realm filter if any selected
             selected_realms = [realm for realm, var in self.realm_filters.items()
                               if var.get()]
@@ -3844,12 +4382,13 @@ class App(tk.Tk):
                         break
                 if not realm_match:
                     continue
-            
-            
-            # Skip items without spells
-            if not item_spell:
+
+
+            # Skip items without spells - unless a weapon/shield combo wants
+            # this slot filled regardless (most real weapons have no spell).
+            if not item_spell and not is_combo_mandated_slot:
                 continue
-            
+
             # Check if item's spell matches any wanted or priority spell's
             # base - any tier counts here, so an item at a different tier
             # than exactly requested still becomes an eligible candidate.
@@ -3859,7 +4398,7 @@ class App(tk.Tk):
                     has_wanted_spell = True
                     break
 
-            if not has_wanted_spell:
+            if not has_wanted_spell and not is_combo_mandated_slot:
                 continue
 
             # Apply level constraints
@@ -3886,6 +4425,10 @@ class App(tk.Tk):
                     # Skip items without level data when filtering by level
                     continue
             
+            # Defense is never a hard filter here - it's scored later as a
+            # soft preference (see _defense_priority_score) so a slot is
+            # never left empty just because nothing hits the Defense range.
+
             # Apply armor type constraints (checkboxes)
             if item_slot in armor_constraints:
                 allowed_types = armor_constraints[item_slot]
@@ -3899,85 +4442,92 @@ class App(tk.Tk):
                     if not type_match:
                         continue
             
-            # Apply weapon/shield/claw constraints
+            # Apply weapon/shield/claw constraints. The old global Weapon
+            # Style radios and Damage Type checkboxes are gone - Style and
+            # Damage Type are now per-combo dropdowns (see each branch below).
             if item_slot == 'weapon' or item_slot == 'shield' or item_slot == 'claw':
-                # Weapon style constraint - only meaningful for the weapon
-                # slot itself (melee vs direct-caster vs direct-stat/Parry Staff)
-                if item_slot == 'weapon':
-                    if weapon_style == 'melee':
-                        # Melee weapons do NOT have 'direct' in type, and staves are
-                        # their own Parry Staff category, not plain melee weapons.
-                        if 'direct' in item_type or 'staff' in item_type:
-                            continue
-                    elif weapon_style == 'direct-caster':
-                        # Direct (Caster) weapons HAVE 'direct' in type, but staves
-                        # belong to Parry Staff even if also marked 'direct'.
-                        if 'direct' not in item_type or 'staff' in item_type:
-                            continue
-                    elif weapon_style == 'direct-stat':
-                        # Parry Staff: caster utility staves holding non-offensive
-                        # spells. Works like any other gear slot - just needs to
-                        # be a staff-type item, picked purely by wanted spells.
-                        if 'staff' not in item_type:
-                            continue
-                    else:
-                        # Any (no weapon style selected): staves are their own
-                        # Parry Staff category and shouldn't show up as a
-                        # regular weapon pick unless Parry Staff is explicitly
-                        # chosen above.
-                        if 'staff' in item_type:
-                            continue
+                slot_accepted = True
+                offhand_weapon_accepted = False  # only ever set for item_slot == 'weapon'
 
-                # Build configuration checkboxes and Damage Type only apply to
-                # actual combat weapons (melee/direct-caster) - Parry Staff
-                # isn't a combat weapon (no 1h/2h/dual-wield/damage-type
-                # concept for it), so it's exempt from both, same as any
-                # other gear slot like head/cloak.
-                if not (item_slot == 'weapon' and weapon_style == 'direct-stat'):
-                    # If no checkboxes are selected, accept everything
-                    has_any_config = wants_weapon or wants_shield or wants_two_handed or wants_claw_1 or wants_claw_2
+                # If no combo is checked, accept everything
+                has_any_config = (wants_two_handed or wants_claw_1 or wants_claw_2
+                                   or wants_dual_wield_1h or wants_1h_shield
+                                   or wants_2h_shield or wants_fired_1h_shield)
 
-                    if has_any_config:
-                        slot_accepted = False
+                if has_any_config:
+                    slot_accepted = False
 
-                        if item_slot == 'weapon':
-                            # Regular 1h weapons
-                            if wants_weapon and '1h' in item_type:
-                                slot_accepted = True
-                            # Two-handed weapons
-                            if wants_two_handed and '2h' in item_type:
-                                slot_accepted = True
-                            # Dual-wield: need 1h weapons for both hands
-                            if wants_dual_wield and '1h' in item_type:
-                                slot_accepted = True
+                    if item_slot == 'weapon':
+                        is_offhand = 'offhand' in item_type
+                        is_1h = '1h' in item_type
+                        is_2h = '2h' in item_type
+                        is_fired = 'fired' in item_type
 
-                        elif item_slot == 'shield':
-                            # Shields
-                            if wants_shield:
-                                slot_accepted = True
+                        # Two-handed weapons, gated by their own Style
+                        # (Melee/Direct/Parry/Fired) and Damage Type dropdowns
+                        if wants_two_handed and _two_handed_matches(item_type, item_spell, two_handed_style, two_handed_damage):
+                            slot_accepted = True
+                        # Dual-Wield 1h - main hand: 1h, non-offhand,
+                        # matching the Main dropdown's damage type
+                        if (wants_dual_wield_1h and is_1h and not is_offhand
+                                and _weapon_damage_matches(item_type, dual_wield_1h_main)):
+                            slot_accepted = True
+                        # 1h/Shield: 1h, non-offhand, matching its own
+                        # Style (Melee/Direct - no Parry option here) and
+                        # Damage Type dropdowns. Direct additionally requires
+                        # some spell to be present (see _direct_weapon_eligible).
+                        if (wants_1h_shield and is_1h and not is_offhand
+                                and _weapon_style_matches(item_type, combo_1h_shield_style)
+                                and (combo_1h_shield_style != 'Direct' or _direct_weapon_eligible(item_spell))
+                                and _weapon_damage_matches(item_type, combo_1h_shield_damage)):
+                            slot_accepted = True
+                        # 2h/Shield: 2h, matching its own damage type
+                        if (wants_2h_shield and is_2h
+                                and _weapon_damage_matches(item_type, combo_2h_shield_damage)):
+                            slot_accepted = True
+                        # Fired 1h and Shield: "fired" is its own weapon
+                        # shape, no separate damage type to match.
+                        if wants_fired_1h_shield and is_fired and is_1h and not is_offhand:
+                            slot_accepted = True
 
-                        elif item_slot == 'claw':
-                            # Claws - 1 Claw fills one claw slot, 2 Claw fills both
-                            if wants_claw_1 or wants_claw_2:
-                                slot_accepted = True
+                        # Dual-Wield 1h - off hand: offhand-tagged 1h item
+                        # matching the Off-Hand dropdown's damage type.
+                        # Independent of the main-hand outcome above, so
+                        # this same item can be considered for the
+                        # separate weapon_off slot even when it wasn't
+                        # accepted as a main-hand candidate.
+                        if (wants_dual_wield_1h and is_1h and is_offhand
+                                and _weapon_damage_matches(item_type, dual_wield_1h_off)):
+                            offhand_weapon_accepted = True
 
-                        if not slot_accepted:
-                            continue
+                    elif item_slot == 'shield':
+                        # Shields - only implied by a weapon+shield combo
+                        # now (plain "Shield" was removed)
+                        if wants_1h_shield or wants_2h_shield or wants_fired_1h_shield:
+                            slot_accepted = True
 
-                    # Damage type constraints (for weapons/claws only, not shields)
-                    if item_slot in ('weapon', 'claw') and weapon_type_constraints:
-                        type_match = False
-                        for weapon_type in weapon_type_constraints:
-                            if weapon_type.lower() in item_type:
-                                type_match = True
-                                break
-                        if not type_match:
-                            continue
-            
-            # Add to slot group
-            if item_slot not in items_by_slot:
-                items_by_slot[item_slot] = []
-            items_by_slot[item_slot].append(item)
+                    elif item_slot == 'claw':
+                        # Claws - 1 Claw fills one claw slot, 2 Claw fills
+                        # both; no Style or Damage Type dropdown for either.
+                        if wants_claw_1 or wants_claw_2:
+                            slot_accepted = True
+
+                if not slot_accepted and not offhand_weapon_accepted:
+                    continue
+
+            # Add to slot group. The 'weapon' slot splits into two candidate
+            # pools - main-hand (items_by_slot['weapon']) and, only relevant
+            # when Dual-Wield 1h is checked, off-hand (items_by_slot['weapon_off'])
+            # - since the same physical item can never satisfy both (main
+            # requires non-offhand, off requires offhand), an item lands in
+            # at most one of the two.
+            if item_slot == 'weapon':
+                if slot_accepted:
+                    items_by_slot.setdefault('weapon', []).append(item)
+                if offhand_weapon_accepted:
+                    items_by_slot.setdefault('weapon_off', []).append(item)
+            else:
+                items_by_slot.setdefault(item_slot, []).append(item)
 
         # Kept for Alt Options: any other item sharing a slot's spell, within
         # the same level/armor/weapon/realm constraints already applied above.
@@ -4012,7 +4562,14 @@ class App(tk.Tk):
 
         # Slots to fill (including 2 jewel slots). Claw slots are only attempted
         # when 1 Claw / 2 Claw is checked - 2 Claw fills both claw slots (dual-wield).
+        # weapon_off (a second physical weapon, for Dual-Wield 1h) is only
+        # attempted when that combo is checked - it shares its candidate pool
+        # with the item list's Slot=weapon items (see items_by_slot['weapon_off']
+        # below), but is otherwise treated as an ordinary slot by the exact
+        # search, so it's optimized for spell coverage right alongside everything else.
         slots_to_fill = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet', 'weapon', 'shield']
+        if wants_dual_wield_1h:
+            slots_to_fill.append('weapon_off')
         if wants_claw_2:
             slots_to_fill += ['claw_1', 'claw_2']
         elif wants_claw_1:
@@ -4043,22 +4600,30 @@ class App(tk.Tk):
 
         # Score weights: each tier's full possible range is dwarfed by one
         # unit of the tier above it, so summing these as plain integers along
-        # a search path is equivalent to comparing
-        # (bases_covered, priority_matches, tier_priority_hits, tier, level)
-        # lexicographically, while staying simple/fast integer arithmetic.
+        # a search path is equivalent to comparing (bases_covered,
+        # priority_matches, tier_priority_hits, sigil_match, sigil_level,
+        # melee_priority_constraint_matches, melee_constraint_matches,
+        # defense_priority_hits, tier, level) lexicographically, while
+        # staying simple/fast integer math. Each step is 10^6 above the
+        # last - generously larger than any realistic per-slot total below it.
         W_LEVEL = 1
-        W_TIER = 2_000
-        W_TIER_PRIORITY = 200_000
-        W_PRIORITY = 5_000_000
-        W_COVERAGE = 300_000_000
+        W_TIER = 10**6
+        W_DEFENSE_PRIORITY = 10**12
+        W_MELEE_MATCH = 10**18
+        W_MELEE_PRIORITY_MATCH = 10**24
+        W_SIGIL_LEVEL = 10**30
+        W_SIGIL_MATCH = 10**36
+        W_TIER_PRIORITY = 10**42
+        W_PRIORITY = 10**48
+        W_COVERAGE = 10**54
 
         # Pre-score every item once per lookup slot, collapsing items that are
         # identical in everything the search cares about (bases matched,
-        # priority/tier-priority hits, tier, crafted-ness) down to their
-        # single highest-level representative - keeps the search fast without
-        # changing which overall score is reachable. Alternates for
-        # "Generate multiple build options" are recomputed from the full
-        # unpruned list further below, so nothing is lost for that.
+        # priority/tier-priority/defense-priority hits, tier, crafted-ness)
+        # down to their single highest-level representative - keeps the
+        # search fast without changing which overall score is reachable.
+        # Alternates for "Generate multiple build options" are recomputed
+        # from the full unpruned list further below, so nothing is lost.
         candidates_by_slot = {}
         for lookup_slot, items in items_by_slot.items():
             if lookup_slot == 'claw':
@@ -4066,6 +4631,7 @@ class App(tk.Tk):
             seen = {}
             for item in items:
                 item_spell = (item.get('Spell') or '').lower()
+                item_type = (item.get('Type') or '').lower()
                 item_tier = _spell_tier_rank(item_spell)
                 if item_tier > 0:
                     if min_tier_rank is not None and item_tier < min_tier_rank:
@@ -4077,7 +4643,12 @@ class App(tk.Tk):
                 for base in base_list:
                     if base in item_spell:
                         item_bitmask |= base_bit[base]
-                if not item_bitmask:
+                # Zero-coverage items are normally useless (they can never
+                # win over "leave the slot empty"), except weapon/shield
+                # slots a combo has mandated be filled regardless of spell -
+                # those still need a fallback candidate so the slot doesn't
+                # end up empty just because nothing on it grants a spell.
+                if not item_bitmask and lookup_slot not in ('weapon', 'weapon_off', 'shield'):
                     continue
 
                 try:
@@ -4091,13 +4662,28 @@ class App(tk.Tk):
                 tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
                 is_crafted = 'crafted' in (item.get('Realm') or '').strip().lower()
 
-                sig = (item_bitmask, priority_matches, tier_priority_match, item_tier, is_crafted)
+                # "Prioritize" Defense: a soft bonus (global + per-slot) for
+                # landing in the Min/Max Defense range(s) - never excludes
+                # the item, unlike the hard "Defense:" filters applied above.
+                defense_priority_match = _defense_priority_score(item, lookup_slot)
+
+                # Sigil: a soft bonus for carrying the Sigil chosen for this
+                # slot, tie-broken by SigilLvl - never excludes the item.
+                sigil_match, sigil_level = _sigil_priority_score(item, lookup_slot)
+
+                # Melee Weapon Constraints: only meaningful for weapon slots.
+                melee_priority_match, melee_match = (
+                    _melee_constraint_score(item, item_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
+
+                sig = (item_bitmask, priority_matches, tier_priority_match, sigil_match,
+                       sigil_level, melee_priority_match, melee_match, defense_priority_match,
+                       item_tier, is_crafted)
                 prev = seen.get(sig)
                 if prev is None or item_level_num > prev[1]:
                     seen[sig] = (item, item_level_num)
 
             candidates_by_slot[lookup_slot] = [
-                (item, sig[0], sig[1], sig[2], sig[3], lvl, sig[4])
+                (item, sig[0], sig[1], sig[2], sig[3], sig[4], sig[5], sig[6], sig[7], sig[8], lvl, sig[9])
                 for sig, (item, lvl) in seen.items()
             ]
 
@@ -4117,10 +4703,15 @@ class App(tk.Tk):
             best_score, best_rest = solve(idx + 1, covered, crafted_n)
             best_choice = None
 
-            for (item, item_bitmask, priority_matches, tier_priority_match,
-                 item_tier, item_level_num, is_crafted) in candidates_by_slot.get(lookup_slot, []):
+            for (item, item_bitmask, priority_matches, tier_priority_match, sigil_match, sigil_level,
+                 melee_priority_match, melee_match, defense_priority_match, item_tier, item_level_num,
+                 is_crafted) in candidates_by_slot.get(lookup_slot, []):
                 new_bases = item_bitmask & ~covered
-                if not new_bases:
+                # Same fallback as above: a combo-mandated weapon/shield slot
+                # can still take a zero-new-coverage item (any positive score
+                # from level/tier/etc. beats leaving the slot empty), but
+                # every other slot still requires contributing something new.
+                if not new_bases and lookup_slot not in ('weapon', 'weapon_off', 'shield'):
                     continue
                 if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
                     continue
@@ -4128,6 +4719,11 @@ class App(tk.Tk):
                 step_score = (bin(new_bases).count('1') * W_COVERAGE
                               + priority_matches * W_PRIORITY
                               + tier_priority_match * W_TIER_PRIORITY
+                              + sigil_match * W_SIGIL_MATCH
+                              + sigil_level * W_SIGIL_LEVEL
+                              + melee_priority_match * W_MELEE_PRIORITY_MATCH
+                              + melee_match * W_MELEE_MATCH
+                              + defense_priority_match * W_DEFENSE_PRIORITY
                               + item_tier * W_TIER
                               + item_level_num * W_LEVEL)
 
@@ -4181,17 +4777,24 @@ class App(tk.Tk):
             covered_without_slot = final_covered_bitmask & ~this_slot_bitmask
 
             item_spell = (item.get('Spell') or '').lower()
+            item_type = (item.get('Type') or '').lower()
             item_tier = _spell_tier_rank(item_spell)
             item_is_crafted = 'crafted' in (item.get('Realm') or '').strip().lower()
             priority_matches = sum(1 for p in priority_spells if p in item_spell)
             item_base = _spell_base(item_spell)
             item_priority_tiers = priority_tier_ranks_by_base.get(item_base)
             tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
+            item_defense_priority_match = _defense_priority_score(item, lookup_slot)
+            item_sigil_match, item_sigil_level = _sigil_priority_score(item, lookup_slot)
+            item_melee_priority_match, item_melee_match = (
+                _melee_constraint_score(item, item_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
             try:
                 item_level_num = int(item.get('Level') or 0)
             except (ValueError, TypeError):
                 item_level_num = 0
-            chosen_key = (priority_matches, tier_priority_match, item_tier, item_level_num)
+            chosen_key = (priority_matches, tier_priority_match, item_sigil_match, item_sigil_level,
+                          item_melee_priority_match, item_melee_match,
+                          item_defense_priority_match, item_tier, item_level_num)
 
             alternates = []
             for other in items_by_slot.get(lookup_slot, []):
@@ -4209,6 +4812,7 @@ class App(tk.Tk):
                 if other_is_crafted and not item_is_crafted and crafted_count >= MAX_CRAFTED_ITEMS:
                     continue
 
+                other_type = (other.get('Type') or '').lower()
                 new_bases = 0
                 for base in base_list:
                     if base in other_spell:
@@ -4221,11 +4825,17 @@ class App(tk.Tk):
                 other_base = _spell_base(other_spell)
                 other_priority_tiers = priority_tier_ranks_by_base.get(other_base)
                 other_tier_priority_match = 1 if other_priority_tiers and other_tier in other_priority_tiers else 0
+                other_defense_priority_match = _defense_priority_score(other, lookup_slot)
+                other_sigil_match, other_sigil_level = _sigil_priority_score(other, lookup_slot)
+                other_melee_priority_match, other_melee_match = (
+                    _melee_constraint_score(other, other_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
                 try:
                     other_level_num = int(other.get('Level') or 0)
                 except (ValueError, TypeError):
                     other_level_num = 0
-                other_key = (other_priority_matches, other_tier_priority_match, other_tier, other_level_num)
+                other_key = (other_priority_matches, other_tier_priority_match, other_sigil_match, other_sigil_level,
+                            other_melee_priority_match, other_melee_match,
+                            other_defense_priority_match, other_tier, other_level_num)
                 if other_key != chosen_key:
                     continue
 
@@ -4237,6 +4847,10 @@ class App(tk.Tk):
         # Claw slots: unchanged greedy fill (see comment above exact_slots) -
         # duplicate spell coverage across both hands is fine here, so they're
         # picked after the rest of the build's coverage is already settled.
+        # Claws carry no Spell in practice, same as most weapons - reaching
+        # this loop at all already means a claw combo is checked, so a
+        # zero-coverage item is still a valid fallback pick (matched_bases
+        # empty just means it contributes nothing new, not that it's invalid).
         for slot in claw_slots:
             lookup_slot = 'claw'
             if lookup_slot not in items_by_slot:
@@ -4244,7 +4858,7 @@ class App(tk.Tk):
 
             best_item = None
             best_matched_bases = []
-            best_key = (-1, 0, -1, -1, -1)
+            best_key = (-1, -1, -1, -1, -1, -1, -1, -1)
             tied_items = []
 
             for item in items_by_slot[lookup_slot]:
@@ -4256,6 +4870,7 @@ class App(tk.Tk):
                     continue
 
                 item_spell = (item.get('Spell') or '').lower()
+                item_type = (item.get('Type') or '').lower()
                 item_tier = _spell_tier_rank(item_spell)
                 if item_tier > 0:
                     if min_tier_rank is not None and item_tier < min_tier_rank:
@@ -4269,15 +4884,17 @@ class App(tk.Tk):
                     item_level_num = 0
 
                 matched_bases = [base for base in wanted_bases if base in item_spell]
-                if not matched_bases:
-                    continue
 
                 priority_matches = sum(1 for p in priority_spells if p in item_spell)
                 item_base = _spell_base(item_spell)
                 item_priority_tiers = priority_tier_ranks_by_base.get(item_base)
                 tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
+                defense_priority_match = _defense_priority_score(item, lookup_slot)
+                melee_priority_match, melee_match = _melee_constraint_score(item, item_type)
 
-                key = (priority_matches, len(matched_bases), tier_priority_match, item_tier, item_level_num)
+                key = (priority_matches, len(matched_bases), tier_priority_match,
+                      melee_priority_match, melee_match, defense_priority_match,
+                      item_tier, item_level_num)
                 if key > best_key:
                     best_key = key
                     best_item = item
@@ -4430,7 +5047,33 @@ class App(tk.Tk):
             if min_level is not None and max_level is not None and min_level > max_level:
                 messagebox.showwarning("Invalid Range", "Minimum level cannot be greater than maximum level")
                 return
-        
+
+        # Defense filter (opt-in via checkbox) - bounds items to a range on
+        # the item list's Defense column (much worse..much better).
+        defense_min_rank = None
+        defense_max_rank = None
+        if self.use_defense_filter_var.get():
+            defense_min_rank = DEFENSE_RANK[self.min_defense_var.get()]
+            defense_max_rank = DEFENSE_RANK[self.max_defense_var.get()]
+            if defense_min_rank > defense_max_rank:
+                messagebox.showwarning("Invalid Range", "Minimum Defense cannot be greater than maximum Defense")
+                return
+
+        # Per-slot Defense filter (opt-in per armor slot) - stacks with the
+        # global one above.
+        slot_defense_min_rank = {}
+        slot_defense_max_rank = {}
+        for slot, controls in self.slot_defense_controls.items():
+            if controls['use'].get():
+                min_rank = DEFENSE_RANK[controls['min'].get()]
+                max_rank = DEFENSE_RANK[controls['max'].get()]
+                if min_rank > max_rank:
+                    messagebox.showwarning("Invalid Range",
+                        f"Minimum Defense cannot be greater than maximum Defense ({slot.title()})")
+                    return
+                slot_defense_min_rank[slot] = min_rank
+                slot_defense_max_rank[slot] = max_rank
+
         # Get armor type constraints from checkboxes
         armor_constraints = {}
         for slot in ['head', 'cloak', 'body', 'hands', 'legs', 'feet']:
@@ -4440,46 +5083,63 @@ class App(tk.Tk):
                 if self.armor_checks[slot][armor_type].get():
                     checked_types.append(armor_type)
             armor_constraints[slot] = checked_types  # List of allowed types (empty = any)
-        
-        # Get weapon constraints
-        weapon_style = self.weapon_style_var.get()  # 'melee', 'direct', or ''
-        
-        # Build config checkboxes
-        wants_weapon = self.build_config_checks['weapon'].get()
-        wants_shield = self.build_config_checks['shield'].get()
-        wants_two_handed = self.build_config_checks['two-handed'].get()
-        wants_claw_1 = self.build_config_checks['claw_1'].get()
-        wants_claw_2 = self.build_config_checks['claw_2'].get()
-        wants_dual_wield = self.dual_wield_var.get()
-        
-        # Damage type constraints
-        weapon_type_constraints = []
-        for weapon_type in ['slashing', 'thrusting', 'crushing']:
-            if self.weapon_checks[weapon_type].get():
-                weapon_type_constraints.append(weapon_type)
-        
+
+        # Weapon Types/Combo's - each has its own Style and/or Damage Type
+        # dropdown(s) (Claw has neither); the old global Weapon Style radios
+        # and Damage Type checkboxes have been removed in favor of these.
+        wants_two_handed = self.two_handed_var.get()
+        two_handed_style = self.two_handed_style_var.get()
+        two_handed_damage = self.two_handed_damage_var.get()
+        wants_claw_1 = self.claw_1_var.get()
+        wants_claw_2 = self.claw_2_var.get()
+        wants_dual_wield_1h = self.dual_wield_1h_var.get()
+        dual_wield_1h_main = self.dual_wield_1h_main_var.get()
+        dual_wield_1h_off = self.dual_wield_1h_off_var.get()
+        wants_1h_shield = self.combo_1h_shield_var.get()
+        combo_1h_shield_style = self.combo_1h_shield_style_var.get()
+        combo_1h_shield_damage = self.combo_1h_shield_damage_var.get()
+        wants_2h_shield = self.combo_2h_shield_var.get()
+        combo_2h_shield_damage = self.combo_2h_shield_damage_var.get()
+        # Fired 1h and Shield - "fired" is its own weapon shape in the item
+        # list with no slash/thrust/crush sub-variant, so no dropdown needed.
+        wants_fired_1h_shield = self.combo_fired_1h_shield_var.get()
+
+        # Most real weapons carry no Spell at all - when a combo wants a
+        # weapon/shield slot filled regardless, this listing should still
+        # surface those spell-less items rather than hiding them entirely.
+        any_weapon_combo_active = (wants_two_handed or wants_dual_wield_1h or wants_1h_shield
+                                    or wants_2h_shield or wants_fired_1h_shield)
+        any_shield_combo_active = wants_1h_shield or wants_2h_shield or wants_fired_1h_shield
+        # Claws also carry no Spell in practice - same reasoning applies.
+        any_claw_combo_active = wants_claw_1 or wants_claw_2
+
         # Filter items by constraints and group by slot
         items_by_slot = {}
         all_slots = ['head', 'jewel', 'jewel', 'cloak', 'body', 'hands', 'legs', 'feet', 'weapon', 'shield']
-        
+
         for item in self.master_data:
             item_slot = (item.get('Slot') or '').lower()
             item_spell = (item.get('Spell') or '').lower()
             item_type = (item.get('Type') or '').lower()
-            
-            # Skip items without spells
-            if not item_spell:
+
+            is_combo_mandated_slot = ((item_slot == 'weapon' and any_weapon_combo_active)
+                                       or (item_slot == 'shield' and any_shield_combo_active)
+                                       or (item_slot == 'claw' and any_claw_combo_active))
+
+            # Skip items without spells - unless a weapon/shield combo wants
+            # this slot filled regardless (most real weapons have no spell).
+            if not item_spell and not is_combo_mandated_slot:
                 continue
-            
+
             # Check if item's spell matches any wanted spell (partial match)
             has_wanted_spell = False
             for wanted in wanted_spells:
                 if wanted in item_spell:
                     has_wanted_spell = True
                     break
-            
+
             item_realm = (item.get('Realm') or '').strip()
-            
+
             # Apply realm filter if any selected
             selected_realms = [realm for realm, var in self.realm_filters.items()
                               if var.get()]
@@ -4491,10 +5151,10 @@ class App(tk.Tk):
                         break
                 if not realm_match:
                     continue
-            
-            if not has_wanted_spell:
+
+            if not has_wanted_spell and not is_combo_mandated_slot:
                 continue
-            
+
             # Apply level constraints
             if specific_level is not None or min_level is not None or max_level is not None:
                 item_level_str = item.get('Level', '')
@@ -4519,6 +5179,21 @@ class App(tk.Tk):
                     # Skip items without level data when filtering by level
                     continue
             
+            # Apply Defense filter (opt-in) - item must have a recognized
+            # Defense value within the selected min/max range.
+            if defense_min_rank is not None:
+                item_defense_rank = DEFENSE_RANK.get((item.get('Defense') or '').strip().lower())
+                if item_defense_rank is None or not (defense_min_rank <= item_defense_rank <= defense_max_rank):
+                    continue
+
+            # Apply per-slot Defense filter (opt-in per armor slot) - stacks
+            # with the global one above.
+            if item_slot in slot_defense_min_rank:
+                item_defense_rank = DEFENSE_RANK.get((item.get('Defense') or '').strip().lower())
+                if (item_defense_rank is None
+                        or not (slot_defense_min_rank[item_slot] <= item_defense_rank <= slot_defense_max_rank[item_slot])):
+                    continue
+
             # Apply armor type constraints (checkboxes)
             if item_slot in armor_constraints:
                 allowed_types = armor_constraints[item_slot]
@@ -4532,86 +5207,73 @@ class App(tk.Tk):
                     if not type_match:
                         continue
             
-            # Apply weapon/shield/claw constraints
+            # Apply weapon/shield/claw constraints. The old global Weapon
+            # Style radios and Damage Type checkboxes are gone - Style and
+            # Damage Type are now per-combo dropdowns (see each branch below).
             if item_slot == 'weapon' or item_slot == 'shield' or item_slot == 'claw':
-                # Weapon style constraint - only meaningful for the weapon
-                # slot itself (melee vs direct-caster vs direct-stat/Parry Staff)
-                if item_slot == 'weapon':
-                    if weapon_style == 'melee':
-                        # Melee weapons do NOT have 'direct' in type, and staves are
-                        # their own Parry Staff category, not plain melee weapons.
-                        if 'direct' in item_type or 'staff' in item_type:
-                            continue
-                    elif weapon_style == 'direct-caster':
-                        # Direct (Caster) weapons HAVE 'direct' in type, but staves
-                        # belong to Parry Staff even if also marked 'direct'.
-                        if 'direct' not in item_type or 'staff' in item_type:
-                            continue
-                    elif weapon_style == 'direct-stat':
-                        # Parry Staff: caster utility staves holding non-offensive
-                        # spells. Works like any other gear slot - just needs to
-                        # be a staff-type item, picked purely by wanted spells.
-                        if 'staff' not in item_type:
-                            continue
-                    else:
-                        # Any (no weapon style selected): staves are their own
-                        # Parry Staff category and shouldn't show up as a
-                        # regular weapon pick unless Parry Staff is explicitly
-                        # chosen above.
-                        if 'staff' in item_type:
-                            continue
+                # If no combo is checked, accept everything
+                has_any_config = (wants_two_handed or wants_claw_1 or wants_claw_2
+                                   or wants_dual_wield_1h or wants_1h_shield
+                                   or wants_2h_shield or wants_fired_1h_shield)
 
-                # Build configuration checkboxes and Damage Type only apply to
-                # actual combat weapons (melee/direct-caster) - Parry Staff
-                # isn't a combat weapon (no 1h/2h/dual-wield/damage-type
-                # concept for it), so it's exempt from both, same as any
-                # other gear slot like head/cloak.
-                if not (item_slot == 'weapon' and weapon_style == 'direct-stat'):
-                    # If no checkboxes are selected, accept everything
-                    has_any_config = wants_weapon or wants_shield or wants_two_handed or wants_claw_1 or wants_claw_2
+                if has_any_config:
+                    slot_accepted = False
 
-                    if has_any_config:
-                        slot_accepted = False
+                    if item_slot == 'weapon':
+                        is_offhand = 'offhand' in item_type
+                        is_1h = '1h' in item_type
+                        is_2h = '2h' in item_type
+                        is_fired = 'fired' in item_type
 
-                        if item_slot == 'weapon':
-                            # Regular 1h weapons
-                            if wants_weapon and '1h' in item_type:
-                                slot_accepted = True
-                            # Two-handed weapons
-                            if wants_two_handed and '2h' in item_type:
-                                slot_accepted = True
-                            # Dual-wield: need 1h weapons for both hands
-                            if wants_dual_wield and '1h' in item_type:
-                                slot_accepted = True
+                        # Two-handed weapons, gated by their own Style
+                        # (Melee/Direct/Parry/Fired) and Damage Type dropdowns
+                        if wants_two_handed and _two_handed_matches(item_type, item_spell, two_handed_style, two_handed_damage):
+                            slot_accepted = True
+                        # Dual-Wield 1h - this is a flat listing (no per-
+                        # slot picking), so main-hand and off-hand
+                        # candidates are just shown together: non-offhand
+                        # matching Main, or offhand-tagged matching Off-Hand.
+                        if (wants_dual_wield_1h and is_1h and not is_offhand
+                                and _weapon_damage_matches(item_type, dual_wield_1h_main)):
+                            slot_accepted = True
+                        if (wants_dual_wield_1h and is_1h and is_offhand
+                                and _weapon_damage_matches(item_type, dual_wield_1h_off)):
+                            slot_accepted = True
+                        # 1h/Shield - Style (Melee/Direct, no Parry) + Damage Type;
+                        # Direct additionally requires some spell to be present
+                        if (wants_1h_shield and is_1h and not is_offhand
+                                and _weapon_style_matches(item_type, combo_1h_shield_style)
+                                and (combo_1h_shield_style != 'Direct' or _direct_weapon_eligible(item_spell))
+                                and _weapon_damage_matches(item_type, combo_1h_shield_damage)):
+                            slot_accepted = True
+                        # 2h/Shield
+                        if (wants_2h_shield and is_2h
+                                and _weapon_damage_matches(item_type, combo_2h_shield_damage)):
+                            slot_accepted = True
+                        # Fired 1h and Shield
+                        if wants_fired_1h_shield and is_fired and is_1h and not is_offhand:
+                            slot_accepted = True
 
-                        elif item_slot == 'shield':
-                            # Shields
-                            if wants_shield:
-                                slot_accepted = True
+                    elif item_slot == 'shield':
+                        # Shields - only implied by a weapon+shield combo
+                        # now (plain "Shield" was removed)
+                        if wants_1h_shield or wants_2h_shield or wants_fired_1h_shield:
+                            slot_accepted = True
 
-                        elif item_slot == 'claw':
-                            # Claws - 1 Claw fills one claw slot, 2 Claw fills both
-                            if wants_claw_1 or wants_claw_2:
-                                slot_accepted = True
+                    elif item_slot == 'claw':
+                        # Claws - 1 Claw fills one claw slot, 2 Claw fills
+                        # both; no Style or Damage Type dropdown for either.
+                        if wants_claw_1 or wants_claw_2:
+                            slot_accepted = True
 
-                        if not slot_accepted:
-                            continue
+                    if not slot_accepted:
+                        continue
 
-                    # Damage type constraints (for weapons/claws only, not shields)
-                    if item_slot in ('weapon', 'claw') and weapon_type_constraints:
-                        type_match = False
-                        for weapon_type in weapon_type_constraints:
-                            if weapon_type.lower() in item_type:
-                                type_match = True
-                                break
-                        if not type_match:
-                            continue
-            
             # Add to slot group
             if item_slot not in items_by_slot:
                 items_by_slot[item_slot] = []
             items_by_slot[item_slot].append(item)
-        
+
         # Display ALL matching items (not just one per slot)
         # Group by slot for better organization
         all_matches = []
