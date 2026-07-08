@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.0.2
+# Gaming Log Parser v5.0.3
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -74,9 +74,9 @@ Want a specific piece of gear included no matter what? Type its name under **Req
 - **Shield Constraints** — Defense and Sigil dropdowns, working exactly like Armor Constraints' per-slot versions
 
 **Only Found In (Realm filter)**
-Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Kaid, Crafted, Glory Bea, or Event to restrict results to items found in those realms. Leave everything unchecked to search all realms.
+Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory Bea, Crafted, Event, or Kaid to restrict results to items found in those realms. Leave everything unchecked to search all realms except Crafted (see below). Kaid has its own column: **Kaid All** matches any Kaid sub-realm, or check one or more specific colors (Kaid White/Green/Red/Purple) instead - Kaid All and the colors are mutually exclusive.
 
-A build can include **at most one Crafted-realm item** — this is enforced automatically during the search, not just a filter you have to remember.
+**Crafted items never appear unless the Crafted checkbox is checked** - even if another checked realm would otherwise match part of the item's Realm text (e.g. a "Crafted - Evil" item with only "Evil" checked), and even when no realm boxes are checked at all. Once Crafted is checked, a build can still include **at most one Crafted-realm item** - enforced automatically during the search, not just a filter you have to remember.
 
 **Search**
 - **🎯 Find Optimal Build** — exact search across every slot at once for the combination that covers as many wanted spells as possible (and best satisfies Priority Tier targets) under your constraints, rather than committing slot-by-slot
@@ -128,7 +128,10 @@ A build can include **at most one Crafted-realm item** — this is enforced auto
 
 ## Version History
 
-### v5.0.2 (Current)
+### v5.0.3 (Current)
+- Fixed: Crafted-realm items (e.g. Realm = "Crafted - Evil") could show up in results just because another checked realm (like "Evil") happened to be a substring match, even with the Crafted checkbox unchecked, and even when no realm boxes were checked at all - Crafted items now never appear unless the Crafted checkbox is explicitly checked
+
+### v5.0.2
 - Alt Options in the Results tab now sorts highest level (leftmost) to lowest (rightmost), instead of whatever incidental order the source data happened to be in
 - Added a CodeQL code scanning workflow to the repo (GitHub Security tab)
 

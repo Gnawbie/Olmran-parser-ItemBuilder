@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.2"
+VERSION = "5.0.3"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -4492,6 +4492,17 @@ class App(tk.Tk):
             # "duplicated" into a second slot for no real benefit.
             is_always_fill_slot = (item_slot == 'weapon' and not is_claw_item) or item_slot == 'shield'
 
+            # Crafted items never show up unless the Crafted checkbox is
+            # explicitly checked - even if the item's Realm string also
+            # happens to contain another checked realm (e.g. "Crafted -
+            # Evil" checked when only "Evil" is on), and even when no realm
+            # checkboxes are checked at all (Crafted is not part of the
+            # implicit "search everything" default). The at-most-one-
+            # Crafted-item-per-build cap below still applies once Crafted
+            # is checked.
+            if 'crafted' in item_realm.lower() and not self.realm_filters['Crafted'].get():
+                continue
+
             # Apply realm filter if any selected
             selected_realms = [realm for realm, var in self.realm_filters.items()
                               if var.get()]
@@ -5344,6 +5355,12 @@ class App(tk.Tk):
                     break
 
             item_realm = (item.get('Realm') or '').strip()
+
+            # Crafted items never show up unless the Crafted checkbox is
+            # explicitly checked - see the matching comment in
+            # _find_optimal_build for the full reasoning.
+            if 'crafted' in item_realm.lower() and not self.realm_filters['Crafted'].get():
+                continue
 
             # Apply realm filter if any selected
             selected_realms = [realm for realm, var in self.realm_filters.items()
