@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.0.4
+# Gaming Log Parser v5.0.5
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -87,7 +87,7 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 **Search**
 - **🎯 Find Optimal Build** — exact search across every slot at once for the combination that covers as many wanted spells as possible (and best satisfies Priority Tier targets) under your constraints, rather than committing slot-by-slot
 - **📋 Show All Matches** — lists every item that matches your filters, without narrowing to one per slot
-- **🎲 Generate multiple build options** (checkbox) — when checked, "Find Optimal Build" also generates up to 5 alternate full builds by swapping in equally-good "tied" items slot by slot, so you can compare a few options instead of just one
+- **🎲 Generate multiple build options** (checkbox) — when checked, "Find Optimal Build" also generates up to 10 alternate full builds by swapping in equally-good "tied" items slot by slot, so you can compare a few options instead of just one
 
 ## Results Tab
 - **Display: Best Per Slot / All Matches** — toggle between the two search modes above
@@ -134,7 +134,13 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.0.4 (Current)
+### v5.0.5 (Current)
+- Replaced the "No Items For Some Spells" popup - a slot the search couldn't populate at all (given the current constraints, only relevant when at least one wanted spell couldn't be covered anywhere) now shows up in the Results table as "No suitable item found" instead, with the uncovered spell(s) also noted in the status line
+- "Generate multiple build options" now produces up to 10 alternate builds (was 5)
+- "Save Build" now saves only the top (best) build, not every stacked alternate variant
+- Confirmed (not a bug, no change needed): Find Optimal Build already explores every combination of wanted spells regardless of the order they were added - verified this explicitly with a 12-spell/8-slot stress test in three different orderings, all producing identical results
+
+### v5.0.4
 - Added an "If no match at Specific Level" fallback policy (Go down a tier / Go down in level / Both / Don't populate slot) for Find Optimal Build - when nothing carries a wanted spell at exactly the level (and tier, if one was requested) you specified, this controls whether the search relaxes level, tier, both, or leaves the slot empty. Always picks the highest available level/closest tier, not just the first match found
 
 ### v5.0.3

@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.4"
+VERSION = "5.0.5"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -883,7 +883,7 @@ MAX_CRAFTED_ITEMS = 1
 
 # Cap on how many alternate full-build variants "Generate multiple build
 # options" will produce (in addition to the primary optimal build).
-MAX_BUILD_VARIANTS = 5
+MAX_BUILD_VARIANTS = 10
 
 # Spells (lowercase) whose underlying spell-column value differs from the
 # display name itself, e.g. Evade is stored as "evade.enhance".
@@ -3103,7 +3103,10 @@ class App(tk.Tk):
         for iid in self.search_results_tv.get_children():
             values = self.search_results_tv.item(iid)['values']
             if str(values[0]).startswith('█'):
-                continue  # divider row between stacked build variants
+                # Divider row marking the end of the topmost build variant -
+                # only that first (best) build gets saved, not every
+                # stacked alternate "Generate multiple build options" produced.
+                break
             rows.append(values)
 
         counter = getattr(self, 'saved_build_counter', 0) + 1
@@ -3766,9 +3769,23 @@ class App(tk.Tk):
         since restating the identical spell/tier is redundant."""
         slot_order = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet',
                      'weapon', 'weapon_off', 'shield', 'claw_1', 'claw_2']
+        attempted_slots = getattr(self, 'attempted_slots', set())
         rows = []
         for slot in slot_order:
             if slot not in build_dict:
+                # Shown instead of a "No Items For Some Spells" popup - a
+                # slot the search actually tried to fill (per the current
+                # combo checkboxes) but found nothing for still shows up
+                # here, rather than silently vanishing from the table. A
+                # slot that was never attempted at all (e.g. claw_2 when
+                # only 1 Claw is checked) stays hidden as before.
+                if slot in attempted_slots:
+                    display_slot = ('jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw')
+                                    else 'off-hand' if slot == 'weapon_off' else slot)
+                    rows.append((
+                        display_slot.title(), 'No suitable item found',
+                        '', '', '', '', '', '████████', '(none)'
+                    ))
                 continue
             item = build_dict[slot]
             # weapon_off (Dual-Wield 1h's off-hand slot) gets its own label -
@@ -4832,6 +4849,7 @@ class App(tk.Tk):
         elif wants_claw_1:
             slots_to_fill += ['claw_1']
 
+
         # Claw slots allow redundant/duplicate spell coverage (dual-wielding
         # needs a physical item in each hand even if it repeats a spell) so
         # they don't fit the "each base covered by exactly one slot" model
@@ -5221,6 +5239,22 @@ class App(tk.Tk):
         self.results_display_mode.set('optimal')
         self.notebook.select(self.tab_results)
 
+        # Slots worth flagging as "No suitable item found" (via
+        # _build_dict_to_rows) if they stay unfilled. weapon/shield/claw are
+        # always eligible (always-fill slots, or only in slots_to_fill at
+        # all when their combo is checked) - an empty one there is always
+        # worth a note. Armor/jewel slots are only eligible when at least
+        # one wanted/priority spell couldn't be covered anywhere in the
+        # whole build - an empty armor/jewel slot while everything wanted
+        # is already covered elsewhere just means it wasn't needed, not
+        # that the search failed to find anything for it.
+        uncovered = sorted(set(wanted_bases) - covered_bases)
+        if uncovered:
+            self.attempted_slots = set(slots_to_fill)
+        else:
+            self.attempted_slots = {s for s in slots_to_fill
+                                    if s in ('weapon', 'weapon_off', 'shield') or s.startswith('claw')}
+
         # Store and display every build variant stacked together, separated by
         # a thin black divider row, with Build 1 on top
         self.last_optimal_results = self._all_variants_rows()
@@ -5237,18 +5271,17 @@ class App(tk.Tk):
             status += f" | {len(self.slot_alternates)} slot(s) have equally-good alternate items"
         if len(self.build_variants) > 1:
             status += f" | {len(self.build_variants)} build variants available"
-        self.search_status.config(text=status)
 
-        # Warn about any wanted spell no item could satisfy at all, at any
-        # tier, under the current armor/weapon/level/tier/realm constraints -
-        # every other slot was filled, so this really means "nothing exists
-        # for this exact configuration" rather than "not needed".
-        uncovered = sorted(set(wanted_bases) - covered_bases)
+        # Any wanted spell no item could satisfy at all, at any tier, under
+        # the current armor/weapon/level/tier/realm constraints - every
+        # other slot was filled, so this really means "nothing exists for
+        # this exact configuration" rather than "not needed" (uncovered
+        # was already computed above, to decide which empty slots get a
+        # "No suitable item found" row). Shown in the status line instead
+        # of an interrupting popup.
         if uncovered:
-            messagebox.showwarning("No Items For Some Spells",
-                "No items were found (at any tier) for the following spell(s), "
-                "given your current armor/weapon/level/tier/realm constraints:\n\n"
-                + ", ".join(uncovered))
+            status += f" | No items found for: {', '.join(uncovered)}"
+        self.search_status.config(text=status)
 
         # Warn about any Priority Tier that couldn't actually be honored - the
         # spell itself may still be covered (via a fallback tier), just not at
