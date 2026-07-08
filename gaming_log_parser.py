@@ -2342,11 +2342,26 @@ class App(tk.Tk):
         # Armor slots
         self.slot_defense_controls = {}
         self.slot_sigil_vars = {}
+        # "Max Lvl" - a per-slot priority checkbox (not on the "All:" row).
+        # Checked slots are greedily locked in with the highest-level item
+        # that still carries a wanted/priority spell, before the normal
+        # exact search runs for everything else - capped at 3 checked at
+        # once, same grey-out-the-rest pattern as Melee Weapon Constraints'
+        # Priority checkboxes (see _update_armor_maxlvl_cap).
+        self.armor_maxlvl_vars = {}
+        self.armor_maxlvl_checkbuttons = []
         for slot, label in [('head', 'Head'), ('cloak', 'Cloak'), ('body', 'Body'),
                            ('hands', 'Hands'), ('legs', 'Legs'), ('feet', 'Feet')]:
             slot_frame = ttk.Frame(armor_box)
             slot_frame.pack(fill='x', pady=2)
             ttk.Label(slot_frame, text=f"{label}:", width=12).pack(side='left')
+
+            maxlvl_var = tk.BooleanVar(value=False)
+            self.armor_maxlvl_vars[slot] = maxlvl_var
+            maxlvl_cb = ttk.Checkbutton(slot_frame, text="Max Lvl", variable=maxlvl_var,
+                                        command=self._update_armor_maxlvl_cap)
+            maxlvl_cb.pack(side='left', padx=(0,10))
+            self.armor_maxlvl_checkbuttons.append(maxlvl_cb)
 
             # Create checkboxes for each armor type
             self.armor_checks[slot] = {}
@@ -3550,6 +3565,8 @@ class App(tk.Tk):
         for slot in ['head', 'cloak', 'body', 'hands', 'legs', 'feet']:
             for armor_type in ['cloth', 'leather', 'studded', 'plate']:
                 self.armor_checks[slot][armor_type].set(False)
+            self.armor_maxlvl_vars[slot].set(False)
+        self._update_armor_maxlvl_cap()
 
         # Clear Weapon Types/Combo's
         self.two_handed_var.set(False)
@@ -3611,6 +3628,17 @@ class App(tk.Tk):
         at_cap = checked_count >= 3
         for var, checkbutton in zip(self.melee_priority_vars, self.melee_priority_checkbuttons):
             if var.get():
+                checkbutton.config(state='normal')
+            else:
+                checkbutton.config(state='disabled' if at_cap else 'normal')
+
+    def _update_armor_maxlvl_cap(self):
+        """At most 3 armor slots can be marked Max Lvl at once - same
+        grey-out-the-rest pattern as _update_melee_priority_cap."""
+        checked_count = sum(1 for v in self.armor_maxlvl_vars.values() if v.get())
+        at_cap = checked_count >= 3
+        for slot, checkbutton in zip(self.armor_maxlvl_vars.keys(), self.armor_maxlvl_checkbuttons):
+            if self.armor_maxlvl_vars[slot].get():
                 checkbutton.config(state='normal')
             else:
                 checkbutton.config(state='disabled' if at_cap else 'normal')
@@ -3790,6 +3818,7 @@ class App(tk.Tk):
             self.armor_defaults[slot] = {}
             for armor_type in ['cloth', 'leather', 'studded', 'plate']:
                 self.armor_defaults[slot][armor_type] = self.armor_checks[slot][armor_type].get()
+            self.armor_defaults[slot]['maxlvl'] = self.armor_maxlvl_vars[slot].get()
         
         # Save Weapon Types/Combo's defaults
         self.weapon_combo_defaults = {
@@ -3833,6 +3862,8 @@ class App(tk.Tk):
                         if armor_type in self.armor_defaults[slot]:
                             self.armor_checks[slot][armor_type].set(
                                 self.armor_defaults[slot][armor_type])
+                    self.armor_maxlvl_vars[slot].set(self.armor_defaults[slot].get('maxlvl', False))
+            self._update_armor_maxlvl_cap()
     
     def _load_weapon_defaults(self):
         """Load saved weapon defaults into checkboxes"""
@@ -4592,6 +4623,52 @@ class App(tk.Tk):
         # around them: their spells count as covered and their slots are skipped
         # below, same as anything the greedy search would have picked itself.
         crafted_count, used_claw_items = self._assign_required_items(build, covered_bases, wanted_bases)
+
+        # Max Lvl (Armor Constraints) - up to 3 armor slots can be marked to
+        # greedily grab the highest-level candidate for that slot BEFORE the
+        # exact search below runs, rather than letting the exact search pick
+        # whichever item best optimizes overall spell coverage. Candidates
+        # here are already restricted to items carrying a wanted/priority
+        # spell and matching that slot's armor type checkboxes (Cloth/
+        # Leather/Studded/Plate), since items_by_slot was built with those
+        # filters already applied - Max Lvl only changes which of those
+        # already-eligible items wins, never what's eligible in the first
+        # place. Ties (same highest level) are broken the same way the exact
+        # search would: Priority Spell match, then Priority Tier match, then
+        # Sigil match/level, then Defense preference, then spell tier.
+        for slot, var in self.armor_maxlvl_vars.items():
+            if not var.get() or slot in build:
+                continue
+            best_item = None
+            best_key = None
+            for item in items_by_slot.get(slot, []):
+                is_crafted = 'crafted' in (item.get('Realm') or '').strip().lower()
+                if is_crafted and crafted_count >= MAX_CRAFTED_ITEMS:
+                    continue
+                try:
+                    item_level_num = int(item.get('Level') or 0)
+                except (ValueError, TypeError):
+                    item_level_num = 0
+                item_spell = (item.get('Spell') or '').lower()
+                item_tier = _spell_tier_rank(item_spell)
+                item_base = _spell_base(item_spell)
+                priority_matches = sum(1 for p in priority_spells if p in item_spell)
+                item_priority_tiers = priority_tier_ranks_by_base.get(item_base)
+                tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
+                sigil_match, sigil_level = _sigil_priority_score(item, slot)
+                defense_priority_match = _defense_priority_score(item, slot)
+                key = (item_level_num, priority_matches, tier_priority_match,
+                       sigil_match, sigil_level, defense_priority_match, item_tier)
+                if best_key is None or key > best_key:
+                    best_key = key
+                    best_item = item
+
+            if best_item is not None:
+                build[slot] = best_item
+                matched_bases = [base for base in wanted_bases if base in (best_item.get('Spell') or '').lower()]
+                covered_bases.update(matched_bases)
+                if 'crafted' in (best_item.get('Realm') or '').strip().lower():
+                    crafted_count += 1
 
         # Slots to fill (including 2 jewel slots). Claw slots are only attempted
         # when 1 Claw / 2 Claw is checked - 2 Claw fills both claw slots (dual-wield).
