@@ -106,8 +106,11 @@ A build can include **at most one Crafted-realm item** — this is enforced auto
 - **Caster with Staff:** Direct (Caster) + Cloth armor + Two-Handed + Crushing
 
 ## Known Limitations
-- **Class Specific**, **Other1**, and **Other2** spell dropdowns are empty until those lists are compiled — use the temporary Manual entry box in the meantime
 - **Event** realm items work like any other realm filter, but there isn't yet dedicated Event-specific logic beyond the Realm column match
+- Some improved-tier (`iii`) **Protect** spells don't show up correctly in Find Optimal Build results yet — root cause not yet diagnosed
+- **Direct** weapon spells are generally not captured in the bundled equipment list (Parry Staff spells are captured correctly) — this is a gap in the source data, not the search logic
+- `OlmranItemBuilder.exe` isn't code-signed, so Windows SmartScreen shows an "Unrecognized app" warning on first run — click "More info" then "Run anyway" (see the [FAQ](https://github.com/Gnawbie/Olmran-parser-ItemBuilder/wiki/FAQ))
+- The .exe is a PyInstaller "onefile" build, so it unpacks itself to a temp folder on every launch — expect a few seconds of startup delay each time, not just the first
 
 ## Troubleshooting
 
