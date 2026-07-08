@@ -2302,18 +2302,29 @@ class App(tk.Tk):
         # Create checkbox storage for armor types
         self.armor_checks = {}
 
-        # "All" row - controls all slots at once
-        all_frame = ttk.Frame(armor_box)
-        all_frame.pack(fill='x', pady=2)
-        ttk.Label(all_frame, text="All:", width=12, font=('Arial', 9, 'bold')).pack(side='left')
+        # "All:" row and every per-slot row below are laid out with grid
+        # in their own frame (armor_box itself already has pack-managed
+        # children above - armor_header - and a single container can't mix
+        # pack and grid for its direct children), sharing one set of
+        # columns - 0: row label, 1: Max Lvl, 2-5: Cloth/Leather/Studded/
+        # Plate, 6: Defense block, 7: Sigil block - so the Cloth/Leather/
+        # Studded/Plate checkboxes (and everything after them) line up
+        # vertically across every row even though "All:" has no Max Lvl
+        # column of its own and only the per-slot rows have a Sigil column.
+        armor_grid_frame = ttk.Frame(armor_box)
+        armor_grid_frame.pack(fill='x')
+
+        ttk.Label(armor_grid_frame, text="All:", width=12, font=('Arial', 9, 'bold')).grid(
+            row=0, column=0, sticky='w', pady=2)
 
         self.armor_all_checks = {}
-        for armor_type in ['cloth', 'leather', 'studded', 'plate']:
+        for col, armor_type in enumerate(['cloth', 'leather', 'studded', 'plate']):
             var = tk.BooleanVar(value=False)
             self.armor_all_checks[armor_type] = var
-            ttk.Checkbutton(all_frame, text=armor_type.title(),
+            ttk.Checkbutton(armor_grid_frame, text=armor_type.title(),
                            variable=var,
-                           command=lambda t=armor_type: self._update_all_armor(t)).pack(side='left', padx=4)
+                           command=lambda t=armor_type: self._update_all_armor(t)).grid(
+                row=0, column=2 + col, sticky='w', padx=4)
 
         # Defense filter - opt-in constraint on the item list's Defense
         # column (much worse < worse < normal < better < much better), on
@@ -2322,8 +2333,8 @@ class App(tk.Tk):
         # items in range are prioritized when possible, but every slot still
         # gets filled even if nothing in range is available. In Show All
         # Matches (a flat listing, no build to fill) it's a hard filter.
-        defense_block = ttk.Frame(all_frame)
-        defense_block.pack(side='left', padx=(20,0))
+        defense_block = ttk.Frame(armor_grid_frame)
+        defense_block.grid(row=0, column=6, sticky='w', padx=(20,0))
 
         self.use_defense_filter_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(defense_block, text="Defense:",
@@ -2350,33 +2361,32 @@ class App(tk.Tk):
         # Priority checkboxes (see _update_armor_maxlvl_cap).
         self.armor_maxlvl_vars = {}
         self.armor_maxlvl_checkbuttons = []
-        for slot, label in [('head', 'Head'), ('cloak', 'Cloak'), ('body', 'Body'),
-                           ('hands', 'Hands'), ('legs', 'Legs'), ('feet', 'Feet')]:
-            slot_frame = ttk.Frame(armor_box)
-            slot_frame.pack(fill='x', pady=2)
-            ttk.Label(slot_frame, text=f"{label}:", width=12).pack(side='left')
+        for row, (slot, label) in enumerate([('head', 'Head'), ('cloak', 'Cloak'), ('body', 'Body'),
+                           ('hands', 'Hands'), ('legs', 'Legs'), ('feet', 'Feet')], start=1):
+            ttk.Label(armor_grid_frame, text=f"{label}:", width=12).grid(
+                row=row, column=0, sticky='w', pady=2)
 
             maxlvl_var = tk.BooleanVar(value=False)
             self.armor_maxlvl_vars[slot] = maxlvl_var
-            maxlvl_cb = ttk.Checkbutton(slot_frame, text="Max Lvl", variable=maxlvl_var,
+            maxlvl_cb = ttk.Checkbutton(armor_grid_frame, text="Max Lvl", variable=maxlvl_var,
                                         command=self._update_armor_maxlvl_cap)
-            maxlvl_cb.pack(side='left', padx=(0,10))
+            maxlvl_cb.grid(row=row, column=1, sticky='w', padx=(0,10))
             self.armor_maxlvl_checkbuttons.append(maxlvl_cb)
 
             # Create checkboxes for each armor type
             self.armor_checks[slot] = {}
-            for armor_type in ['cloth', 'leather', 'studded', 'plate']:
+            for col, armor_type in enumerate(['cloth', 'leather', 'studded', 'plate']):
                 var = tk.BooleanVar(value=False)
                 self.armor_checks[slot][armor_type] = var
-                ttk.Checkbutton(slot_frame, text=armor_type.title(),
-                               variable=var).pack(side='left', padx=4)
+                ttk.Checkbutton(armor_grid_frame, text=armor_type.title(),
+                               variable=var).grid(row=row, column=2 + col, sticky='w', padx=4)
 
             # Per-slot Defense - stacks with the global "All:" row Defense
             # controls above rather than replacing them: if both are active
             # for this slot, an item must satisfy both hard ranges, and earns
             # a priority point for each soft range it satisfies.
-            slot_defense_block = ttk.Frame(slot_frame)
-            slot_defense_block.pack(side='left', padx=(20,0))
+            slot_defense_block = ttk.Frame(armor_grid_frame)
+            slot_defense_block.grid(row=row, column=6, sticky='w', padx=(20,0))
 
             use_var = tk.BooleanVar(value=False)
             min_var = tk.StringVar(value='normal')
@@ -2402,8 +2412,10 @@ class App(tk.Tk):
             # excludes other items, so the slot still always gets filled.
             sigil_var = tk.StringVar(value='Any')
             self.slot_sigil_vars[slot] = sigil_var
-            ttk.Label(slot_frame, text="Sigil:").pack(side='left', padx=(12,4))
-            ttk.Combobox(slot_frame, textvariable=sigil_var, values=['Any'] + SIGIL_TYPES,
+            sigil_block = ttk.Frame(armor_grid_frame)
+            sigil_block.grid(row=row, column=7, sticky='w', padx=(12,0))
+            ttk.Label(sigil_block, text="Sigil:").pack(side='left', padx=(0,4))
+            ttk.Combobox(sigil_block, textvariable=sigil_var, values=['Any'] + SIGIL_TYPES,
                         state='readonly', width=11).pack(side='left')
 
         # Load saved armor defaults
@@ -2836,13 +2848,37 @@ class App(tk.Tk):
         realm_block.pack(side='left', anchor='n', padx=(20, 0))
 
         self.realm_filters = {}
-        realm_options = ['Evil', 'Chaos', 'Good', 'Kaid', 'Crafted', 'Glory Bea', 'Event']
+        # Left two columns - unchanged except Glory Bea moved up into Kaid's
+        # old spot, since Kaid moved out into its own column to the right.
+        realm_options = ['Evil', 'Chaos', 'Good', 'Glory Bea', 'Crafted', 'Event']
         cols = 2
         for i, realm in enumerate(realm_options):
             var = tk.BooleanVar(value=False)
             self.realm_filters[realm] = var
             ttk.Checkbutton(realm_block, text=realm, variable=var).grid(
                 row=i // cols, column=i % cols, sticky='w', padx=4, pady=2)
+
+        # Kaid gets its own column: "Kaid All" (renamed from the old plain
+        # "Kaid" checkbox - same match key/behavior, matches every Kaid.*
+        # realm) plus 4 new checkboxes for each specific Kaid color realm.
+        # These two groups are mutually exclusive (grey out the other side),
+        # matching an item against "kaid" broadly and against one specific
+        # color realm at once doesn't make sense together.
+        kaid_all_var = tk.BooleanVar(value=False)
+        self.realm_filters['Kaid'] = kaid_all_var
+        self.kaid_all_checkbutton = ttk.Checkbutton(realm_block, text="Kaid All",
+                                                     variable=kaid_all_var,
+                                                     command=self._update_kaid_exclusivity)
+        self.kaid_all_checkbutton.grid(row=0, column=2, sticky='w', padx=(16,4), pady=2)
+
+        self.kaid_color_checkbuttons = []
+        for i, color in enumerate(['Kaid White', 'Kaid Green', 'Kaid Red', 'Kaid Purple'], start=1):
+            var = tk.BooleanVar(value=False)
+            self.realm_filters[color] = var
+            cb = ttk.Checkbutton(realm_block, text=color, variable=var,
+                                 command=self._update_kaid_exclusivity)
+            cb.grid(row=i, column=2, sticky='w', padx=(16,4), pady=2)
+            self.kaid_color_checkbuttons.append(cb)
         
         # Find Optimal Build/Show All Matches/Generate multiple build options
         # moved out to shared_controls_frame below (see the comment at the
@@ -3791,6 +3827,20 @@ class App(tk.Tk):
         self.last_optimal_results = self._all_variants_rows()
         self.results_display_mode.set('optimal')
         self._refresh_results_display()
+
+    def _update_kaid_exclusivity(self):
+        """Kaid All and the 4 Kaid color checkboxes grey out whichever side
+        isn't in use - checking Kaid All disables the colors, checking any
+        color disables Kaid All. Same disable-only pattern as level filters
+        (see _update_level_fields) - the other side's value isn't cleared,
+        just made non-interactive while it wouldn't apply."""
+        kaid_all_checked = self.realm_filters['Kaid'].get()
+        any_color_checked = any(self.realm_filters[c].get()
+                                for c in ('Kaid White', 'Kaid Green', 'Kaid Red', 'Kaid Purple'))
+
+        self.kaid_all_checkbutton.config(state='disabled' if any_color_checked else 'normal')
+        for cb in self.kaid_color_checkbuttons:
+            cb.config(state='disabled' if kaid_all_checked else 'normal')
 
     def _update_level_fields(self):
         """Enable/disable level fields based on which one is being used"""
