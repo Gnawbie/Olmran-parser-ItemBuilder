@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.8"
+VERSION = "5.0.9"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -2616,18 +2616,39 @@ class App(tk.Tk):
         # instead of a user-picked Min/Max); Sigil works like every other
         # Sigil dropdown (_sigil_priority_score). Neither excludes a shield
         # outright - same "match as many as possible" philosophy as above.
+        # Shields are technically armor (hence the Cloth/Leather/Studded/
+        # Plate checkboxes below, matching Armor Constraints) but are built
+        # alongside a weapon, which is why they live here instead - unlike
+        # Defense/Sigil, armor type IS a hard filter, same as it is in
+        # Armor Constraints (one or more checked = must match one of them;
+        # none checked = any type).
         shield_box = ttk.LabelFrame(right_column, text="Shield Constraints", padding=8)
         shield_box.pack(anchor='n', fill='x', pady=(10,0))
 
         self.shield_defense_var = tk.StringVar(value='Any')
         self.shield_sigil_var = tk.StringVar(value='Any')
 
-        for label, var, values in [('Defense:', self.shield_defense_var, SHIELD_DEFENSE_LEVELS),
-                                  ('Sigil:', self.shield_sigil_var, SHIELD_SIGIL_VALUES)]:
-            row = ttk.Frame(shield_box)
-            row.pack(fill='x', pady=2)
-            ttk.Label(row, text=label, width=10).pack(side='left')
-            ttk.Combobox(row, textvariable=var, values=values, state='readonly', width=14).pack(side='left')
+        sigil_row = ttk.Frame(shield_box)
+        sigil_row.pack(fill='x', pady=2)
+        ttk.Label(sigil_row, text="Sigil:", width=10).pack(side='left')
+        ttk.Combobox(sigil_row, textvariable=self.shield_sigil_var, values=SHIELD_SIGIL_VALUES,
+                    state='readonly', width=14).pack(side='left')
+
+        # Armor type "cube" (2x2) of checkboxes, next to the Sigil dropdown.
+        armor_cube = ttk.Frame(sigil_row)
+        armor_cube.pack(side='left', padx=(16, 0))
+        self.shield_armor_checks = {}
+        for i, armor_type in enumerate(['cloth', 'leather', 'studded', 'plate']):
+            var = tk.BooleanVar(value=False)
+            self.shield_armor_checks[armor_type] = var
+            ttk.Checkbutton(armor_cube, text=armor_type.title(), variable=var).grid(
+                row=i // 2, column=i % 2, sticky='w', padx=4, pady=1)
+
+        defense_row = ttk.Frame(shield_box)
+        defense_row.pack(fill='x', pady=2)
+        ttk.Label(defense_row, text="Defense:", width=10).pack(side='left')
+        ttk.Combobox(defense_row, textvariable=self.shield_defense_var, values=SHIELD_DEFENSE_LEVELS,
+                    state='readonly', width=14).pack(side='left')
 
         # Load weapon defaults
         self._load_weapon_defaults()
@@ -3691,6 +3712,8 @@ class App(tk.Tk):
         # Clear Shield Constraints
         self.shield_defense_var.set('Any')
         self.shield_sigil_var.set('Any')
+        for armor_type in ('cloth', 'leather', 'studded', 'plate'):
+            self.shield_armor_checks[armor_type].set(False)
 
         # Clear all level filters
         self.min_level_var.set('')
@@ -3978,6 +4001,8 @@ class App(tk.Tk):
             'melee_sigil_priority': self.melee_sigil_priority_var.get(),
             'shield_defense': self.shield_defense_var.get(),
             'shield_sigil': self.shield_sigil_var.get(),
+            'shield_armor_types': [t for t in ('cloth', 'leather', 'studded', 'plate')
+                                   if self.shield_armor_checks[t].get()],
         }
 
         self._save_config()
@@ -4026,6 +4051,9 @@ class App(tk.Tk):
             self.melee_sigil_priority_var.set(combos.get('melee_sigil_priority', False))
             self.shield_defense_var.set(combos.get('shield_defense', 'Any'))
             self.shield_sigil_var.set(combos.get('shield_sigil', 'Any'))
+            shield_armor_types = combos.get('shield_armor_types', [])
+            for armor_type in ('cloth', 'leather', 'studded', 'plate'):
+                self.shield_armor_checks[armor_type].set(armor_type in shield_armor_types)
 
         # .set() doesn't fire the checkboxes' own command callback, so sync
         # the grey-out state explicitly after a bulk load.
@@ -4494,6 +4522,12 @@ class App(tk.Tk):
                 if self.armor_checks[slot][armor_type].get():
                     checked_types.append(armor_type)
             armor_constraints[slot] = checked_types  # List of allowed types (empty = any)
+        # Shield Constraints' armor type checkboxes - shields are technically
+        # armor, so this reuses the exact same hard-filter mechanism as the
+        # Armor Constraints tab's per-slot checkboxes, just sourced from
+        # Weapon Constraints' own Shield Constraints checkboxes instead.
+        armor_constraints['shield'] = [t for t in ('cloth', 'leather', 'studded', 'plate')
+                                       if self.shield_armor_checks[t].get()]
 
         # Weapon Types/Combo's - each has its own Style and/or Damage Type
         # dropdown(s) (Claw has neither); the old global Weapon Style radios
@@ -5450,6 +5484,12 @@ class App(tk.Tk):
                 if self.armor_checks[slot][armor_type].get():
                     checked_types.append(armor_type)
             armor_constraints[slot] = checked_types  # List of allowed types (empty = any)
+        # Shield Constraints' armor type checkboxes - shields are technically
+        # armor, so this reuses the exact same hard-filter mechanism as the
+        # Armor Constraints tab's per-slot checkboxes, just sourced from
+        # Weapon Constraints' own Shield Constraints checkboxes instead.
+        armor_constraints['shield'] = [t for t in ('cloth', 'leather', 'studded', 'plate')
+                                       if self.shield_armor_checks[t].get()]
 
         # Weapon Types/Combo's - each has its own Style and/or Damage Type
         # dropdown(s) (Claw has neither); the old global Weapon Style radios
