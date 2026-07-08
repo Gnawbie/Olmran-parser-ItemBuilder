@@ -3764,7 +3764,7 @@ class App(tk.Tk):
             chosen_tier = _spell_tier_rank(chosen_spell)
 
             seen_names = {(item.get('Item') or '').strip().lower()}
-            alt_names = []
+            alts = []
             for c in self.items_by_slot.get(lookup_slot, []):
                 if c is item:
                     continue
@@ -3776,11 +3776,18 @@ class App(tk.Tk):
                     continue
                 seen_names.add(c_name.lower())
                 c_level = c.get('Level', '')
+                try:
+                    c_level_num = int(c_level)
+                except (ValueError, TypeError):
+                    c_level_num = 0
                 if _spell_tier_rank(c_spell) == chosen_tier:
-                    alt_names.append(f"{c_level} - {c_name}")
+                    text = f"{c_level} - {c_name}"
                 else:
-                    alt_names.append(f"{c_level} - {c_name} ({c.get('Spell', '')})")
-            alt_text = ', '.join(alt_names) if alt_names else '(none)'
+                    text = f"{c_level} - {c_name} ({c.get('Spell', '')})"
+                alts.append((c_level_num, text))
+            # Highest level first (leftmost), lowest last (rightmost).
+            alts.sort(key=lambda pair: pair[0], reverse=True)
+            alt_text = ', '.join(text for _, text in alts) if alts else '(none)'
 
             rows.append((
                 display_slot.title(),
