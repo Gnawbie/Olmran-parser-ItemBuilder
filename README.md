@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.0.1
+# Gaming Log Parser v5.0.2
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -128,7 +128,11 @@ A build can include **at most one Crafted-realm item** — this is enforced auto
 
 ## Version History
 
-### v5.0.1 (Current)
+### v5.0.2 (Current)
+- Alt Options in the Results tab now sorts highest level (leftmost) to lowest (rightmost), instead of whatever incidental order the source data happened to be in
+- Added a CodeQL code scanning workflow to the repo (GitHub Security tab)
+
+### v5.0.1
 - Fixed the Results tab getting stuck showing "All Matches" after clicking "Find Optimal Build" if a validation warning fired while "All Matches" was still the active view from an earlier search
 - Trimmed unused Pillow plugins (AVIF/WebP/CMS/Math/Tk) from the bundled exe - not used anywhere in the app, shrinks it from ~15.5MB to ~13.3MB
 - Added a "Max Lvl" priority checkbox to each Armor Constraints slot (not the All: row) - up to 3 at once, greedily locks that slot to the highest-level item that still carries a wanted/priority spell before the normal optimal-build search runs for everything else
