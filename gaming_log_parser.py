@@ -2848,9 +2848,11 @@ class App(tk.Tk):
         realm_block.pack(side='left', anchor='n', padx=(20, 0))
 
         self.realm_filters = {}
-        # Left two columns - unchanged except Glory Bea moved up into Kaid's
-        # old spot, since Kaid moved out into its own column to the right.
-        realm_options = ['Evil', 'Chaos', 'Good', 'Glory Bea', 'Crafted', 'Event']
+        # Left two columns, in row-major order (2 per row): Evil/Glory Bea,
+        # Good/Event, Chaos/Crafted. Glory Bea sits where Kaid used to be
+        # (Kaid moved out into its own column to the right); Chaos took
+        # Crafted's old spot, and Crafted moved below Event.
+        realm_options = ['Evil', 'Glory Bea', 'Good', 'Event', 'Chaos', 'Crafted']
         cols = 2
         for i, realm in enumerate(realm_options):
             var = tk.BooleanVar(value=False)
