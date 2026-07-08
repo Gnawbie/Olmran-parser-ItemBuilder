@@ -14,6 +14,10 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+# Shown in the main window's title bar - bump this alongside the README
+# Version History entry whenever a new version is cut.
+VERSION = "5.0.1"
+
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
 # ─────────────────────────────────────────────────────────────
@@ -1214,7 +1218,7 @@ class DropSnapshotViewer(tk.Toplevel):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("🎮 Gaming Log Parser")
+        self.title(f"🎮 Olmran Log Parser and Gear Set Creator v{VERSION}")
         self.geometry("1350x790")
         self.minsize(1150, 750)
         self.resizable(True, True)
