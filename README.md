@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.0.10
+# Gaming Log Parser v5.0.11
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.0.10 (Current)
+### v5.0.11 (Current)
+- Find Optimal Build now honors a Wanted Spell's own tier: adding a spell chip with a specific tier (e.g. "Dexterity ii") searches for that tier instead of always upgrading to the highest tier available for that spell. Chips added as "(any)" keep the old highest-tier behavior. If a Priority Tier is already set for that spell, the Priority Tier's target still takes precedence over the chip's own tier
+
+### v5.0.10
 - Shield Constraints layout refined: Cloth/Leather now share the Sigil row and Studded/Plate share the Defense row, packed tighter together, with Leather and Plate lined up vertically
 
 ### v5.0.9

@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.10"
+VERSION = "5.0.11"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -4344,6 +4344,26 @@ class App(tk.Tk):
         priority_tier_ranks_by_base = {}
         for spell, tier in self.priority_tiers_data:
             priority_tier_ranks_by_base.setdefault(spell, set()).add(_TIER_RANK[tier])
+
+        # A Wanted Spell chip added with an explicit tier (not "(any)") is
+        # itself an implicit tier target, same as manually adding it to
+        # Priority Tier - picking "Dexterity ii" specifically should search
+        # for tier ii, not silently upgrade to the highest tier available
+        # just because a tier iii dexterity item exists somewhere. A chip
+        # added as "(any)" (no tier suffix) still has no target, so those
+        # keep today's "prefer the highest tier found" behavior. Skipped
+        # for a base that already has an explicit Priority Tier entry -
+        # that's a deliberate, more specific request (Priority Tier can
+        # target a tier *lower* than what a same-spell chip asked for,
+        # e.g. for cost/rarity reasons - it shouldn't get diluted/outvoted
+        # by the chip's own tier just because that tier happens to be higher).
+        for wanted in wanted_spells:
+            base = _spell_base(wanted)
+            if base in priority_tier_ranks_by_base:
+                continue
+            explicit_tier = _spell_tier_rank(wanted)
+            if explicit_tier > 0:
+                priority_tier_ranks_by_base.setdefault(base, set()).add(explicit_tier)
 
         # Base spells (tier stripped) for the early candidate filter below -
         # a lower/higher tier than exactly requested should still qualify an
