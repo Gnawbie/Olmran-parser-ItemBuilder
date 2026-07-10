@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.11"
+VERSION = "5.0.12"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -993,15 +993,46 @@ def _two_handed_matches(item_type, item_spell, style, damage):
 
 def _spell_base(spell):
     """Strip a trailing .i/.ii/.iii/.iv tier suffix so different tiers of the
-    same wanted spell are recognized as one requirement, not two."""
-    m = re.match(r'^(.*)\.(i|ii|iii|iv)$', spell.strip().lower())
-    return m.group(1) if m else spell.strip().lower()
+    same wanted spell are recognized as one requirement, not two.
+
+    Also strips a leading minor./improved. prefix when what's left is a
+    recognized Protect spell - real item data stores a Protect's tier as
+    that prefix (see PROTECT_TIER_TO_SUFFIX), not the .i/.ii/.iii/.iv suffix
+    everything else (and the internal Wanted Spell chip representation) uses,
+    so without this an item like "minor.shock.protect" would never be
+    recognized as the same base as a "shock.protect" want. Wanted-spell
+    strings never carry this prefix themselves, so this is safe to apply
+    unconditionally regardless of which side (item or wanted-chip) called it."""
+    s = spell.strip().lower()
+    m = re.match(r'^(minor|improved)\.(.+)$', s)
+    if m and m.group(2) in PROTECT_SPELLS:
+        return m.group(2)
+    m = re.match(r'^(.*)\.(i|ii|iii|iv)$', s)
+    return m.group(1) if m else s
 
 
 def _spell_tier_rank(variant):
     """Rank of the tier suffix on a wanted-spell string (0 if untiered/any)."""
     m = re.match(r'^.*\.(i|ii|iii|iv)$', variant.strip().lower())
     return _TIER_RANK[m.group(1)] if m else 0
+
+
+def _item_tier_rank(item_spell):
+    """Tier rank of an actual item's Spell value. Ordinary tiered spells use
+    the same .i/.ii/.iii/.iv suffix as _spell_tier_rank, but real Protect
+    items store their tier differently: minor./improved. as a PREFIX, and no
+    prefix at all for normal tier (ii) - see PROTECT_TIER_TO_SUFFIX. That
+    bare-string convention only applies to actual item data, never to a
+    Wanted Spell chip (where a bare "shock.protect" instead means "(any)"
+    tier was picked) - so this is intentionally a separate function from
+    _spell_tier_rank rather than an extension of it."""
+    s = item_spell.strip().lower()
+    m = re.match(r'^(minor|improved)\.(.+)$', s)
+    if m and m.group(2) in PROTECT_SPELLS:
+        return _TIER_RANK['i'] if m.group(1) == 'minor' else _TIER_RANK['iii']
+    if s in PROTECT_SPELLS:
+        return _TIER_RANK['ii']
+    return _spell_tier_rank(s)
 
 
 class ItemMatchDialog(tk.Toplevel):
@@ -3857,7 +3888,7 @@ class App(tk.Tk):
 
             chosen_spell = (item.get('Spell') or '').lower()
             chosen_base = _spell_base(chosen_spell)
-            chosen_tier = _spell_tier_rank(chosen_spell)
+            chosen_tier = _item_tier_rank(chosen_spell)
 
             seen_names = {(item.get('Item') or '').strip().lower()}
             alts = []
@@ -3876,7 +3907,7 @@ class App(tk.Tk):
                     c_level_num = int(c_level)
                 except (ValueError, TypeError):
                     c_level_num = 0
-                if _spell_tier_rank(c_spell) == chosen_tier:
+                if _item_tier_rank(c_spell) == chosen_tier:
                     text = f"{c_level} - {c_name}"
                 else:
                     text = f"{c_level} - {c_name} ({c.get('Spell', '')})"
@@ -4904,7 +4935,7 @@ class App(tk.Tk):
                 except (ValueError, TypeError):
                     item_level_num = 0
                 item_spell = (item.get('Spell') or '').lower()
-                item_tier = _spell_tier_rank(item_spell)
+                item_tier = _item_tier_rank(item_spell)
                 item_base = _spell_base(item_spell)
                 priority_matches = sum(1 for p in priority_spells if p in item_spell)
                 item_priority_tiers = priority_tier_ranks_by_base.get(item_base)
@@ -5019,7 +5050,7 @@ class App(tk.Tk):
             for item in items:
                 item_spell = (item.get('Spell') or '').lower()
                 item_type = (item.get('Type') or '').lower()
-                item_tier = _spell_tier_rank(item_spell)
+                item_tier = _item_tier_rank(item_spell)
                 if item_tier > 0:
                     if min_tier_rank is not None and item_tier < min_tier_rank:
                         continue
@@ -5189,7 +5220,7 @@ class App(tk.Tk):
 
             item_spell = (item.get('Spell') or '').lower()
             item_type = (item.get('Type') or '').lower()
-            item_tier = _spell_tier_rank(item_spell)
+            item_tier = _item_tier_rank(item_spell)
             item_is_crafted = 'crafted' in (item.get('Realm') or '').strip().lower()
             priority_matches = sum(1 for p in priority_spells if p in item_spell)
             item_base = _spell_base(item_spell)
@@ -5212,7 +5243,7 @@ class App(tk.Tk):
                 if other is item:
                     continue
                 other_spell = (other.get('Spell') or '').lower()
-                other_tier = _spell_tier_rank(other_spell)
+                other_tier = _item_tier_rank(other_spell)
                 if other_tier > 0:
                     if min_tier_rank is not None and other_tier < min_tier_rank:
                         continue
@@ -5282,7 +5313,7 @@ class App(tk.Tk):
 
                 item_spell = (item.get('Spell') or '').lower()
                 item_type = (item.get('Type') or '').lower()
-                item_tier = _spell_tier_rank(item_spell)
+                item_tier = _item_tier_rank(item_spell)
                 if item_tier > 0:
                     if min_tier_rank is not None and item_tier < min_tier_rank:
                         continue
@@ -5407,7 +5438,7 @@ class App(tk.Tk):
                                 if _spell_base((it.get('Spell') or '').lower()) == spell), None)
             if actual_item is None:
                 continue
-            actual_rank = _spell_tier_rank((actual_item.get('Spell') or '').lower())
+            actual_rank = _item_tier_rank((actual_item.get('Spell') or '').lower())
             if actual_rank != _TIER_RANK[tier]:
                 actual_label = next((r for r, n in _TIER_RANK.items() if n == actual_rank), 'untiered')
                 unmatched_priority_tiers.append(
