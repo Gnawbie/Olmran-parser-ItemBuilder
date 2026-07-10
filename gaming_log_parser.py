@@ -842,9 +842,10 @@ SPELL_CATEGORIES = {
                        'Volley.enhance'],
     'Shields/Buffs':  ['Protect', 'Blur', 'Shield', 'Vitalize', 'Regenerate',
                       'Bleed.resist', 'Disease.resist', 'Poison.resist'],
-    'General Skills': ['All.weapons.enhance', 'Chaos.crush', 'Climb.enhance', 'Hide.enhance', 'Jump.enhance',
-                       'Leathers.enhance', 'Percept.enhance', 'Platemail.enhance', 'Slash.enhance', 'Sneak.enhance',
-                       'Swim.enhance', 'Thrust.enhance', 'Weapons.enhance'],
+    'General Skills': ['Platemail.enhance', 'Leathers.enhance', 'Thrust.enhance', 'Chaos.crush',
+                       'Slash.enhance', 'All.weapons.enhance', 'Weapons.enhance',
+                       'Climb.enhance', 'Hide.enhance', 'Jump.enhance', 'Swim.enhance',
+                       'Percept.enhance', 'Sneak.enhance'],
     # Protects use minor/normal/improved instead of i/ii/iii - minor and
     # improved are a PREFIX on the spell (e.g. "minor.cold.protect"), not a
     # suffix; "normal" is the bare spell name with no prefix at all.
