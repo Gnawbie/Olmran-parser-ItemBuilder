@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.12"
+VERSION = "5.0.13"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -898,6 +898,12 @@ DEFENSE_RANK = {level: i for i, level in enumerate(DEFENSE_LEVELS)}
 
 SIGIL_TYPES = ['Cold', 'Earth', 'Fire', 'Lightning', 'Pain', 'Shock', 'Water']
 
+# The 6 armor body slots that have their own per-slot Sigil dropdown in Armor
+# Constraints (weapon/shield/jewel have their own separate Sigil concepts -
+# see MELEE_SIGIL_VALUES/SHIELD_SIGIL_VALUES below) - also what Wanted
+# Sigils is scoped to, since it's built as part of Armor Constraints.
+ARMOR_SIGIL_SLOTS = ['head', 'cloak', 'body', 'hands', 'legs', 'feet']
+
 # Weapon combo damage-type dropdowns (Dual-Wield 1h, 1h/Shield, 2h/Shield).
 # The item list's Type column spells these as "slash"/"thrust"/"crush" (e.g.
 # "offhand slash 1h"), not "slashing"/"thrusting"/"crushing", so matching
@@ -1033,6 +1039,40 @@ def _item_tier_rank(item_spell):
     if s in PROTECT_SPELLS:
         return _TIER_RANK['ii']
     return _spell_tier_rank(s)
+
+
+_SIGIL_BASE_PREFIX = 'sigil::'
+
+
+def _sigil_pseudo_base(sigil_name):
+    """Wraps a Wanted Sigil's name into a pseudo spell-base string, so it can
+    ride through the same wanted-base/coverage bookkeeping (wanted_bases,
+    base_list, base_bit, covered_bases) that Wanted Spells and Priority
+    Spells already use in _find_optimal_build - see _base_matches_item for
+    how it's actually matched against an item."""
+    return _SIGIL_BASE_PREFIX + sigil_name.strip().lower()
+
+
+def _base_display_name(base):
+    """Human-readable form of a wanted-base string for status/warning text -
+    a Wanted Sigil's pseudo-base (see _sigil_pseudo_base) reads as raw
+    "sigil::cold" otherwise; everything else is shown as-is."""
+    if base.startswith(_SIGIL_BASE_PREFIX):
+        return f"{base[len(_SIGIL_BASE_PREFIX):].title()} Sigil"
+    return base
+
+
+def _base_matches_item(base, item_spell, item_sigil, lookup_slot):
+    """True if `base` - a wanted spell's base, or a Wanted Sigil's pseudo-
+    base (see _sigil_pseudo_base) - is satisfied by this item. Spell bases
+    match by substring against the item's own Spell value, same as always;
+    sigil pseudo-bases instead match the item's own Sigil value, and only
+    for the armor slots Wanted Sigils applies to (see ARMOR_SIGIL_SLOTS) -
+    weapon/shield/jewel items carry a Sigil too, but Wanted Sigils is built
+    as part of Armor Constraints and scoped to match."""
+    if base.startswith(_SIGIL_BASE_PREFIX):
+        return lookup_slot in ARMOR_SIGIL_SLOTS and item_sigil == base[len(_SIGIL_BASE_PREFIX):]
+    return base in item_spell
 
 
 class ItemMatchDialog(tk.Toplevel):
@@ -2336,9 +2376,14 @@ class App(tk.Tk):
         # its own bordered box, anchored to the top and sized to fit its
         # content, rather than left to sit in the sub-tab's full (much
         # taller) notebook viewport - keeps the border tight around what's
-        # actually here instead of one big mostly-empty area.
-        armor_box = ttk.LabelFrame(self.build_armor_subtab, text="Armor Type Constraints", padding=8)
-        armor_box.pack(anchor='n', fill='x')
+        # actually here instead of one big mostly-empty area. Wanted Sigils
+        # (below) sits beside it in the empty space to the right, same
+        # side-by-side pattern as Weapon Constraints/Melee Weapon Constraints.
+        armor_top_row = ttk.Frame(self.build_armor_subtab)
+        armor_top_row.pack(anchor='n', fill='x')
+
+        armor_box = ttk.LabelFrame(armor_top_row, text="Armor Type Constraints", padding=8)
+        armor_box.pack(side='left', anchor='n')
 
         armor_header = ttk.Frame(armor_box)
         armor_header.pack(fill='x', pady=(0,4))
@@ -2467,6 +2512,42 @@ class App(tk.Tk):
             ttk.Label(sigil_block, text="Sigil:").pack(side='left', padx=(0,4))
             ttk.Combobox(sigil_block, textvariable=sigil_var, values=['Any'] + SIGIL_TYPES,
                         state='readonly', width=11).pack(side='left')
+
+        # Wanted Sigils - same "add to a list, search tries to cover each
+        # one" behavior as Wanted Spells (see wanted_block above), but for
+        # the armor Sigil column instead of Spell: picking one here makes an
+        # otherwise spell-less armor piece (many carry only a Sigil, no
+        # Spell) a valid, actively-sought candidate for head/cloak/body/
+        # hands/legs/feet - the per-slot "Sigil:" dropdowns above are only a
+        # soft tie-break among items that already qualify some other way, so
+        # they can't do this on their own. Uses the same SIGIL_TYPES list
+        # already used for armor throughout (the per-slot Sigil dropdowns,
+        # Shield Constraints, Melee Weapon Constraints).
+        wanted_sigil_box = ttk.LabelFrame(armor_top_row, text="Wanted Sigils", padding=8)
+        wanted_sigil_box.pack(side='left', anchor='n', padx=(12,0), fill='y')
+
+        wanted_sigil_input_frame = ttk.Frame(wanted_sigil_box)
+        wanted_sigil_input_frame.pack(fill='x')
+        self.wanted_sigil_var = tk.StringVar(value='')
+        ttk.Combobox(wanted_sigil_input_frame, textvariable=self.wanted_sigil_var, values=SIGIL_TYPES,
+                    state='readonly', width=10).pack(side='left', padx=(0,4))
+        ttk.Button(wanted_sigil_input_frame, text="Add to List",
+                  command=self._add_wanted_sigil).pack(side='left')
+
+        wanted_sigil_scroll_frame = ttk.Frame(wanted_sigil_box)
+        wanted_sigil_scroll_frame.pack(fill='both', expand=True, pady=(6,4))
+
+        self.wanted_sigils_data = []
+        self.wanted_sigils_text = tk.Text(wanted_sigil_scroll_frame, height=4, width=22, wrap='word',
+                                          cursor='arrow', state='disabled')
+        wanted_sigil_scroll = ttk.Scrollbar(wanted_sigil_scroll_frame, orient='vertical',
+                                            command=self.wanted_sigils_text.yview)
+        self.wanted_sigils_text.configure(yscrollcommand=wanted_sigil_scroll.set)
+        self.wanted_sigils_text.pack(side='left', fill='both', expand=True)
+        wanted_sigil_scroll.pack(side='right', fill='y')
+
+        ttk.Button(wanted_sigil_box, text="Clear All",
+                  command=self._clear_wanted_sigils).pack(anchor='w')
 
         # Load saved armor defaults
         self._load_armor_defaults()
@@ -3370,6 +3451,42 @@ class App(tk.Tk):
         text.config(state='disabled')
         self._refresh_priority_spell_options()
 
+    def _add_wanted_sigil(self):
+        """Add the sigil selected in Armor Constraints' dropdown to the wanted sigils list"""
+        sigil = self.wanted_sigil_var.get().strip()
+        if not sigil:
+            return
+        if sigil not in self.wanted_sigils_data:
+            self.wanted_sigils_data.append(sigil)
+            self._render_wanted_sigil_chips()
+
+    def _remove_wanted_sigil(self, sigil):
+        """Remove one sigil chip (called by a chip's own ✕ button)"""
+        if sigil in self.wanted_sigils_data:
+            self.wanted_sigils_data.remove(sigil)
+            self._render_wanted_sigil_chips()
+
+    def _clear_wanted_sigils(self):
+        """Clear all sigils from the wanted sigils list"""
+        self.wanted_sigils_data = []
+        self._render_wanted_sigil_chips()
+
+    def _render_wanted_sigil_chips(self):
+        """Redraw the Wanted Sigils area as chips, same flow-and-wrap style as Wanted Spells."""
+        text = self.wanted_sigils_text
+        text.config(state='normal')
+        text.delete('1.0', tk.END)
+        for sigil in self.wanted_sigils_data:
+            chip = ttk.Frame(text, relief='raised', borderwidth=1)
+            ttk.Label(chip, text=sigil, padding=(4, 1)).pack(side='left')
+            remove_lbl = ttk.Label(chip, text='✕', padding=(4, 1),
+                                   foreground='#a33', cursor='hand2')
+            remove_lbl.pack(side='left')
+            remove_lbl.bind('<Button-1>', lambda e, s=sigil: self._remove_wanted_sigil(s))
+            text.window_create(tk.END, window=chip)
+            text.insert(tk.END, ' ')
+        text.config(state='disabled')
+
     def _refresh_priority_spell_options(self):
         """Rebuild the Priority Spell and Priority Tier spell dropdowns from
         whatever's currently in Wanted Spells and Required Items, shown by
@@ -4121,7 +4238,7 @@ class App(tk.Tk):
             messagebox.showwarning("No Results", "No build results to export. Run a search first.")
             return
         headers, rows = self._get_export_data()
-        self._export_data_as(headers, rows, default_name="Build_Results")
+        self._export_data_as(headers, rows, default_name="Build_Results", build_name="Build Results")
 
     def _export_saved_build(self, index):
         """Save one specific Saved Builds panel as a spreadsheet, HTML page,
@@ -4132,11 +4249,17 @@ class App(tk.Tk):
         headers = [h for h in save['headers'] if h != 'Div']
         div_idx = list(save['headers']).index('Div')
         rows = [[v for i, v in enumerate(row) if i != div_idx] for row in save['rows']]
-        self._export_data_as(headers, rows, default_name=save['name'].get() or "Build_Results")
+        build_name = save['name'].get().strip() or "Build Results"
+        self._export_data_as(headers, rows, default_name=build_name, build_name=build_name)
 
-    def _export_data_as(self, headers, rows, default_name):
+    def _export_data_as(self, headers, rows, default_name, build_name=None):
         """Shared "ask for a file, save in whichever format was picked" logic
-        used by both the live Results tab and each Saved Builds panel."""
+        used by both the live Results tab and each Saved Builds panel.
+        build_name is shown as a title at the top of the exported document
+        itself (not just baked into the suggested filename below), so an
+        exported file is still identifiable after being renamed, printed, or
+        forwarded on its own."""
+        build_name = build_name or default_name
         from datetime import datetime
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -4160,13 +4283,13 @@ class App(tk.Tk):
 
         try:
             if ext == '.xlsx':
-                self._save_results_xlsx(path, headers, rows)
+                self._save_results_xlsx(path, headers, rows, build_name)
             elif ext in ('.html', '.htm'):
-                self._save_results_html(path, headers, rows)
+                self._save_results_html(path, headers, rows, build_name)
             elif ext == '.png':
-                self._save_results_image(path, headers, rows)
+                self._save_results_image(path, headers, rows, build_name)
             elif ext == '.txt':
-                self._save_results_text(path, headers, rows)
+                self._save_results_text(path, headers, rows, build_name)
             else:
                 messagebox.showerror("Unknown Format",
                     f"Unrecognized file extension '{ext}'. Use .xlsx, .html, .png, or .txt.")
@@ -4179,19 +4302,26 @@ class App(tk.Tk):
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export results:\n{str(e)}")
 
-    def _save_results_xlsx(self, path, headers, rows):
-        """Save as an Excel spreadsheet"""
+    def _save_results_xlsx(self, path, headers, rows, build_name):
+        """Save as an Excel spreadsheet, with build_name as a title row above the headers"""
         from openpyxl.styles import Font, PatternFill, Alignment
 
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.title = "Build Results"
-        ws.append(headers)
+        ws.title = (re.sub(r'[\[\]:*?/\\]', '_', build_name).strip()[:31]) or "Build Results"
 
+        ws.append([build_name])
+        title_cell = ws.cell(1, 1)
+        title_cell.font = Font(name='Arial', size=14, bold=True)
+        title_cell.alignment = Alignment(horizontal='left', vertical='center')
+        if len(headers) > 1:
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+
+        ws.append(headers)
         hdr_font = Font(name='Arial', size=11, bold=True, color='FFFFFF')
         hdr_fill = PatternFill(fill_type='solid', start_color='4472C4', end_color='4472C4')
         for col_idx, header in enumerate(headers, 1):
-            cell = ws.cell(1, col_idx)
+            cell = ws.cell(2, col_idx)
             cell.font = hdr_font
             cell.fill = hdr_fill
             cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -4199,27 +4329,31 @@ class App(tk.Tk):
         for row in rows:
             ws.append(row)
 
-        for col in ws.columns:
+        # Indexed by column number rather than col[0].column_letter - the
+        # title row's merged cells (columns 2+) are MergedCell placeholders
+        # there, which don't carry a column_letter of their own.
+        for col_idx, col in enumerate(ws.columns, 1):
             max_length = max((len(str(c.value)) for c in col if c.value is not None), default=0)
-            ws.column_dimensions[col[0].column_letter].width = min(max_length + 2, 50)
+            ws.column_dimensions[get_column_letter(col_idx)].width = min(max_length + 2, 50)
 
-        ws.freeze_panes = 'A2'
+        ws.freeze_panes = 'A3'
         wb.save(path)
 
-    def _save_results_html(self, path, headers, rows):
-        """Save as a styled standalone HTML page"""
+    def _save_results_html(self, path, headers, rows, build_name):
+        """Save as a styled standalone HTML page, with build_name as the page title/heading"""
         import html as html_module
 
+        escaped_name = html_module.escape(str(build_name))
         parts = [
             '<!DOCTYPE html><html><head><meta charset="utf-8">',
-            '<title>Build Results</title><style>',
+            f'<title>{escaped_name}</title><style>',
             'body{font-family:Arial,sans-serif;background:#f4f4f4;padding:24px;}',
             'table{border-collapse:collapse;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.15);}',
             'th,td{border:1px solid #ccc;padding:6px 12px;text-align:left;font-size:13px;white-space:nowrap;}',
             'th{background:#4472C4;color:#fff;}',
             'tr:nth-child(even){background:#f7f7f7;}',
             '</style></head><body>',
-            '<h2>Build Results</h2><table><tr>',
+            f'<h2>{escaped_name}</h2><table><tr>',
         ]
         parts.append(''.join(f'<th>{html_module.escape(str(h))}</th>' for h in headers))
         parts.append('</tr>')
@@ -4230,20 +4364,24 @@ class App(tk.Tk):
         with open(path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(parts))
 
-    def _save_results_image(self, path, headers, rows):
+    def _save_results_image(self, path, headers, rows, build_name):
         """Save as a rendered PNG table image (drawn directly, not a screen
-        capture, so it doesn't depend on the window being visible/unobstructed)"""
+        capture, so it doesn't depend on the window being visible/unobstructed),
+        with build_name as a title band above the table"""
         from PIL import Image, ImageDraw, ImageFont
 
         try:
             font = ImageFont.truetype("arial.ttf", 14)
             font_bold = ImageFont.truetype("arialbd.ttf", 14)
+            font_title = ImageFont.truetype("arialbd.ttf", 20)
         except Exception:
             font = ImageFont.load_default()
             font_bold = font
+            font_title = font
 
         padding = 10
         row_height = 26
+        title_height = 40
         measurer = ImageDraw.Draw(Image.new('RGB', (10, 10)))
         col_widths = []
         for i, header in enumerate(headers):
@@ -4252,19 +4390,22 @@ class App(tk.Tk):
                 width = max(width, measurer.textlength(str(row[i]), font=font))
             col_widths.append(int(width) + padding * 2)
 
-        total_width = sum(col_widths)
-        total_height = row_height * (len(rows) + 1)
+        total_width = max(sum(col_widths), int(measurer.textlength(str(build_name), font=font_title)) + padding * 2)
+        total_height = title_height + row_height * (len(rows) + 1)
 
         img = Image.new('RGB', (total_width, total_height), 'white')
         draw = ImageDraw.Draw(img)
 
-        draw.rectangle([0, 0, total_width, row_height], fill=(68, 114, 196))
+        draw.text((padding, (title_height - 20) // 2), str(build_name), fill='black', font=font_title)
+        draw.line([(0, title_height), (total_width, title_height)], fill=(200, 200, 200))
+
+        draw.rectangle([0, title_height, total_width, title_height + row_height], fill=(68, 114, 196))
         x = 0
         for i, header in enumerate(headers):
-            draw.text((x + padding, (row_height - 14) // 2), str(header), fill='white', font=font_bold)
+            draw.text((x + padding, title_height + (row_height - 14) // 2), str(header), fill='white', font=font_bold)
             x += col_widths[i]
 
-        y = row_height
+        y = title_height + row_height
         for r_idx, row in enumerate(rows):
             if r_idx % 2 == 1:
                 draw.rectangle([0, y, total_width, y + row_height], fill=(245, 245, 245))
@@ -4277,17 +4418,18 @@ class App(tk.Tk):
         x = 0
         for w in col_widths:
             x += w
-            draw.line([(x, 0), (x, total_height)], fill=(200, 200, 200))
-        y = 0
+            draw.line([(x, title_height), (x, total_height)], fill=(200, 200, 200))
+        y = title_height
         for _ in range(len(rows) + 2):
             draw.line([(0, y), (total_width, y)], fill=(200, 200, 200))
             y += row_height
 
         img.save(path)
 
-    def _save_results_text(self, path, headers, rows):
+    def _save_results_text(self, path, headers, rows, build_name):
         """Save as a plain text document with aligned, fixed-width columns
-        so the formatting/structure survives in any text editor."""
+        so the formatting/structure survives in any text editor, with
+        build_name as the first line."""
         col_widths = []
         for i, header in enumerate(headers):
             width = len(str(header))
@@ -4298,7 +4440,7 @@ class App(tk.Tk):
         def format_row(values):
             return '  '.join(str(v).ljust(col_widths[i]) for i, v in enumerate(values))
 
-        lines = ["Build Results", ""]
+        lines = [str(build_name), ""]
         header_line = format_row(headers)
         lines.append(header_line)
         lines.append('-' * len(header_line))
@@ -4335,8 +4477,9 @@ class App(tk.Tk):
             build[target] = item
 
             item_spell = (item.get('Spell') or '').lower()
+            item_sigil = (item.get('Sigil') or '').strip().lower()
             for base in wanted_bases:
-                if base in item_spell:
+                if _base_matches_item(base, item_spell, item_sigil, item_slot):
                     covered_bases.add(base)
 
             if 'crafted' in (item.get('Realm') or '').strip().lower():
@@ -4363,8 +4506,9 @@ class App(tk.Tk):
         # they're folded in here before any item filtering happens.
         wanted_spells = list(self.wanted_spells_data)
         priority_spells = list(self.priority_spells_data)
-        if not wanted_spells and not self.required_items and not priority_spells:
-            messagebox.showwarning("No Spells", "Please add at least one wanted spell, priority spell, or required item")
+        wanted_sigils = list(self.wanted_sigils_data)
+        if not wanted_spells and not self.required_items and not priority_spells and not wanted_sigils:
+            messagebox.showwarning("No Spells", "Please add at least one wanted spell, priority spell, wanted sigil, or required item")
             return
 
         # Priority Tiers - each entry pairs a specific spell with a specific
@@ -4401,6 +4545,12 @@ class App(tk.Tk):
         # item as a candidate, not just an exact tier match.
         wanted_spell_bases = {_spell_base(w) for w in wanted_spells}
         wanted_spell_bases.update(priority_spells)
+
+        # Wanted Sigils - lowercased for the early candidate filter below,
+        # same idea as wanted_spell_bases but matched against an item's own
+        # Sigil value instead of its Spell, and only for the armor slots
+        # Wanted Sigils applies to (see ARMOR_SIGIL_SLOTS).
+        wanted_sigils_lower = {s.strip().lower() for s in wanted_sigils}
 
         # Clear previous results
         self.search_results_tv.delete(*self.search_results_tv.get_children())
@@ -4631,6 +4781,7 @@ class App(tk.Tk):
             item_slot = (item.get('Slot') or '').lower()
             item_spell = (item.get('Spell') or '').lower()
             item_type = (item.get('Type') or '').lower()
+            item_sigil = (item.get('Sigil') or '').strip().lower()
             item_realm = (item.get('Realm') or '').strip()
 
             # Claws are stored in the source data as Slot=weapon/Type=claw,
@@ -4678,9 +4829,17 @@ class App(tk.Tk):
                     continue
 
 
+            # Wanted Sigils - many armor pieces carry a Sigil but no Spell at
+            # all, so without this an item that only satisfies a Wanted
+            # Sigil would never even become a candidate below. Scoped to the
+            # armor slots Wanted Sigils applies to (see ARMOR_SIGIL_SLOTS).
+            has_wanted_sigil = (bool(wanted_sigils_lower) and item_slot in ARMOR_SIGIL_SLOTS
+                                and item_sigil in wanted_sigils_lower)
+
             # Skip items without spells - unless a weapon/shield combo wants
-            # this slot filled regardless (most real weapons have no spell).
-            if not item_spell and not is_combo_mandated_slot and not is_always_fill_slot:
+            # this slot filled regardless (most real weapons have no spell),
+            # or the item is otherwise wanted for its Sigil alone.
+            if not item_spell and not has_wanted_sigil and not is_combo_mandated_slot and not is_always_fill_slot:
                 continue
 
             # Check if item's spell matches any wanted or priority spell's
@@ -4692,7 +4851,7 @@ class App(tk.Tk):
                     has_wanted_spell = True
                     break
 
-            if not has_wanted_spell and not is_combo_mandated_slot and not is_always_fill_slot:
+            if not has_wanted_spell and not has_wanted_sigil and not is_combo_mandated_slot and not is_always_fill_slot:
                 continue
 
             # Apply level constraints
@@ -4857,6 +5016,14 @@ class App(tk.Tk):
         for p in priority_spells:
             wanted_bases.setdefault(p, []).append(p)
 
+        # Wanted Sigils - folded in as their own pseudo-base (see
+        # _sigil_pseudo_base/_base_matches_item), same "actively searched
+        # for and tracked as covered" treatment as Priority Spells above,
+        # just matched against an item's Sigil instead of its Spell.
+        for s in wanted_sigils:
+            sigil_base = _sigil_pseudo_base(s)
+            wanted_bases.setdefault(sigil_base, []).append(sigil_base)
+
         # Specific Level fallback - for each base spell, the set of tiers
         # explicitly requested (a bare/"(any)" chip or a Priority Spell
         # contributes no tier, leaving this empty - tier is already
@@ -4950,7 +5117,10 @@ class App(tk.Tk):
 
             if best_item is not None:
                 build[slot] = best_item
-                matched_bases = [base for base in wanted_bases if base in (best_item.get('Spell') or '').lower()]
+                best_item_spell = (best_item.get('Spell') or '').lower()
+                best_item_sigil = (best_item.get('Sigil') or '').strip().lower()
+                matched_bases = [base for base in wanted_bases
+                                 if _base_matches_item(base, best_item_spell, best_item_sigil, slot)]
                 covered_bases.update(matched_bases)
                 if 'crafted' in (best_item.get('Realm') or '').strip().lower():
                     crafted_count += 1
@@ -5050,6 +5220,7 @@ class App(tk.Tk):
             for item in items:
                 item_spell = (item.get('Spell') or '').lower()
                 item_type = (item.get('Type') or '').lower()
+                item_sigil = (item.get('Sigil') or '').strip().lower()
                 item_tier = _item_tier_rank(item_spell)
                 if item_tier > 0:
                     if min_tier_rank is not None and item_tier < min_tier_rank:
@@ -5064,7 +5235,8 @@ class App(tk.Tk):
 
                 item_bitmask = 0
                 for base in base_list:
-                    if base in item_spell and _specific_level_qualifies(base, item_level_num, item_tier):
+                    if (_base_matches_item(base, item_spell, item_sigil, lookup_slot)
+                            and _specific_level_qualifies(base, item_level_num, item_tier)):
                         item_bitmask |= base_bit[base]
                 # Zero-coverage items are normally useless (they can never
                 # win over "leave the slot empty"), except weapon/shield
@@ -5191,8 +5363,9 @@ class App(tk.Tk):
                 continue
             build[slot] = item
             item_spell = (item.get('Spell') or '').lower()
+            item_sigil = (item.get('Sigil') or '').strip().lower()
             for base in base_list:
-                if base in item_spell and base not in covered_bases:
+                if _base_matches_item(base, item_spell, item_sigil, slot) and base not in covered_bases:
                     covered_bases.add(base)
                     base_covered_by_slot[base] = slot
             if 'crafted' in (item.get('Realm') or '').strip().lower():
@@ -5255,9 +5428,10 @@ class App(tk.Tk):
                     continue
 
                 other_type = (other.get('Type') or '').lower()
+                other_sigil = (other.get('Sigil') or '').strip().lower()
                 new_bases = 0
                 for base in base_list:
-                    if base in other_spell:
+                    if _base_matches_item(base, other_spell, other_sigil, lookup_slot):
                         new_bases |= base_bit[base]
                 new_bases &= ~covered_without_slot
                 if new_bases != this_slot_bitmask:
@@ -5313,6 +5487,7 @@ class App(tk.Tk):
 
                 item_spell = (item.get('Spell') or '').lower()
                 item_type = (item.get('Type') or '').lower()
+                item_sigil = (item.get('Sigil') or '').strip().lower()
                 item_tier = _item_tier_rank(item_spell)
                 if item_tier > 0:
                     if min_tier_rank is not None and item_tier < min_tier_rank:
@@ -5325,7 +5500,8 @@ class App(tk.Tk):
                 except (ValueError, TypeError):
                     item_level_num = 0
 
-                matched_bases = [base for base in wanted_bases if base in item_spell]
+                matched_bases = [base for base in wanted_bases
+                                 if _base_matches_item(base, item_spell, item_sigil, lookup_slot)]
 
                 priority_matches = sum(1 for p in priority_spells if p in item_spell)
                 item_base = _spell_base(item_spell)
@@ -5410,7 +5586,7 @@ class App(tk.Tk):
         coverage = len(covered_bases)
         total = len(wanted_bases)
         status = (f"Optimal build covers {coverage}/{total} wanted spells | "
-                   f"Spells covered: {', '.join(sorted(covered_bases))}")
+                   f"Spells covered: {', '.join(sorted(_base_display_name(b) for b in covered_bases))}")
         if self.slot_alternates:
             status += f" | {len(self.slot_alternates)} slot(s) have equally-good alternate items"
         if len(self.build_variants) > 1:
@@ -5424,7 +5600,7 @@ class App(tk.Tk):
         # "No suitable item found" row). Shown in the status line instead
         # of an interrupting popup.
         if uncovered:
-            status += f" | No items found for: {', '.join(uncovered)}"
+            status += f" | No items found for: {', '.join(_base_display_name(b) for b in uncovered)}"
         self.search_status.config(text=status)
 
         # Warn about any Priority Tier that couldn't actually be honored - the
