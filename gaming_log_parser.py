@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.13"
+VERSION = "5.0.14"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1039,40 +1039,6 @@ def _item_tier_rank(item_spell):
     if s in PROTECT_SPELLS:
         return _TIER_RANK['ii']
     return _spell_tier_rank(s)
-
-
-_SIGIL_BASE_PREFIX = 'sigil::'
-
-
-def _sigil_pseudo_base(sigil_name):
-    """Wraps a Wanted Sigil's name into a pseudo spell-base string, so it can
-    ride through the same wanted-base/coverage bookkeeping (wanted_bases,
-    base_list, base_bit, covered_bases) that Wanted Spells and Priority
-    Spells already use in _find_optimal_build - see _base_matches_item for
-    how it's actually matched against an item."""
-    return _SIGIL_BASE_PREFIX + sigil_name.strip().lower()
-
-
-def _base_display_name(base):
-    """Human-readable form of a wanted-base string for status/warning text -
-    a Wanted Sigil's pseudo-base (see _sigil_pseudo_base) reads as raw
-    "sigil::cold" otherwise; everything else is shown as-is."""
-    if base.startswith(_SIGIL_BASE_PREFIX):
-        return f"{base[len(_SIGIL_BASE_PREFIX):].title()} Sigil"
-    return base
-
-
-def _base_matches_item(base, item_spell, item_sigil, lookup_slot):
-    """True if `base` - a wanted spell's base, or a Wanted Sigil's pseudo-
-    base (see _sigil_pseudo_base) - is satisfied by this item. Spell bases
-    match by substring against the item's own Spell value, same as always;
-    sigil pseudo-bases instead match the item's own Sigil value, and only
-    for the armor slots Wanted Sigils applies to (see ARMOR_SIGIL_SLOTS) -
-    weapon/shield/jewel items carry a Sigil too, but Wanted Sigils is built
-    as part of Armor Constraints and scoped to match."""
-    if base.startswith(_SIGIL_BASE_PREFIX):
-        return lookup_slot in ARMOR_SIGIL_SLOTS and item_sigil == base[len(_SIGIL_BASE_PREFIX):]
-    return base in item_spell
 
 
 class ItemMatchDialog(tk.Toplevel):
@@ -3166,8 +3132,8 @@ class App(tk.Tk):
         results_frame = ttk.LabelFrame(t, text="Suggested Build", padding=10)
         results_frame.pack(fill='both', expand=True)
         
-        cols = ('Slot', 'Item', 'Type', 'Spell', 'Level', 'Mob', 'Area', 'Div', 'Alt Options')
-        col_widths = {'Slot': 55, 'Item': 200, 'Type': 60, 'Spell': 100, 'Level': 45,
+        cols = ('Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Mob', 'Area', 'Div', 'Alt Options')
+        col_widths = {'Slot': 55, 'Item': 200, 'Type': 60, 'Spell': 100, 'Sigil': 60, 'Level': 45,
                      'Mob': 120, 'Area': 120, 'Alt Options': 280}
         self.search_results_tv = ttk.Treeview(results_frame, columns=cols,
                                              show='headings', height=20)
@@ -3991,7 +3957,7 @@ class App(tk.Tk):
                                     else 'off-hand' if slot == 'weapon_off' else slot)
                     rows.append((
                         display_slot.title(), 'No suitable item found',
-                        '', '', '', '', '', '████████', '(none)'
+                        '', '', '', '', '', '', '████████', '(none)'
                     ))
                 continue
             item = build_dict[slot]
@@ -4038,6 +4004,7 @@ class App(tk.Tk):
                 item.get('Item', ''),
                 item.get('Type', ''),
                 item.get('Spell', ''),
+                item.get('Sigil', ''),
                 item.get('Level', ''),
                 item.get('Mob', ''),
                 item.get('Area', ''),
@@ -4221,13 +4188,13 @@ class App(tk.Tk):
         """Collect the currently displayed results as (headers, rows), with
         the visual Div spacer column and any divider rows (between stacked
         build variants) stripped out - shared by every "Save As" format."""
-        headers = ['Slot', 'Item', 'Type', 'Spell', 'Level', 'Mob', 'Area', 'Alt Options']
+        headers = ['Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Mob', 'Area', 'Alt Options']
         rows = []
         for item_id in self.search_results_tv.get_children():
             values = list(self.search_results_tv.item(item_id)['values'])
             if str(values[0]).startswith('█'):
                 continue  # divider row between stacked build variants
-            del values[7]  # drop the Div spacer column
+            del values[8]  # drop the Div spacer column
             rows.append(values)
         return headers, rows
 
@@ -4477,9 +4444,8 @@ class App(tk.Tk):
             build[target] = item
 
             item_spell = (item.get('Spell') or '').lower()
-            item_sigil = (item.get('Sigil') or '').strip().lower()
             for base in wanted_bases:
-                if _base_matches_item(base, item_spell, item_sigil, item_slot):
+                if base in item_spell:
                     covered_bases.add(base)
 
             if 'crafted' in (item.get('Realm') or '').strip().lower():
@@ -5016,14 +4982,6 @@ class App(tk.Tk):
         for p in priority_spells:
             wanted_bases.setdefault(p, []).append(p)
 
-        # Wanted Sigils - folded in as their own pseudo-base (see
-        # _sigil_pseudo_base/_base_matches_item), same "actively searched
-        # for and tracked as covered" treatment as Priority Spells above,
-        # just matched against an item's Sigil instead of its Spell.
-        for s in wanted_sigils:
-            sigil_base = _sigil_pseudo_base(s)
-            wanted_bases.setdefault(sigil_base, []).append(sigil_base)
-
         # Specific Level fallback - for each base spell, the set of tiers
         # explicitly requested (a bare/"(any)" chip or a Priority Spell
         # contributes no tier, leaving this empty - tier is already
@@ -5117,10 +5075,7 @@ class App(tk.Tk):
 
             if best_item is not None:
                 build[slot] = best_item
-                best_item_spell = (best_item.get('Spell') or '').lower()
-                best_item_sigil = (best_item.get('Sigil') or '').strip().lower()
-                matched_bases = [base for base in wanted_bases
-                                 if _base_matches_item(base, best_item_spell, best_item_sigil, slot)]
+                matched_bases = [base for base in wanted_bases if base in (best_item.get('Spell') or '').lower()]
                 covered_bases.update(matched_bases)
                 if 'crafted' in (best_item.get('Realm') or '').strip().lower():
                     crafted_count += 1
@@ -5201,6 +5156,12 @@ class App(tk.Tk):
         W_MELEE_PRIORITY_MATCH = 10**24
         W_SIGIL_LEVEL = 10**30
         W_SIGIL_MATCH = 10**36
+        # Wanted Sigils - deliberately below W_TIER_PRIORITY/W_PRIORITY/
+        # W_COVERAGE so a Wanted Spell always wins a slot over a Wanted
+        # Sigil when both are available (sigils are a secondary search),
+        # but above the passive per-slot Sigil preference dropdown since
+        # this is a more deliberate ask than that soft tie-break.
+        W_WANTED_SIGIL = 10**39
         W_TIER_PRIORITY = 10**42
         W_PRIORITY = 10**48
         W_COVERAGE = 10**54
@@ -5235,15 +5196,28 @@ class App(tk.Tk):
 
                 item_bitmask = 0
                 for base in base_list:
-                    if (_base_matches_item(base, item_spell, item_sigil, lookup_slot)
-                            and _specific_level_qualifies(base, item_level_num, item_tier)):
+                    if base in item_spell and _specific_level_qualifies(base, item_level_num, item_tier):
                         item_bitmask |= base_bit[base]
+
+                # Wanted Sigils - unlike Wanted Spells, sigils don't stack
+                # toward one shared "covered" requirement (see wanted_bases
+                # above, which is spell-only): every armor slot that can
+                # carry a wanted Sigil is independently worth taking, so
+                # this is a per-slot score bonus (added to step_score below
+                # via W_WANTED_SIGIL) rather than a bit in item_bitmask -
+                # duplicates across slots are fine, even encouraged. Kept
+                # low enough in the weight ordering that a Wanted Spell
+                # always wins the slot when both are available.
+                wanted_sigil_match = 1 if (lookup_slot in ARMOR_SIGIL_SLOTS
+                                            and item_sigil in wanted_sigils_lower) else 0
+
                 # Zero-coverage items are normally useless (they can never
                 # win over "leave the slot empty"), except weapon/shield
-                # slots a combo has mandated be filled regardless of spell -
+                # slots a combo has mandated be filled regardless of spell,
+                # or an armor item that at least carries a Wanted Sigil -
                 # those still need a fallback candidate so the slot doesn't
                 # end up empty just because nothing on it grants a spell.
-                if not item_bitmask and lookup_slot not in ('weapon', 'weapon_off', 'shield'):
+                if not item_bitmask and not wanted_sigil_match and lookup_slot not in ('weapon', 'weapon_off', 'shield'):
                     continue
 
                 priority_matches = sum(1 for p in priority_spells if p in item_spell)
@@ -5266,14 +5240,14 @@ class App(tk.Tk):
                     _melee_constraint_score(item, item_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
 
                 sig = (item_bitmask, priority_matches, tier_priority_match, sigil_match,
-                       sigil_level, melee_priority_match, melee_match, defense_priority_match,
-                       item_tier, is_crafted)
+                       sigil_level, wanted_sigil_match, melee_priority_match, melee_match,
+                       defense_priority_match, item_tier, is_crafted)
                 prev = seen.get(sig)
                 if prev is None or item_level_num > prev[1]:
                     seen[sig] = (item, item_level_num)
 
             candidates_by_slot[lookup_slot] = [
-                (item, sig[0], sig[1], sig[2], sig[3], sig[4], sig[5], sig[6], sig[7], sig[8], lvl, sig[9])
+                (item, sig[0], sig[1], sig[2], sig[3], sig[4], sig[5], sig[6], sig[7], sig[8], sig[9], lvl, sig[10])
                 for sig, (item, lvl) in seen.items()
             ]
 
@@ -5294,14 +5268,15 @@ class App(tk.Tk):
             best_choice = None
 
             for (item, item_bitmask, priority_matches, tier_priority_match, sigil_match, sigil_level,
-                 melee_priority_match, melee_match, defense_priority_match, item_tier, item_level_num,
-                 is_crafted) in candidates_by_slot.get(lookup_slot, []):
+                 wanted_sigil_match, melee_priority_match, melee_match, defense_priority_match, item_tier,
+                 item_level_num, is_crafted) in candidates_by_slot.get(lookup_slot, []):
                 new_bases = item_bitmask & ~covered
                 # Same fallback as above: a combo-mandated weapon/shield slot
                 # can still take a zero-new-coverage item (any positive score
-                # from level/tier/etc. beats leaving the slot empty), but
-                # every other slot still requires contributing something new.
-                if not new_bases and lookup_slot not in ('weapon', 'weapon_off', 'shield'):
+                # from level/tier/etc. beats leaving the slot empty), and so
+                # can an armor item carrying a Wanted Sigil - every other
+                # slot still requires contributing something new.
+                if not new_bases and not wanted_sigil_match and lookup_slot not in ('weapon', 'weapon_off', 'shield'):
                     continue
                 if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
                     continue
@@ -5331,6 +5306,7 @@ class App(tk.Tk):
                 step_score = (bin(new_bases).count('1') * W_COVERAGE
                               + effective_priority_matches * W_PRIORITY
                               + effective_tier_priority_match * W_TIER_PRIORITY
+                              + wanted_sigil_match * W_WANTED_SIGIL
                               + sigil_match * W_SIGIL_MATCH
                               + sigil_level * W_SIGIL_LEVEL
                               + melee_priority_match * W_MELEE_PRIORITY_MATCH
@@ -5363,9 +5339,8 @@ class App(tk.Tk):
                 continue
             build[slot] = item
             item_spell = (item.get('Spell') or '').lower()
-            item_sigil = (item.get('Sigil') or '').strip().lower()
             for base in base_list:
-                if _base_matches_item(base, item_spell, item_sigil, slot) and base not in covered_bases:
+                if base in item_spell and base not in covered_bases:
                     covered_bases.add(base)
                     base_covered_by_slot[base] = slot
             if 'crafted' in (item.get('Realm') or '').strip().lower():
@@ -5401,6 +5376,8 @@ class App(tk.Tk):
             tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
             item_defense_priority_match = _defense_priority_score(item, lookup_slot)
             item_sigil_match, item_sigil_level = _sigil_priority_score(item, lookup_slot)
+            item_wanted_sigil_match = 1 if (lookup_slot in ARMOR_SIGIL_SLOTS
+                                             and (item.get('Sigil') or '').strip().lower() in wanted_sigils_lower) else 0
             item_melee_priority_match, item_melee_match = (
                 _melee_constraint_score(item, item_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
             try:
@@ -5408,7 +5385,7 @@ class App(tk.Tk):
             except (ValueError, TypeError):
                 item_level_num = 0
             chosen_key = (priority_matches, tier_priority_match, item_sigil_match, item_sigil_level,
-                          item_melee_priority_match, item_melee_match,
+                          item_wanted_sigil_match, item_melee_priority_match, item_melee_match,
                           item_defense_priority_match, item_tier, item_level_num)
 
             alternates = []
@@ -5428,10 +5405,9 @@ class App(tk.Tk):
                     continue
 
                 other_type = (other.get('Type') or '').lower()
-                other_sigil = (other.get('Sigil') or '').strip().lower()
                 new_bases = 0
                 for base in base_list:
-                    if _base_matches_item(base, other_spell, other_sigil, lookup_slot):
+                    if base in other_spell:
                         new_bases |= base_bit[base]
                 new_bases &= ~covered_without_slot
                 if new_bases != this_slot_bitmask:
@@ -5443,6 +5419,8 @@ class App(tk.Tk):
                 other_tier_priority_match = 1 if other_priority_tiers and other_tier in other_priority_tiers else 0
                 other_defense_priority_match = _defense_priority_score(other, lookup_slot)
                 other_sigil_match, other_sigil_level = _sigil_priority_score(other, lookup_slot)
+                other_wanted_sigil_match = 1 if (lookup_slot in ARMOR_SIGIL_SLOTS
+                                                  and (other.get('Sigil') or '').strip().lower() in wanted_sigils_lower) else 0
                 other_melee_priority_match, other_melee_match = (
                     _melee_constraint_score(other, other_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
                 try:
@@ -5450,7 +5428,7 @@ class App(tk.Tk):
                 except (ValueError, TypeError):
                     other_level_num = 0
                 other_key = (other_priority_matches, other_tier_priority_match, other_sigil_match, other_sigil_level,
-                            other_melee_priority_match, other_melee_match,
+                            other_wanted_sigil_match, other_melee_priority_match, other_melee_match,
                             other_defense_priority_match, other_tier, other_level_num)
                 if other_key != chosen_key:
                     continue
@@ -5487,7 +5465,6 @@ class App(tk.Tk):
 
                 item_spell = (item.get('Spell') or '').lower()
                 item_type = (item.get('Type') or '').lower()
-                item_sigil = (item.get('Sigil') or '').strip().lower()
                 item_tier = _item_tier_rank(item_spell)
                 if item_tier > 0:
                     if min_tier_rank is not None and item_tier < min_tier_rank:
@@ -5500,8 +5477,7 @@ class App(tk.Tk):
                 except (ValueError, TypeError):
                     item_level_num = 0
 
-                matched_bases = [base for base in wanted_bases
-                                 if _base_matches_item(base, item_spell, item_sigil, lookup_slot)]
+                matched_bases = [base for base in wanted_bases if base in item_spell]
 
                 priority_matches = sum(1 for p in priority_spells if p in item_spell)
                 item_base = _spell_base(item_spell)
@@ -5586,7 +5562,7 @@ class App(tk.Tk):
         coverage = len(covered_bases)
         total = len(wanted_bases)
         status = (f"Optimal build covers {coverage}/{total} wanted spells | "
-                   f"Spells covered: {', '.join(sorted(_base_display_name(b) for b in covered_bases))}")
+                   f"Spells covered: {', '.join(sorted(covered_bases))}")
         if self.slot_alternates:
             status += f" | {len(self.slot_alternates)} slot(s) have equally-good alternate items"
         if len(self.build_variants) > 1:
@@ -5600,7 +5576,7 @@ class App(tk.Tk):
         # "No suitable item found" row). Shown in the status line instead
         # of an interrupting popup.
         if uncovered:
-            status += f" | No items found for: {', '.join(_base_display_name(b) for b in uncovered)}"
+            status += f" | No items found for: {', '.join(uncovered)}"
         self.search_status.config(text=status)
 
         # Warn about any Priority Tier that couldn't actually be honored - the
@@ -5968,6 +5944,7 @@ class App(tk.Tk):
                 item.get('Item', ''),
                 item.get('Type', ''),
                 item.get('Spell', ''),
+                item.get('Sigil', ''),
                 item.get('Level', ''),
                 item.get('Mob', ''),
                 item.get('Area', ''),
