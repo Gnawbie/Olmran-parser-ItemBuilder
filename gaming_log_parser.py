@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.14"
+VERSION = "5.0.15"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -834,16 +834,17 @@ LOOT_SOURCES   = ['Realm','Area','Mob','Item','Slot','Type','Spell','Level','Dam
 # Spell name options for the Build tab category dropdowns.
 SPELL_CATEGORIES = {
     'Basic':          ['Agility', 'Bless', 'Dexterity', 'Constitution', 'Intelligence', 'Wisdom', 'Strength', 'Evade', 'Combat', 'Tough.skin'],
-    'Class Specific': ['Backstab.enhance', 'Bash.enhance', 'Berzerk.enhance', 'Crush.enhance',
+    'Class Specific': ['Aura.enhance', 'Backstab.enhance', 'Bash.enhance', 'Berzerk.enhance', 'Crush.enhance',
                        'Direct.enhance', 'Double.enhance', 'Fired.enhance', 'Improve.enhance', 'Leathers.enhance',
                        'Lockpick.enhance', 'Mark.enhance', 'Martialarts.enhance', 'Maul.enhance',
                        'Melee.enhance', 'Pummel.enhance', 'Rake.enhance', 'Repair.enhance',
                        'Slash.enhance', 'Tap.enhance', 'Thrust.enhance', 'Track.enhance',
-                       'Volley.enhance', 'Weapons.enhance'],
+                       'Volley.enhance'],
     'Shields/Buffs':  ['Protect', 'Blur', 'Shield', 'Vitalize', 'Regenerate',
                       'Bleed.resist', 'Disease.resist', 'Poison.resist'],
-    'General Skills': ['Climb.enhance', 'Hide.enhance', 'Jump.enhance', 'Swim.enhance',
-                       'Percept.enhance', 'Sneak.enhance'],
+    'General Skills': ['All.weapons.enhance', 'Chaos.crush', 'Climb.enhance', 'Hide.enhance', 'Jump.enhance',
+                       'Leathers.enhance', 'Percept.enhance', 'Platemail.enhance', 'Slash.enhance', 'Sneak.enhance',
+                       'Swim.enhance', 'Thrust.enhance', 'Weapons.enhance'],
     # Protects use minor/normal/improved instead of i/ii/iii - minor and
     # improved are a PREFIX on the spell (e.g. "minor.cold.protect"), not a
     # suffix; "normal" is the bare spell name with no prefix at all.
