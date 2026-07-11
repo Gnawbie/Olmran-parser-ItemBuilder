@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.0.15
+# Gaming Log Parser v5.0.16
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,13 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.0.15 (Current)
+### v5.0.16 (Current)
+- Added an Area Items tab (after Saved Builds): pick an Area and browse every item droppable there, straight from the loaded master database
+- The Area dropdown is now typeable - type a few letters and it narrows to matching Areas as you go, instead of only scrolling a fixed list
+- Fixed a bug from the last update: Results tab's "Remove Area" was reading the wrong column since the Sigil column was added, so it silently stopped removing anything
+- Removed the "(more added soon)" note from the Shields/Buffs dropdown
+
+### v5.0.15
 - Class Specific: added Aura.enhance
 - General Skills: added All.weapons.enhance, Chaos.crush, Leathers.enhance, Platemail.enhance, Slash.enhance, Thrust.enhance
 - Moved Weapons.enhance from Class Specific to General Skills

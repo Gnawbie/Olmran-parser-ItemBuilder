@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.15"
+VERSION = "5.0.16"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1346,6 +1346,7 @@ class App(tk.Tk):
         self.tab_build = ttk.Frame(nb, padding=12)
         self.tab_results = ttk.Frame(nb, padding=12)
         self.tab_saved = ttk.Frame(nb, padding=12)
+        self.tab_area_items = ttk.Frame(nb, padding=12)
 
         nb.add(self.tab_parse,  text='▶  Parse')
         nb.add(self.tab_fields, text='⚙  Fields')
@@ -1353,6 +1354,7 @@ class App(tk.Tk):
         nb.add(self.tab_build, text='🔨  Build')
         nb.add(self.tab_results, text='📊  Results')  # Always visible
         nb.add(self.tab_saved, text='📌  Saved Builds')  # One tab holds every save
+        nb.add(self.tab_area_items, text='🗺  Area Items')
 
         self.notebook = nb  # Store reference to notebook
 
@@ -1362,6 +1364,7 @@ class App(tk.Tk):
         self._build_build_tab()
         self._build_results_tab()
         self._build_saved_builds_tab()
+        self._build_area_items_tab()
 
     # ── PARSE TAB (FILES + PARSING) ───────────────────────────
     def _build_parse_tab(self):
@@ -3304,21 +3307,128 @@ class App(tk.Tk):
             for row in save['rows']:
                 tv.insert('', 'end', values=row)
 
+    # ── AREA ITEMS TAB ────────────────────────────────────────
+    def _build_area_items_tab(self):
+        """Pick an Area from the loaded master database and browse every
+        item droppable there - a straight lookup, not a build search."""
+        t = self.tab_area_items
+        ttk.Label(t, text="Area Items", font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0,10))
+
+        picker_frame = ttk.Frame(t)
+        picker_frame.pack(fill='x', pady=(0,8))
+        ttk.Label(picker_frame, text="Area:").pack(side='left', padx=(0,4))
+        self._all_area_names = []
+        self.area_items_var = tk.StringVar(value='')
+        self.area_items_combo = ttk.Combobox(picker_frame, textvariable=self.area_items_var,
+                                             values=[], width=40)
+        self.area_items_combo.pack(side='left', padx=(0,8))
+        self.area_items_combo.bind('<<ComboboxSelected>>', lambda e: self._refresh_area_items_results())
+        self.area_items_combo.bind('<KeyRelease>', self._on_area_items_type)
+        self.area_items_combo.bind('<Return>', self._on_area_items_enter)
+
+        self.area_items_status = ttk.Label(picker_frame, text="", foreground='#666')
+        self.area_items_status.pack(side='left', padx=(8,0))
+
+        tree_frame = ttk.Frame(t)
+        tree_frame.pack(fill='both', expand=True)
+
+        cols = ('Realm', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Sigil', 'Level')
+        col_widths = {'Realm': 70, 'Mob': 160, 'Item': 220, 'Slot': 55, 'Type': 110,
+                     'Spell': 110, 'Sigil': 60, 'Level': 45}
+        self.area_items_tv = ttk.Treeview(tree_frame, columns=cols, show='headings', height=20)
+        for col in cols:
+            self.area_items_tv.heading(col, text=col, anchor='center')
+            self.area_items_tv.column(col, width=col_widths[col], stretch=False)
+
+        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=self.area_items_tv.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=self.area_items_tv.xview)
+        self.area_items_tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        self.area_items_tv.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+
+    def _refresh_area_items_dropdown(self):
+        """Repopulate the Area Items dropdown from whatever's currently
+        loaded in self.master_data - called whenever a master database
+        finishes loading (including the silent startup auto-load)."""
+        areas = sorted({(item.get('Area') or '').strip() for item in self.master_data} - {''})
+        self._all_area_names = areas
+        self.area_items_combo['values'] = areas
+        if self.area_items_var.get() not in areas:
+            self.area_items_var.set('')
+            self.area_items_tv.delete(*self.area_items_tv.get_children())
+            self.area_items_status.config(text='')
+
+    def _on_area_items_type(self, event):
+        """Type-ahead: narrow the dropdown's suggestion list to Areas whose
+        name contains what's been typed so far (case-insensitive), and pop
+        the list open automatically so suggestions show without the user
+        having to click the dropdown arrow. Navigation/selection keys are
+        left alone so they still work as usual once the list is open."""
+        if event.keysym in ('Up', 'Down', 'Left', 'Right', 'Return', 'Escape', 'Tab'):
+            return
+        typed = self.area_items_var.get().strip().lower()
+        filtered = [a for a in self._all_area_names if typed in a.lower()] if typed else list(self._all_area_names)
+        self.area_items_combo['values'] = filtered
+        try:
+            if filtered:
+                self.area_items_combo.tk.call('ttk::combobox::Post', self.area_items_combo)
+            else:
+                self.area_items_combo.tk.call('ttk::combobox::Unpost', self.area_items_combo)
+        except tk.TclError:
+            pass
+        # Posting the dropdown can steal focus/cursor from the entry -
+        # restore both so typing can continue uninterrupted.
+        self.area_items_combo.focus_set()
+        self.area_items_combo.icursor(tk.END)
+
+    def _on_area_items_enter(self, event):
+        """Enter with the exact Area name typed (not necessarily selected
+        from the dropdown) runs the lookup directly, same as picking it."""
+        typed = self.area_items_var.get().strip()
+        match = next((a for a in self._all_area_names if a.lower() == typed.lower()), None)
+        if match:
+            self.area_items_var.set(match)
+            self._refresh_area_items_results()
+
+    def _refresh_area_items_results(self):
+        """Fill the Area Items table with every master-database item whose
+        Area matches the one currently picked in the dropdown."""
+        self.area_items_tv.delete(*self.area_items_tv.get_children())
+        area = self.area_items_var.get().strip()
+        if not area:
+            self.area_items_status.config(text='')
+            return
+
+        matches = [item for item in self.master_data if (item.get('Area') or '').strip() == area]
+        for item in matches:
+            self.area_items_tv.insert('', 'end', values=(
+                item.get('Realm', ''), item.get('Mob', ''), item.get('Item', ''),
+                item.get('Slot', ''), item.get('Type', ''), item.get('Spell', ''),
+                item.get('Sigil', ''), item.get('Level', ''),
+            ))
+        self.area_items_status.config(text=f"{len(matches)} item(s)")
+
     def _remove_items_by_area(self):
         """Remove items from results by area name"""
         area_filter = self.remove_area_var.get().strip().lower()
         if not area_filter:
             messagebox.showwarning("No Area", "Please enter an area name to remove")
             return
-        
+
+        area_idx = list(self.search_results_tv['columns']).index('Area')
+
         # Remove from both stored results
         self.last_optimal_results = [
-            row for row in self.last_optimal_results 
-            if area_filter not in (row[6] or '').lower()  # row[6] is Area column
+            row for row in self.last_optimal_results
+            if area_filter not in (row[area_idx] or '').lower()
         ]
         self.last_all_results = [
-            row for row in self.last_all_results 
-            if area_filter not in (row[6] or '').lower()
+            row for row in self.last_all_results
+            if area_filter not in (row[area_idx] or '').lower()
         ]
         
         # Refresh display
@@ -3770,6 +3880,7 @@ class App(tk.Tk):
             if skipped_struck:
                 status_text += f" ({skipped_struck} struck-through skipped)"
             self.search_status.config(text=status_text)
+            self._refresh_area_items_dropdown()
             if not silent:
                 messagebox.showinfo("Loaded",
                     f"Master database loaded!\n{len(self.master_data)} items ready to search")
