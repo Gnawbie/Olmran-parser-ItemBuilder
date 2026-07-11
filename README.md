@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.0.17
+# Gaming Log Parser v5.0.18
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.0.17 (Current)
+### v5.0.18 (Current)
+- Fixed the .exe being flagged as a Trojan by some antivirus software - it was being compressed with UPX during packaging, which is a common trigger for antivirus false positives (packed executables resemble how real malware hides itself). Built without UPX from here on. No functional changes - same program, just packaged differently
+
+### v5.0.17
 - Area Items' Area field now shows live suggestions in a popup as you type (narrows to matching Areas on every keystroke, arrow down into the list, Enter or double-click to pick) instead of only working through a fixed dropdown list
 - Area Items results are now sorted: armor slots first (Plate, then Studded, then Leather, then Cloth), then Jewel, then Shield, then Weapon - instead of whatever order they happened to load in
 - Clicking/tabbing into the Area field now shows the full alphabetical list of every Area right away (scrollable), same as opening an ordinary dropdown, instead of only appearing once you start typing
