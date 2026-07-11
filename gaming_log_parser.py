@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.16"
+VERSION = "5.0.17"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -3319,15 +3319,24 @@ class App(tk.Tk):
         ttk.Label(picker_frame, text="Area:").pack(side='left', padx=(0,4))
         self._all_area_names = []
         self.area_items_var = tk.StringVar(value='')
-        self.area_items_combo = ttk.Combobox(picker_frame, textvariable=self.area_items_var,
-                                             values=[], width=40)
-        self.area_items_combo.pack(side='left', padx=(0,8))
-        self.area_items_combo.bind('<<ComboboxSelected>>', lambda e: self._refresh_area_items_results())
-        self.area_items_combo.bind('<KeyRelease>', self._on_area_items_type)
-        self.area_items_combo.bind('<Return>', self._on_area_items_enter)
+        self.area_items_entry = ttk.Entry(picker_frame, textvariable=self.area_items_var, width=40)
+        self.area_items_entry.pack(side='left', padx=(0,8))
+        self.area_items_entry.bind('<KeyRelease>', self._on_area_items_type)
+        self.area_items_entry.bind('<Down>', self._area_suggest_focus_listbox)
+        self.area_items_entry.bind('<Return>', self._on_area_items_enter)
+        self.area_items_entry.bind('<Escape>', self._hide_area_suggestions)
+        self.area_items_entry.bind('<FocusOut>', self._on_area_entry_focus_out)
 
         self.area_items_status = ttk.Label(picker_frame, text="", foreground='#666')
         self.area_items_status.pack(side='left', padx=(8,0))
+
+        # Type-ahead suggestion popup - a plain undecorated Toplevel holding
+        # a Listbox, positioned right under the entry. Not ttk.Combobox's
+        # own dropdown: that dropdown fights any attempt to keep it open
+        # and the entry focused at the same time while typing, so a small
+        # self-managed popup is the reliable way to show live suggestions.
+        self._area_suggest_popup = None
+        self._area_suggest_listbox = None
 
         tree_frame = ttk.Frame(t)
         tree_frame.pack(fill='both', expand=True)
@@ -3351,47 +3360,114 @@ class App(tk.Tk):
         tree_frame.columnconfigure(0, weight=1)
 
     def _refresh_area_items_dropdown(self):
-        """Repopulate the Area Items dropdown from whatever's currently
-        loaded in self.master_data - called whenever a master database
-        finishes loading (including the silent startup auto-load)."""
+        """Repopulate the Area Items autocomplete list from whatever's
+        currently loaded in self.master_data - called whenever a master
+        database finishes loading (including the silent startup auto-load)."""
         areas = sorted({(item.get('Area') or '').strip() for item in self.master_data} - {''})
         self._all_area_names = areas
-        self.area_items_combo['values'] = areas
         if self.area_items_var.get() not in areas:
             self.area_items_var.set('')
             self.area_items_tv.delete(*self.area_items_tv.get_children())
             self.area_items_status.config(text='')
 
     def _on_area_items_type(self, event):
-        """Type-ahead: narrow the dropdown's suggestion list to Areas whose
-        name contains what's been typed so far (case-insensitive), and pop
-        the list open automatically so suggestions show without the user
-        having to click the dropdown arrow. Navigation/selection keys are
-        left alone so they still work as usual once the list is open."""
-        if event.keysym in ('Up', 'Down', 'Left', 'Right', 'Return', 'Escape', 'Tab'):
+        """Type-ahead: show every Area whose name contains what's been
+        typed so far (case-insensitive) in the suggestion popup, updated on
+        every keystroke. Not ttk.Combobox's own dropdown (see
+        _show_area_suggestions for why) - navigation keys are left to their
+        own handlers so this doesn't fight them."""
+        if event.keysym in ('Up', 'Down', 'Return', 'Escape', 'Tab'):
             return
         typed = self.area_items_var.get().strip().lower()
-        filtered = [a for a in self._all_area_names if typed in a.lower()] if typed else list(self._all_area_names)
-        self.area_items_combo['values'] = filtered
-        try:
-            if filtered:
-                self.area_items_combo.tk.call('ttk::combobox::Post', self.area_items_combo)
-            else:
-                self.area_items_combo.tk.call('ttk::combobox::Unpost', self.area_items_combo)
-        except tk.TclError:
-            pass
-        # Posting the dropdown can steal focus/cursor from the entry -
-        # restore both so typing can continue uninterrupted.
-        self.area_items_combo.focus_set()
-        self.area_items_combo.icursor(tk.END)
+        matches = [a for a in self._all_area_names if typed in a.lower()] if typed else list(self._all_area_names)
+        if matches:
+            self._show_area_suggestions(matches)
+        else:
+            self._hide_area_suggestions()
+
+    def _show_area_suggestions(self, matches):
+        """Create (on first use) and fill the suggestion popup - a plain
+        undecorated Toplevel holding a Listbox, positioned right under the
+        Area entry. A real ttk.Combobox's built-in dropdown can't be kept
+        open while the entry itself keeps typing focus (posting it steals
+        focus, and restoring focus to the entry closes it again) - a
+        self-managed popup sidesteps that fight entirely."""
+        if self._area_suggest_popup is None:
+            popup = tk.Toplevel(self)
+            popup.withdraw()
+            popup.overrideredirect(True)
+            popup.attributes('-topmost', True)
+            listbox = tk.Listbox(popup, height=8, activestyle='dotbox', exportselection=False)
+            listbox.pack(fill='both', expand=True)
+            listbox.bind('<Return>', self._on_area_suggest_pick)
+            listbox.bind('<Double-Button-1>', self._on_area_suggest_pick)
+            listbox.bind('<Escape>', self._hide_area_suggestions)
+            self._area_suggest_popup = popup
+            self._area_suggest_listbox = listbox
+
+        listbox = self._area_suggest_listbox
+        listbox.delete(0, tk.END)
+        # Capped so a very broad/empty filter (e.g. just-focused, nothing
+        # typed yet) doesn't render hundreds of rows into the popup.
+        for name in matches[:50]:
+            listbox.insert(tk.END, name)
+
+        x = self.area_items_entry.winfo_rootx()
+        y = self.area_items_entry.winfo_rooty() + self.area_items_entry.winfo_height()
+        width = max(self.area_items_entry.winfo_width(), 200)
+        self._area_suggest_popup.geometry(f"{width}x160+{x}+{y}")
+        self._area_suggest_popup.deiconify()
+
+    def _hide_area_suggestions(self, event=None):
+        if self._area_suggest_popup is not None:
+            self._area_suggest_popup.withdraw()
+
+    def _area_suggest_focus_listbox(self, event):
+        """Down arrow in the entry moves focus into the suggestion list (if
+        showing) so its usual arrow-key/Enter navigation takes over."""
+        if self._area_suggest_popup is None or not self._area_suggest_popup.winfo_viewable():
+            return
+        listbox = self._area_suggest_listbox
+        listbox.focus_set()
+        if listbox.size() > 0:
+            listbox.selection_set(0)
+            listbox.activate(0)
+        return 'break'
+
+    def _on_area_suggest_pick(self, event):
+        """Enter or double-click on a suggestion - use it and run the lookup."""
+        listbox = self._area_suggest_listbox
+        selection = listbox.curselection()
+        if not selection:
+            return
+        value = listbox.get(selection[0])
+        self.area_items_var.set(value)
+        self._hide_area_suggestions()
+        self.area_items_entry.focus_set()
+        self._refresh_area_items_results()
+
+    def _on_area_entry_focus_out(self, event):
+        """Hide the suggestion popup once focus has settled somewhere that
+        isn't the entry or the popup's own listbox - deferred slightly
+        since FocusOut fires before the listbox actually gains focus when
+        the user arrows down into it."""
+        self.after(150, self._hide_area_suggestions_if_unfocused)
+
+    def _hide_area_suggestions_if_unfocused(self):
+        if self._area_suggest_popup is None:
+            return
+        focused = self.focus_get()
+        if focused not in (self.area_items_entry, self._area_suggest_listbox):
+            self._hide_area_suggestions()
 
     def _on_area_items_enter(self, event):
-        """Enter with the exact Area name typed (not necessarily selected
-        from the dropdown) runs the lookup directly, same as picking it."""
+        """Enter in the entry itself (not the suggestion list) - if what's
+        typed exactly matches an Area, run the lookup directly."""
         typed = self.area_items_var.get().strip()
         match = next((a for a in self._all_area_names if a.lower() == typed.lower()), None)
         if match:
             self.area_items_var.set(match)
+            self._hide_area_suggestions()
             self._refresh_area_items_results()
 
     def _refresh_area_items_results(self):
@@ -3404,6 +3480,18 @@ class App(tk.Tk):
             return
 
         matches = [item for item in self.master_data if (item.get('Area') or '').strip() == area]
+        # Armor slots first (grouped together, not just one), then jewels,
+        # then shields, then weapons. Within the armor group, Plate first,
+        # then Studded, then Leather, then Cloth - then slot and Item name
+        # so it doesn't read as randomly shuffled within any of those.
+        slot_group = {'jewel': 1, 'shield': 2, 'weapon': 3}
+        armor_type_order = {'plate': 0, 'studded': 1, 'leather': 2, 'cloth': 3}
+        matches.sort(key=lambda item: (
+            slot_group.get((item.get('Slot') or '').strip().lower(), 0),
+            armor_type_order.get((item.get('Type') or '').strip().lower(), 4),
+            (item.get('Slot') or '').strip().lower(),
+            (item.get('Item') or '').strip().lower(),
+        ))
         for item in matches:
             self.area_items_tv.insert('', 'end', values=(
                 item.get('Realm', ''), item.get('Mob', ''), item.get('Item', ''),
