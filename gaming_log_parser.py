@@ -3326,6 +3326,11 @@ class App(tk.Tk):
         self.area_items_entry.bind('<Return>', self._on_area_items_enter)
         self.area_items_entry.bind('<Escape>', self._hide_area_suggestions)
         self.area_items_entry.bind('<FocusOut>', self._on_area_entry_focus_out)
+        # Clicking/tabbing into the field shows the full alphabetical list
+        # right away, same as opening an ordinary dropdown - not just once
+        # typing starts.
+        self.area_items_entry.bind('<FocusIn>', self._update_area_suggestions)
+        self.area_items_entry.bind('<Button-1>', self._update_area_suggestions)
 
         self.area_items_status = ttk.Label(picker_frame, text="", foreground='#666')
         self.area_items_status.pack(side='left', padx=(8,0))
@@ -3371,13 +3376,20 @@ class App(tk.Tk):
             self.area_items_status.config(text='')
 
     def _on_area_items_type(self, event):
-        """Type-ahead: show every Area whose name contains what's been
-        typed so far (case-insensitive) in the suggestion popup, updated on
-        every keystroke. Not ttk.Combobox's own dropdown (see
-        _show_area_suggestions for why) - navigation keys are left to their
-        own handlers so this doesn't fight them."""
+        """Type-ahead: narrow the suggestion popup to Areas whose name
+        contains what's been typed so far (case-insensitive), updated on
+        every keystroke. Navigation keys are left to their own handlers so
+        this doesn't fight them."""
         if event.keysym in ('Up', 'Down', 'Return', 'Escape', 'Tab'):
             return
+        self._update_area_suggestions()
+
+    def _update_area_suggestions(self, event=None):
+        """Refresh the suggestion popup from whatever's currently typed -
+        the full alphabetical Area list when the field is empty (e.g. on
+        first click/focus, same as opening an ordinary dropdown), narrowed
+        to matching Areas once something's typed. Shared by the typing,
+        click, and focus-in handlers so all three show the same thing."""
         typed = self.area_items_var.get().strip().lower()
         matches = [a for a in self._all_area_names if typed in a.lower()] if typed else list(self._all_area_names)
         if matches:
@@ -3398,7 +3410,10 @@ class App(tk.Tk):
             popup.overrideredirect(True)
             popup.attributes('-topmost', True)
             listbox = tk.Listbox(popup, height=8, activestyle='dotbox', exportselection=False)
-            listbox.pack(fill='both', expand=True)
+            scrollbar = ttk.Scrollbar(popup, orient='vertical', command=listbox.yview)
+            listbox.configure(yscrollcommand=scrollbar.set)
+            listbox.pack(side='left', fill='both', expand=True)
+            scrollbar.pack(side='right', fill='y')
             listbox.bind('<Return>', self._on_area_suggest_pick)
             listbox.bind('<Double-Button-1>', self._on_area_suggest_pick)
             listbox.bind('<Escape>', self._hide_area_suggestions)
@@ -3407,9 +3422,10 @@ class App(tk.Tk):
 
         listbox = self._area_suggest_listbox
         listbox.delete(0, tk.END)
-        # Capped so a very broad/empty filter (e.g. just-focused, nothing
-        # typed yet) doesn't render hundreds of rows into the popup.
-        for name in matches[:50]:
+        # Full alphabetical list when unfiltered (matches is already sorted -
+        # see _refresh_area_items_dropdown), narrowed as the user types;
+        # the popup itself scrolls, same as an ordinary dropdown would.
+        for name in matches:
             listbox.insert(tk.END, name)
 
         x = self.area_items_entry.winfo_rootx()
