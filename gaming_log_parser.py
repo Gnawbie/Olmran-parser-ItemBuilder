@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.18"
+VERSION = "5.0.19"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -2617,13 +2617,29 @@ class App(tk.Tk):
         self.two_handed_style_var.trace_add('write', lambda *args: self._update_two_handed_damage_state())
 
         # 1 Claw / 2 Claw - moved in from the old Build Config row; no
-        # damage-type dropdown for either, unlike Two-Handed above.
+        # damage-type dropdown for either, unlike Two-Handed above. Each
+        # claw slot gets its own Sigil preference instead: the 1st dropdown
+        # covers claw_1 (used whether 1 Claw or 2 Claw is checked - it's
+        # always the first claw slot filled), the 2nd covers claw_2 (only
+        # meaningful when 2 Claw is checked). Same soft-preference mechanism
+        # as every other Sigil dropdown - never excludes an item, just
+        # favors one carrying it at the highest SigilLvl when tied otherwise.
         claw_frame = ttk.Frame(weapon_box)
         claw_frame.pack(fill='x', pady=2)
         self.claw_1_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(claw_frame, text="1 Claw", variable=self.claw_1_var).pack(side='left', padx=(0,4))
         self.claw_2_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(claw_frame, text="2 Claw", variable=self.claw_2_var).pack(side='left')
+        ttk.Checkbutton(claw_frame, text="2 Claw", variable=self.claw_2_var).pack(side='left', padx=(0,12))
+
+        ttk.Label(claw_frame, text="Sigil (1st):").pack(side='left', padx=(0,4))
+        self.claw_1_sigil_var = tk.StringVar(value='Any')
+        ttk.Combobox(claw_frame, textvariable=self.claw_1_sigil_var, values=['Any'] + SIGIL_TYPES,
+                    state='readonly', width=10).pack(side='left', padx=(0,12))
+
+        ttk.Label(claw_frame, text="Sigil (2nd):").pack(side='left', padx=(0,4))
+        self.claw_2_sigil_var = tk.StringVar(value='Any')
+        ttk.Combobox(claw_frame, textvariable=self.claw_2_sigil_var, values=['Any'] + SIGIL_TYPES,
+                    state='readonly', width=10).pack(side='left')
 
         # The old global Damage Type checkboxes (Slashing/Thrusting/Crushing)
         # have been removed - each combo above now has its own Damage Type
@@ -4019,6 +4035,8 @@ class App(tk.Tk):
         self.two_handed_damage_var.set('Any')
         self.claw_1_var.set(False)
         self.claw_2_var.set(False)
+        self.claw_1_sigil_var.set('Any')
+        self.claw_2_sigil_var.set('Any')
         self.dual_wield_1h_var.set(False)
         self.dual_wield_1h_main_var.set('Any')
         self.dual_wield_1h_off_var.set('Any')
@@ -4314,6 +4332,8 @@ class App(tk.Tk):
             'two_handed_damage': self.two_handed_damage_var.get(),
             'claw_1': self.claw_1_var.get(),
             'claw_2': self.claw_2_var.get(),
+            'claw_1_sigil': self.claw_1_sigil_var.get(),
+            'claw_2_sigil': self.claw_2_sigil_var.get(),
             'dual_wield_1h': self.dual_wield_1h_var.get(),
             'dual_wield_1h_main': self.dual_wield_1h_main_var.get(),
             'dual_wield_1h_off': self.dual_wield_1h_off_var.get(),
@@ -4364,6 +4384,8 @@ class App(tk.Tk):
             self.two_handed_damage_var.set(combos.get('two_handed_damage', 'Any'))
             self.claw_1_var.set(combos.get('claw_1', False))
             self.claw_2_var.set(combos.get('claw_2', False))
+            self.claw_1_sigil_var.set(combos.get('claw_1_sigil', 'Any'))
+            self.claw_2_sigil_var.set(combos.get('claw_2_sigil', 'Any'))
             self.dual_wield_1h_var.set(combos.get('dual_wield_1h', False))
             self.dual_wield_1h_main_var.set(combos.get('dual_wield_1h_main', 'Any'))
             self.dual_wield_1h_off_var.set(combos.get('dual_wield_1h_off', 'Any'))
@@ -5654,14 +5676,27 @@ class App(tk.Tk):
         # this loop at all already means a claw combo is checked, so a
         # zero-coverage item is still a valid fallback pick (matched_bases
         # empty just means it contributes nothing new, not that it's invalid).
+        #
+        # Sigil preference is per exact slot (claw_1/claw_2), not shared like
+        # everything else above - claw_1 is always the first claw filled
+        # (whether 1 Claw or 2 Claw is checked), claw_2 only exists when 2
+        # Claw is checked, and each can want a different Sigil.
+        claw_sigil_choice = {
+            'claw_1': self.claw_1_sigil_var.get().strip().lower(),
+            'claw_2': self.claw_2_sigil_var.get().strip().lower(),
+        }
         for slot in claw_slots:
             lookup_slot = 'claw'
             if lookup_slot not in items_by_slot:
                 continue
 
+            wanted_claw_sigil = claw_sigil_choice.get(slot)
+            if wanted_claw_sigil == 'any':
+                wanted_claw_sigil = ''
+
             best_item = None
             best_matched_bases = []
-            best_key = (-1, -1, -1, -1, -1, -1, -1, -1)
+            best_key = (-1, -1, -1, -1, -1, -1, -1, -1, -1, -1)
             tied_items = []
 
             for item in items_by_slot[lookup_slot]:
@@ -5695,7 +5730,17 @@ class App(tk.Tk):
                 defense_priority_match = _defense_priority_score(item, lookup_slot)
                 melee_priority_match, melee_match = _melee_constraint_score(item, item_type)
 
+                claw_sigil_match = 0
+                claw_sigil_level = 0
+                if wanted_claw_sigil and (item.get('Sigil') or '').strip().lower() == wanted_claw_sigil:
+                    claw_sigil_match = 1
+                    try:
+                        claw_sigil_level = int(item.get('SigilLvl') or 0)
+                    except (ValueError, TypeError):
+                        claw_sigil_level = 0
+
                 key = (priority_matches, len(matched_bases), tier_priority_match,
+                      claw_sigil_match, claw_sigil_level,
                       melee_priority_match, melee_match, defense_priority_match,
                       item_tier, item_level_num)
                 if key > best_key:
