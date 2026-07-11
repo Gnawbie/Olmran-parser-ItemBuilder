@@ -4700,13 +4700,15 @@ class App(tk.Tk):
         
         # Get wanted spells - Priority Spells are always searched for too, not
         # just preferred among items that already match a wanted spell, so
-        # they're folded in here before any item filtering happens.
+        # they're folded in here before any item filtering happens. None of
+        # these (nor Required Items/Wanted Sigils) are actually required to
+        # run a search - weapon/shield slots always fall back to the best
+        # available item regardless (see is_always_fill_slot below), so a
+        # search with nothing wanted at all still works for e.g. just
+        # weapon-hunting via Weapon/Melee Weapon Constraints.
         wanted_spells = list(self.wanted_spells_data)
         priority_spells = list(self.priority_spells_data)
         wanted_sigils = list(self.wanted_sigils_data)
-        if not wanted_spells and not self.required_items and not priority_spells and not wanted_sigils:
-            messagebox.showwarning("No Spells", "Please add at least one wanted spell, priority spell, wanted sigil, or required item")
-            return
 
         # Priority Tiers - each entry pairs a specific spell with a specific
         # tier. For that spell, the search targets that tier (still preferring
