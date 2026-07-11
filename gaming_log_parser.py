@@ -855,11 +855,6 @@ SPELL_CATEGORIES = {
 
 SPELL_TIERS = ['(any)', 'i', 'ii', 'iii']
 
-# Categories whose list is populated but not yet exhaustive - shown next to the dropdown.
-SPELL_CATEGORY_PARTIAL_NOTE = {
-    'Shields/Buffs': '(more added soon)',
-}
-
 # Spells (lowercase) whose tier dropdown is restricted (or extended) beyond
 # the default SPELL_TIERS whenever that spell is selected.
 PROTECT_SPELLS = ['cold.protect', 'earth.protect', 'elemental.protect', 'fire.protect',
@@ -2817,9 +2812,6 @@ class App(tk.Tk):
 
             if not spells:
                 ttk.Label(spell_input_frame, text="(list coming soon)",
-                         font=('Arial', 8, 'italic'), foreground='#888').pack(side='left', padx=4)
-            elif category in SPELL_CATEGORY_PARTIAL_NOTE:
-                ttk.Label(spell_input_frame, text=SPELL_CATEGORY_PARTIAL_NOTE[category],
                          font=('Arial', 8, 'italic'), foreground='#888').pack(side='left', padx=4)
 
         # Manual entry - fallback for any spell not covered by the category
