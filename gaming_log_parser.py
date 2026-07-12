@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.1.3"
+VERSION = "5.1.4"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -3078,6 +3078,10 @@ class App(tk.Tk):
         realm_block.pack(side='left', anchor='n', padx=(20, 0))
 
         self.realm_filters = {}
+        # Every individual Only Found In checkbox across both places it's
+        # shown (here and Bank Build's Search tab) - greyed out together
+        # whenever "All" is checked (see _update_realm_all_exclusivity).
+        self.realm_filter_checkbuttons = []
         # Left two columns, in row-major order (2 per row): Evil/Glory Bea,
         # Good/Event, Chaos/Crafted. Glory Bea sits where Kaid used to be
         # (Kaid moved out into its own column to the right); Chaos took
@@ -3087,8 +3091,10 @@ class App(tk.Tk):
         for i, realm in enumerate(realm_options):
             var = tk.BooleanVar(value=False)
             self.realm_filters[realm] = var
-            ttk.Checkbutton(realm_block, text=realm, variable=var).grid(
-                row=i // cols, column=i % cols, sticky='w', padx=4, pady=2)
+            cb = ttk.Checkbutton(realm_block, text=realm, variable=var,
+                                 command=self._update_realm_all_exclusivity)
+            cb.grid(row=i // cols, column=i % cols, sticky='w', padx=4, pady=2)
+            self.realm_filter_checkbuttons.append(cb)
 
         # Kaid gets its own column: "Kaid All" (renamed from the old plain
         # "Kaid" checkbox - same match key/behavior, matches every Kaid.*
@@ -3102,6 +3108,7 @@ class App(tk.Tk):
                                                      variable=kaid_all_var,
                                                      command=self._update_kaid_exclusivity)
         self.kaid_all_checkbutton.grid(row=0, column=2, sticky='w', padx=(16,4), pady=2)
+        self.realm_filter_checkbuttons.append(self.kaid_all_checkbutton)
 
         self.kaid_color_checkbuttons = []
         for i, color in enumerate(['Kaid White', 'Kaid Green', 'Kaid Red', 'Kaid Purple'], start=1):
@@ -3111,7 +3118,23 @@ class App(tk.Tk):
                                  command=self._update_kaid_exclusivity)
             cb.grid(row=i, column=2, sticky='w', padx=(16,4), pady=2)
             self.kaid_color_checkbuttons.append(cb)
-        
+            self.realm_filter_checkbuttons.append(cb)
+
+        # "All" - an explicit way to say "no realm restriction at all",
+        # rather than relying on every box being left unchecked to mean the
+        # same thing. Mutually exclusive with every individual box above
+        # (checking one disables the other side, same disable-only
+        # pattern as Kaid All/colors - see _update_realm_all_exclusivity);
+        # the actual search logic also short-circuits to "no filter"
+        # whenever this is checked, so a stale-but-still-checked individual
+        # box behind it can never sneak back in as a real restriction.
+        self.realm_filter_all_var = tk.BooleanVar(value=False)
+        self.realm_filter_all_checkbuttons = []
+        all_cb = ttk.Checkbutton(realm_block, text="All", variable=self.realm_filter_all_var,
+                                 command=self._update_realm_all_exclusivity)
+        all_cb.grid(row=5, column=2, sticky='w', padx=(16,4), pady=(10,2))
+        self.realm_filter_all_checkbuttons.append(all_cb)
+
         # Find Optimal Build/Show All Matches/Generate multiple build options
         # moved out to shared_controls_frame below (see the comment at the
         # top of this method).
@@ -3222,13 +3245,26 @@ class App(tk.Tk):
         realm_options = ['Evil', 'Glory Bea', 'Good', 'Event', 'Chaos', 'Crafted']
         realm_cols = 2
         for i, realm in enumerate(realm_options):
-            ttk.Checkbutton(bank_search_realm_frame, text=realm, variable=self.realm_filters[realm]).grid(
-                row=i // realm_cols, column=i % realm_cols, sticky='w', padx=4, pady=2)
-        ttk.Checkbutton(bank_search_realm_frame, text="Kaid All", variable=self.realm_filters['Kaid']).grid(
-            row=0, column=2, sticky='w', padx=(16,4), pady=2)
+            cb = ttk.Checkbutton(bank_search_realm_frame, text=realm, variable=self.realm_filters[realm],
+                                 command=self._update_realm_all_exclusivity)
+            cb.grid(row=i // realm_cols, column=i % realm_cols, sticky='w', padx=4, pady=2)
+            self.realm_filter_checkbuttons.append(cb)
+        kaid_all_cb2 = ttk.Checkbutton(bank_search_realm_frame, text="Kaid All", variable=self.realm_filters['Kaid'],
+                                       command=self._update_kaid_exclusivity)
+        kaid_all_cb2.grid(row=0, column=2, sticky='w', padx=(16,4), pady=2)
+        self.realm_filter_checkbuttons.append(kaid_all_cb2)
         for i, color in enumerate(['Kaid White', 'Kaid Green', 'Kaid Red', 'Kaid Purple'], start=1):
-            ttk.Checkbutton(bank_search_realm_frame, text=color, variable=self.realm_filters[color]).grid(
-                row=i, column=2, sticky='w', padx=(16,4), pady=2)
+            cb = ttk.Checkbutton(bank_search_realm_frame, text=color, variable=self.realm_filters[color],
+                                 command=self._update_kaid_exclusivity)
+            cb.grid(row=i, column=2, sticky='w', padx=(16,4), pady=2)
+            self.realm_filter_checkbuttons.append(cb)
+
+        # "All" - see _update_realm_all_exclusivity; same shared
+        # self.realm_filter_all_var as Basic Constraints' own "All" box.
+        all_cb2 = ttk.Checkbutton(bank_search_realm_frame, text="All", variable=self.realm_filter_all_var,
+                                  command=self._update_realm_all_exclusivity)
+        all_cb2.grid(row=5, column=2, sticky='w', padx=(16,4), pady=(10,2))
+        self.realm_filter_all_checkbuttons.append(all_cb2)
 
         bank_search_controls_frame = ttk.Frame(bank_search_tab)
         bank_search_controls_frame.pack(fill='x', pady=(8,0))
@@ -4533,6 +4569,30 @@ class App(tk.Tk):
         for cb in self.kaid_color_checkbuttons:
             cb.config(state='disabled' if kaid_all_checked else 'normal')
 
+        # Kaid All/colors count as "an individual box" for All's own
+        # exclusivity too - chained here since a Checkbutton can only run
+        # one command.
+        self._update_realm_all_exclusivity()
+
+    def _update_realm_all_exclusivity(self):
+        """"All" and every individual Only Found In checkbox are mutually
+        exclusive, same disable-only pattern as Kaid All/colors (see
+        _update_kaid_exclusivity) - checking "All" greys out every
+        individual box (across both places they're shown - Basic
+        Constraints and Bank Build's Search tab), checking any individual
+        box greys out "All". The actual search logic (_find_optimal_build/
+        _show_all_matches/_search_bank_items) also short-circuits to "no
+        filter" whenever "All" is checked, so a stale-but-disabled
+        individual box left checked underneath it can never sneak back in
+        as a real restriction."""
+        all_checked = self.realm_filter_all_var.get()
+        any_individual_checked = any(var.get() for var in self.realm_filters.values())
+
+        for cb in self.realm_filter_all_checkbuttons:
+            cb.config(state='disabled' if any_individual_checked else 'normal')
+        for cb in self.realm_filter_checkbuttons:
+            cb.config(state='disabled' if all_checked else 'normal')
+
     def _update_level_fields(self):
         """Enable/disable level fields based on which one is being used"""
         has_min = bool(self.min_level_var.get().strip())
@@ -4969,7 +5029,8 @@ class App(tk.Tk):
         matched_key_count = len({_bank_item_key(item) for item in matched_items})
         unmatched_count = len(owned_keys) - matched_key_count
 
-        selected_realms = [realm for realm, var in self.realm_filters.items() if var.get()]
+        selected_realms = ([] if self.realm_filter_all_var.get()
+                          else [realm for realm, var in self.realm_filters.items() if var.get()])
         if selected_realms:
             matched_items = [
                 item for item in matched_items
@@ -5485,9 +5546,10 @@ class App(tk.Tk):
             if 'crafted' in item_realm.lower() and not self.realm_filters['Crafted'].get():
                 continue
 
-            # Apply realm filter if any selected
-            selected_realms = [realm for realm, var in self.realm_filters.items()
-                              if var.get()]
+            # Apply realm filter if any selected ("All" means none - see
+            # _update_realm_all_exclusivity)
+            selected_realms = ([] if self.realm_filter_all_var.get()
+                              else [realm for realm, var in self.realm_filters.items() if var.get()])
             if selected_realms:
                 realm_match = False
                 for selected in selected_realms:
@@ -6519,9 +6581,10 @@ class App(tk.Tk):
             if 'crafted' in item_realm.lower() and not self.realm_filters['Crafted'].get():
                 continue
 
-            # Apply realm filter if any selected
-            selected_realms = [realm for realm, var in self.realm_filters.items()
-                              if var.get()]
+            # Apply realm filter if any selected ("All" means none - see
+            # _update_realm_all_exclusivity)
+            selected_realms = ([] if self.realm_filter_all_var.get()
+                              else [realm for realm, var in self.realm_filters.items() if var.get()])
             if selected_realms:
                 realm_match = False
                 for selected in selected_realms:
