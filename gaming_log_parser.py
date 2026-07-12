@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.1.0"
+VERSION = "5.1.1"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -834,9 +834,9 @@ LOOT_SOURCES   = ['Realm','Area','Mob','Item','Slot','Type','Spell','Level','Dam
 # Spell name options for the Build tab category dropdowns.
 SPELL_CATEGORIES = {
     'Basic':          ['Agility', 'Bless', 'Dexterity', 'Constitution', 'Intelligence', 'Wisdom', 'Strength', 'Evade', 'Combat', 'Tough.skin'],
-    'Class Specific': ['Aura.enhance', 'Backstab.enhance', 'Bash.enhance', 'Berzerk.enhance', 'Crush.enhance',
-                       'Direct.enhance', 'Double.enhance', 'Fired.enhance', 'Improve.enhance', 'Leathers.enhance',
-                       'Lockpick.enhance', 'Mark.enhance', 'Martialarts.enhance', 'Maul.enhance',
+    'Class Specific': ['Reverb.enhance', 'Aura.enhance', 'Backstab.enhance', 'Bash.enhance', 'Berzerk.enhance',
+                       'Crush.enhance', 'Direct.enhance', 'Double.enhance', 'Fired.enhance', 'Improve.enhance',
+                       'Leathers.enhance', 'Lockpick.enhance', 'Mark.enhance', 'Martialarts.enhance', 'Maul.enhance',
                        'Melee.enhance', 'Pummel.enhance', 'Rake.enhance', 'Repair.enhance',
                        'Slash.enhance', 'Tap.enhance', 'Thrust.enhance', 'Track.enhance',
                        'Volley.enhance'],
@@ -873,6 +873,8 @@ SPELL_TIER_RESTRICTIONS = {
     # disease.resist is the only spell that goes up to tier iv
     'disease.resist': ['(any)', 'i', 'ii', 'iii', 'iv'],
     **{spell: PROTECT_TIERS for spell in PROTECT_SPELLS},
+    # Class Specific spells don't go up to tier iii at all.
+    **{spell.lower(): ['(any)', 'i', 'ii'] for spell in SPELL_CATEGORIES['Class Specific']},
 }
 
 # A build can include at most this many items from the "Crafted" realm.
