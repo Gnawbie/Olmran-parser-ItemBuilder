@@ -3132,7 +3132,7 @@ class App(tk.Tk):
         self.realm_filter_all_checkbuttons = []
         all_cb = ttk.Checkbutton(realm_block, text="All", variable=self.realm_filter_all_var,
                                  command=self._update_realm_all_exclusivity)
-        all_cb.grid(row=5, column=2, sticky='w', padx=(16,4), pady=(10,2))
+        all_cb.grid(row=4, column=0, sticky='w', padx=4, pady=2)
         self.realm_filter_all_checkbuttons.append(all_cb)
 
         # Find Optimal Build/Show All Matches/Generate multiple build options
@@ -3263,7 +3263,7 @@ class App(tk.Tk):
         # self.realm_filter_all_var as Basic Constraints' own "All" box.
         all_cb2 = ttk.Checkbutton(bank_search_realm_frame, text="All", variable=self.realm_filter_all_var,
                                   command=self._update_realm_all_exclusivity)
-        all_cb2.grid(row=5, column=2, sticky='w', padx=(16,4), pady=(10,2))
+        all_cb2.grid(row=4, column=0, sticky='w', padx=4, pady=2)
         self.realm_filter_all_checkbuttons.append(all_cb2)
 
         bank_search_controls_frame = ttk.Frame(bank_search_tab)
