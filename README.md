@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.1.6
+# Gaming Log Parser v5.1.7
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.1.6 (Current)
+### v5.1.7 (Current)
+- Bank Build has a third inner tab, "Saved Items": a running, persisted list of every item ever recognized from a Best Build or Search paste. Each new paste updates it automatically - adding items it newly finds, removing ones it no longer sees - and an item that moves between the two tabs' pastes (e.g. it was in the bank, now it's worn) stays on the list instead of disappearing. A second (or third...) copy of the same item is listed at the bottom, prefixed "::extra::"
+
+### v5.1.6
 - Bank Build (both "Best Build" and "Search") now recognizes three more paste formats, on top of the original numbered Strongbox listing: an unnumbered Strongbox listing (same `name [Level|Slot|...]` shape, just without the "N.)"), an Inventory listing (only lines marked `(w)` count - anything else, like stack counts or unmarked items, is ignored), and an Items in use listing (`On Head:  item name`, `Held Left:  nothing`). All four can even be mixed in the same paste
 
 ### v5.1.5

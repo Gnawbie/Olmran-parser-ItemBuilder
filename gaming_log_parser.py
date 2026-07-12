@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.1.6"
+VERSION = "5.1.7"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1087,17 +1087,26 @@ _BANK_EQUIPPED_SLOT_MAP = {
 
 
 def _parse_bank_paste_text(text):
-    """Parse a pasted bank/inventory listing into (owned_keys, recognized).
-    owned_keys is a set of (cleaned item name lower, slot or None, level
-    string or None) tuples - None marks a field the paste format doesn't
-    provide, matched as a wildcard by _bank_owned_match. recognized is how
-    many lines qualified across all four supported formats (see the module
-    comment above); everything else - format headers like "Items in
-    Strongbox..."/"Inventory:", unmarked/quantity inventory lines,
-    consumables, "nothing" equip slots - is silently skipped, not counted
-    as an error."""
+    """Parse a pasted bank/inventory listing into (owned_keys, recognized,
+    name_counts). owned_keys is a set of (cleaned item name lower, slot or
+    None, level string or None) tuples - None marks a field the paste
+    format doesn't provide, matched as a wildcard by _bank_owned_match.
+    recognized is how many lines qualified across all four supported
+    formats (see the module comment above); everything else - format
+    headers like "Items in Strongbox..."/"Inventory:", unmarked/quantity
+    inventory lines, consumables, "nothing" equip slots - is silently
+    skipped, not counted as an error. name_counts maps cleaned name (slot/
+    level dropped) to how many times it was recognized in this parse -
+    used by the Saved Items tab to detect duplicate copies, which cares
+    about physical copies of an item regardless of which slot/format it
+    happened to be listed under (see _update_bank_saved_list)."""
     owned_keys = set()
     recognized = 0
+    name_counts = {}
+
+    def _count(name):
+        name_counts[name] = name_counts.get(name, 0) + 1
+
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -1118,6 +1127,7 @@ def _parse_bank_paste_text(text):
                 continue
             owned_keys.add((cleaned, slot, level))
             recognized += 1
+            _count(cleaned)
             continue
 
         m = _BANK_INVENTORY_WORN_RE.match(line)
@@ -1126,6 +1136,7 @@ def _parse_bank_paste_text(text):
             if cleaned:
                 owned_keys.add((cleaned, None, None))
                 recognized += 1
+                _count(cleaned)
             continue
 
         m = _BANK_EQUIPPED_RE.match(line)
@@ -1143,9 +1154,10 @@ def _parse_bank_paste_text(text):
             if cleaned:
                 owned_keys.add((cleaned, slot, None))
                 recognized += 1
+                _count(cleaned)
             continue
 
-    return owned_keys, recognized
+    return owned_keys, recognized, name_counts
 
 
 def _bank_item_key(item):
@@ -1453,6 +1465,12 @@ class App(tk.Tk):
                     # turns this into self.saved_builds.
                     self._persisted_saved_builds = config.get('saved_builds', [])
                     self._persisted_saved_build_counter = config.get('saved_build_counter', 0)
+                    # Bank Build's Saved Items tab - raw data only (Bank
+                    # Build's sub-notebook isn't built until later in
+                    # __init__); turned into self.bank_saved_sources/
+                    # bank_saved_order in _build_build_tab.
+                    self._persisted_bank_saved_sources = config.get('bank_saved_sources', {})
+                    self._persisted_bank_saved_order = config.get('bank_saved_order', [])
             else:
                 self.last_open_dir = os.path.expanduser("~")
                 self.last_save_dir = os.path.expanduser("~")
@@ -1460,6 +1478,8 @@ class App(tk.Tk):
                 self.weapon_combo_defaults = {}
                 self._persisted_saved_builds = []
                 self._persisted_saved_build_counter = 0
+                self._persisted_bank_saved_sources = {}
+                self._persisted_bank_saved_order = []
         except Exception:
             self.last_open_dir = os.path.expanduser("~")
             self.last_save_dir = os.path.expanduser("~")
@@ -1467,6 +1487,8 @@ class App(tk.Tk):
             self.weapon_combo_defaults = {}
             self._persisted_saved_builds = []
             self._persisted_saved_build_counter = 0
+            self._persisted_bank_saved_sources = {}
+            self._persisted_bank_saved_order = []
 
     def _save_config(self):
         """Save configuration to file"""
@@ -1482,6 +1504,10 @@ class App(tk.Tk):
                     for save in getattr(self, 'saved_builds', [])
                 ],
                 'saved_build_counter': getattr(self, 'saved_build_counter', 0),
+                'bank_saved_sources': {
+                    src: dict(counts) for src, counts in getattr(self, 'bank_saved_sources', {}).items()
+                },
+                'bank_saved_order': list(getattr(self, 'bank_saved_order', [])),
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f)
@@ -3244,15 +3270,31 @@ class App(tk.Tk):
         self.master_data = []
         self._bank_owned_keys = None
 
-        # Bank Build - two inner tabs sharing the paste-a-listing idea:
+        # Bank Build's Saved Items tab (see _update_bank_saved_list) -
+        # restored from the config file so the accumulated list survives
+        # closing and reopening the program. Keyed per source tab
+        # ('best_build'/'search') so a fresh parse from one tab only
+        # reconciles what THAT tab most recently saw, never wiping out
+        # items only known via the other - see _update_bank_saved_list's
+        # docstring for why (an item can move between the two tabs'
+        # pastes between parses without ever "disappearing").
+        self.bank_saved_sources = {
+            'best_build': dict(getattr(self, '_persisted_bank_saved_sources', {}).get('best_build', {})),
+            'search': dict(getattr(self, '_persisted_bank_saved_sources', {}).get('search', {})),
+        }
+        self.bank_saved_order = list(getattr(self, '_persisted_bank_saved_order', []))
+
+        # Bank Build - three inner tabs sharing the paste-a-listing idea:
         # "Best Build" builds the best gear combo either strictly from those
         # items or from the whole master database with owned items favored
         # (see _find_bank_build); "Search" instead just lists every
         # recognized item as-is (no per-slot combo), filtered by Only Found
         # In, showing which Area each one actually drops in (see
-        # _search_bank_items). Every other constraint (Wanted Spells,
-        # Armor/Weapon Constraints, Min/Max Level, etc.) still applies
-        # exactly as normal on the Best Build side; this only adds
+        # _search_bank_items); "Saved Items" accumulates everything ever
+        # recognized by either of the other two into one running, persisted
+        # list (see _update_bank_saved_list). Every other constraint (Wanted
+        # Spells, Armor/Weapon Constraints, Min/Max Level, etc.) still
+        # applies exactly as normal on the Best Build side; this only adds
         # ownership as an extra dimension on top.
         bank_sub_notebook = ttk.Notebook(self.build_bank_subtab)
         bank_sub_notebook.pack(fill='both', expand=True)
@@ -3262,6 +3304,9 @@ class App(tk.Tk):
 
         bank_search_tab = ttk.Frame(bank_sub_notebook, padding=8)
         bank_sub_notebook.add(bank_search_tab, text='Search')
+
+        bank_saved_tab = ttk.Frame(bank_sub_notebook, padding=8)
+        bank_sub_notebook.add(bank_saved_tab, text='Saved Items')
 
         # ── Best Build ──
         ttk.Label(bank_best_tab, text="Paste a bank/inventory listing below, then click "
@@ -3374,6 +3419,44 @@ class App(tk.Tk):
             "no build/combo, just a lookup. Check any Only Found In box(es) to narrow it to those realms."),
             foreground='#666', wraplength=760, justify='left')
         self.bank_search_status.pack(anchor='w', pady=(6,0))
+
+        # ── Saved Items ──
+        ttk.Label(bank_saved_tab, text="Everything ever recognized from a Best Build or Search paste, kept "
+                 "up to date automatically - each new paste adds items it finds and removes items it no longer "
+                 "sees (an item can move between the two tabs' pastes without disappearing from here). A second "
+                 "copy of the same item is listed at the bottom, prefixed \"::extra::\".",
+                 foreground='#666', wraplength=760, justify='left').pack(anchor='w', pady=(0,6))
+
+        bank_saved_frame = ttk.Frame(bank_saved_tab)
+        bank_saved_frame.pack(fill='both', expand=True)
+
+        saved_cols = ('Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
+        saved_col_widths = {'Slot': 55, 'Item': 220, 'Type': 60, 'Spell': 100, 'Sigil': 60, 'Level': 45, 'Area': 140}
+        self.bank_saved_tv = ttk.Treeview(bank_saved_frame, columns=saved_cols, show='headings', height=16)
+        for col in saved_cols:
+            heading_anchor = 'w' if col == 'Item' else 'center'
+            self.bank_saved_tv.heading(col, text=col, anchor=heading_anchor)
+            self.bank_saved_tv.column(col, width=saved_col_widths[col], stretch=False,
+                                      anchor=('w' if col == 'Item' else 'center'))
+
+        bank_saved_vsb = ttk.Scrollbar(bank_saved_frame, orient='vertical', command=self.bank_saved_tv.yview)
+        bank_saved_hsb = ttk.Scrollbar(bank_saved_frame, orient='horizontal', command=self.bank_saved_tv.xview)
+        self.bank_saved_tv.configure(yscrollcommand=bank_saved_vsb.set, xscrollcommand=bank_saved_hsb.set)
+        self.bank_saved_tv.grid(row=0, column=0, sticky='nsew')
+        bank_saved_vsb.grid(row=0, column=1, sticky='ns')
+        bank_saved_hsb.grid(row=1, column=0, sticky='ew')
+        bank_saved_frame.rowconfigure(0, weight=1)
+        bank_saved_frame.columnconfigure(0, weight=1)
+
+        bank_saved_controls_frame = ttk.Frame(bank_saved_tab)
+        bank_saved_controls_frame.pack(fill='x', pady=(8,0))
+        ttk.Button(bank_saved_controls_frame, text="Clear Saved List",
+                  command=self._clear_bank_saved_list).pack(side='left')
+
+        self.bank_saved_status = ttk.Label(bank_saved_tab, text="", foreground='#666',
+                                           wraplength=760, justify='left')
+        self.bank_saved_status.pack(anchor='w', pady=(6,0))
+        self._refresh_bank_saved_tab()
 
         # Shared controls - Min/Max/Specific Level and the search buttons -
         # packed under the sub-notebook rather than inside any one sub-tab,
@@ -4369,6 +4452,8 @@ class App(tk.Tk):
                 status_text += f" ({skipped_struck} struck-through skipped)"
             self.search_status.config(text=status_text)
             self._refresh_area_items_dropdown()
+            if hasattr(self, 'bank_saved_tv'):
+                self._refresh_bank_saved_tab()
             if not silent:
                 messagebox.showinfo("Loaded",
                     f"Master database loaded!\n{len(self.master_data)} items ready to search")
@@ -5114,7 +5199,7 @@ class App(tk.Tk):
             return
 
         text = self.bank_search_text.get('1.0', tk.END)
-        owned_keys, recognized = _parse_bank_paste_text(text)
+        owned_keys, recognized, name_counts = _parse_bank_paste_text(text)
         if not owned_keys:
             messagebox.showwarning("No Items",
                 "No equippable items were recognized in the pasted text. Expected a Strongbox "
@@ -5122,6 +5207,8 @@ class App(tk.Tk):
                 "the \"12.)\" is optional), an Inventory listing (only \"(w)\" lines count), or an "
                 "Items in use listing (\"On Head:  ...\").")
             return
+
+        self._update_bank_saved_list('search', name_counts)
 
         matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
         matched_key_count = len({_bank_item_key(item) for item in matched_items})
@@ -5195,7 +5282,7 @@ class App(tk.Tk):
             return
 
         text = self.bank_paste_text.get('1.0', tk.END)
-        owned_keys, recognized = _parse_bank_paste_text(text)
+        owned_keys, recognized, name_counts = _parse_bank_paste_text(text)
         if not owned_keys:
             messagebox.showwarning("No Items",
                 "No equippable items were recognized in the pasted text. Expected a Strongbox "
@@ -5203,6 +5290,8 @@ class App(tk.Tk):
                 "the \"12.)\" is optional), an Inventory listing (only \"(w)\" lines count), or an "
                 "Items in use listing (\"On Head:  ...\").")
             return
+
+        self._update_bank_saved_list('best_build', name_counts)
 
         matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
         matched_key_count = len({_bank_item_key(item) for item in matched_items})
@@ -5243,6 +5332,73 @@ class App(tk.Tk):
         _find_bank_build). Also used by _build_dict_to_rows to mark a
         result row with the Bank column's icon."""
         return bool(self._bank_owned_keys) and _bank_owned_match(_bank_item_key(item), self._bank_owned_keys)
+
+    def _update_bank_saved_list(self, source, name_counts):
+        """Merge one tab's parse into the persistent Saved Items list.
+        Matched by cleaned item name only - not slot/level - since the
+        same physical item can legitimately show up in a different paste
+        format (e.g. it was in the bank last time, now it's worn and shows
+        up via an Items in use paste instead), and this list is meant to
+        track ownership, not location. source is 'best_build' or 'search':
+        each keeps its own latest counts, so a fresh parse from one tab
+        only reconciles what THAT tab most recently saw (remove names it
+        no longer recognizes, add ones it newly does) - never wiping out
+        items the other tab is still tracking."""
+        self.bank_saved_sources[source] = dict(name_counts)
+        all_names = set(self.bank_saved_sources['best_build']) | set(self.bank_saved_sources['search'])
+        self.bank_saved_order = [n for n in self.bank_saved_order if n in all_names]
+        existing = set(self.bank_saved_order)
+        for n in name_counts:
+            if n not in existing:
+                self.bank_saved_order.append(n)
+                existing.add(n)
+        self._save_config()
+        if hasattr(self, 'bank_saved_tv'):
+            self._refresh_bank_saved_tab()
+
+    def _refresh_bank_saved_tab(self):
+        """Redraw the Saved Items tab from self.bank_saved_order/
+        bank_saved_sources. Each unique item gets one row (enriched with
+        Slot/Type/Spell/Sigil/Level/Area from master_data when a name
+        match is found); any copies beyond the first are appended at the
+        bottom, prefixed "::extra::" in the Item cell."""
+        self.bank_saved_tv.delete(*self.bank_saved_tv.get_children())
+
+        master_by_name = {}
+        for item in self.master_data:
+            master_by_name.setdefault((item.get('Item') or '').strip().lower(), item)
+
+        def row_for(name, extra):
+            m = master_by_name.get(name, {})
+            display_name = f"::extra:: {name}" if extra else name
+            return (
+                (m.get('Slot') or '').title(), display_name, m.get('Type', ''),
+                m.get('Spell', ''), m.get('Sigil', ''), m.get('Level', ''), m.get('Area', ''),
+            )
+
+        total_counts = {
+            name: self.bank_saved_sources['best_build'].get(name, 0) + self.bank_saved_sources['search'].get(name, 0)
+            for name in self.bank_saved_order
+        }
+        for name in self.bank_saved_order:
+            self.bank_saved_tv.insert('', 'end', values=row_for(name, extra=False))
+        for name in self.bank_saved_order:
+            for _ in range(total_counts.get(name, 0) - 1):
+                self.bank_saved_tv.insert('', 'end', values=row_for(name, extra=True))
+
+        extra_count = sum(max(0, c - 1) for c in total_counts.values())
+        self.bank_saved_status.config(
+            text=f"{len(self.bank_saved_order)} unique item(s) saved"
+                 + (f", {extra_count} extra copy/copies" if extra_count else "") + ".")
+
+    def _clear_bank_saved_list(self):
+        if not messagebox.askyesno("Clear Saved List",
+                "Clear the entire Saved Items list? This can't be undone."):
+            return
+        self.bank_saved_sources = {'best_build': {}, 'search': {}}
+        self.bank_saved_order = []
+        self._save_config()
+        self._refresh_bank_saved_tab()
 
     def _find_optimal_build(self):
         """Find optimal item combination that covers ALL wanted spells"""
