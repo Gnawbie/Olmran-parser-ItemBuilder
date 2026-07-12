@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.20"
+VERSION = "5.1.0"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1036,6 +1036,70 @@ def _item_tier_rank(item_spell):
     if s in PROTECT_SPELLS:
         return _TIER_RANK['ii']
     return _spell_tier_rank(s)
+
+
+# Bank Build - parses a pasted bank/inventory listing (see
+# App._find_bank_build) into a set of "owned item" keys that can be looked
+# up against self.master_data. One line looks like:
+#   12.) a softly glowing mushroom wreath necklace [60|Jewel|elementalprotect1]
+# The bracket's tags are a numeric Level followed by a Slot name (or, for
+# consumables/held junk that isn't equippable gear at all, something else
+# entirely - "Held Left", "Uses N", or no numeric Level as the first tag -
+# those are skipped outright rather than guessed at). The trailing tags
+# after Level/Slot are the game client's own abbreviated stat codes (e.g.
+# "CP2", "M5") - deliberately never decoded here: the same item name
+# already exists in the master database with real Spell/Sigil/Type data,
+# so matching by (cleaned name, Slot, Level) borrows that directly instead
+# of trying to reverse-engineer the abbreviations.
+_BANK_LINE_RE = re.compile(r'^\s*\d+\.\)\s*(.+?)\s*\[(.+)\]\s*$')
+_BANK_SLOT_MAP = {
+    'head': 'head', 'feet': 'feet', 'hands': 'hands', 'legs': 'legs',
+    'jewel': 'jewel', 'cloak': 'cloak', 'body': 'body', 'weap': 'weapon',
+    'shield': 'shield',
+}
+
+
+def _parse_bank_paste_text(text):
+    """Parse a pasted bank/inventory listing into (owned_keys, recognized)
+    - owned_keys is a set of (cleaned item name lower, canonical slot,
+    level string) tuples, one per recognized equippable line; recognized
+    is how many lines qualified (lines that don't match the "N.) name
+    [tags]" format at all - like the "Items in Strongbox..." header - or
+    that describe a consumable/held item rather than gear are silently
+    skipped, not counted as an error)."""
+    owned_keys = set()
+    recognized = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = _BANK_LINE_RE.match(line)
+        if not m:
+            continue
+        raw_name, tags_str = m.groups()
+        tags = [t.strip() for t in tags_str.split('|')]
+        if len(tags) < 2 or not tags[0].isdigit():
+            continue  # consumable/potion (e.g. "restpot5") - no numeric Level
+        level = tags[0]
+        slot = _BANK_SLOT_MAP.get(tags[1].strip().lower())
+        if not slot:
+            continue  # "Held Left", "Uses N", or an unrecognized slot tag
+        cleaned = LootParser.clean_item_name(raw_name).strip().lower()
+        if not cleaned:
+            continue
+        owned_keys.add((cleaned, slot, level))
+        recognized += 1
+    return owned_keys, recognized
+
+
+def _bank_item_key(item):
+    """Same (name, slot, level) shape as _parse_bank_paste_text's keys, but
+    computed from a master_data item dict instead of a pasted line."""
+    return (
+        (item.get('Item') or '').strip().lower(),
+        (item.get('Slot') or '').strip().lower(),
+        str(item.get('Level') or '').strip(),
+    )
 
 
 class ItemMatchDialog(tk.Toplevel):
@@ -2335,6 +2399,9 @@ class App(tk.Tk):
         self.build_weapon_subtab = ttk.Frame(self.build_sub_notebook, padding=4)
         self.build_sub_notebook.add(self.build_weapon_subtab, text='Weapon Constraints')
 
+        self.build_bank_subtab = ttk.Frame(self.build_sub_notebook, padding=8)
+        self.build_sub_notebook.add(self.build_bank_subtab, text='Bank Build')
+
         # Armor type constraints - built now (into the Armor Constraints
         # sub-tab above) even though the rest of the Search sub-tab's
         # widgets are constructed further below; order of construction
@@ -3053,6 +3120,46 @@ class App(tk.Tk):
         
         # Store loaded data
         self.master_data = []
+        self._bank_owned_keys = None
+
+        # Bank Build - paste a bank/inventory listing and build the best
+        # gear combo either strictly from those items, or from the whole
+        # master database with owned items favored - see _find_bank_build.
+        # Every other constraint (Wanted Spells, Armor/Weapon Constraints,
+        # Min/Max Level, etc.) still applies exactly as normal; this only
+        # adds ownership as an extra dimension on top.
+        bank_tab = self.build_bank_subtab
+        ttk.Label(bank_tab, text="Paste a bank/inventory listing below, then click "
+                 "\"Find Best Bank Build\".", foreground='#666').pack(anchor='w', pady=(0,6))
+
+        bank_text_frame = ttk.Frame(bank_tab)
+        bank_text_frame.pack(fill='both', expand=True)
+        self.bank_paste_text = tk.Text(bank_text_frame, height=14, wrap='none')
+        bank_vsb = ttk.Scrollbar(bank_text_frame, orient='vertical', command=self.bank_paste_text.yview)
+        bank_hsb = ttk.Scrollbar(bank_text_frame, orient='horizontal', command=self.bank_paste_text.xview)
+        self.bank_paste_text.configure(yscrollcommand=bank_vsb.set, xscrollcommand=bank_hsb.set)
+        self.bank_paste_text.grid(row=0, column=0, sticky='nsew')
+        bank_vsb.grid(row=0, column=1, sticky='ns')
+        bank_hsb.grid(row=1, column=0, sticky='ew')
+        bank_text_frame.rowconfigure(0, weight=1)
+        bank_text_frame.columnconfigure(0, weight=1)
+
+        bank_controls_frame = ttk.Frame(bank_tab)
+        bank_controls_frame.pack(fill='x', pady=(8,0))
+        self.bank_prioritize_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(bank_controls_frame,
+                       text="Prioritize items I own (search everything, but favor owned items over ones you don't have)",
+                       variable=self.bank_prioritize_var).pack(side='left')
+        ttk.Button(bank_controls_frame, text="🏦 Find Best Bank Build",
+                  command=self._find_bank_build).pack(side='left', padx=(16,4))
+        ttk.Button(bank_controls_frame, text="Clear",
+                  command=self._clear_bank_paste).pack(side='left', padx=4)
+
+        self.bank_status = ttk.Label(bank_tab, text=(
+            "Unchecked: only pasted items are considered - the best build achievable from what you own right now. "
+            "Checked: searches everything, just favoring items you own when otherwise close."),
+            foreground='#666', wraplength=760, justify='left')
+        self.bank_status.pack(anchor='w', pady=(6,0))
 
         # Shared controls - Min/Max/Specific Level and the search buttons -
         # packed under the sub-notebook rather than inside any one sub-tab,
@@ -4714,6 +4821,59 @@ class App(tk.Tk):
 
         return crafted_count, used_claw_items
 
+    def _clear_bank_paste(self):
+        """Clear the Bank Build paste box and its status line"""
+        self.bank_paste_text.delete('1.0', tk.END)
+        self.bank_status.config(text=(
+            "Unchecked: only pasted items are considered - the best build achievable from what you own right now. "
+            "Checked: searches everything, just favoring items you own when otherwise close."))
+
+    def _find_bank_build(self):
+        """Parse the pasted bank/inventory listing, then run Find Optimal
+        Build either restricted to just those items ("Prioritize" off) or
+        against the full master database with owned items favored
+        ("Prioritize" on) - see W_BANK_OWNED/_is_bank_owned in
+        _find_optimal_build for how the latter is scored."""
+        if not self.master_data:
+            messagebox.showwarning("No Data", "Please load a master database first")
+            return
+
+        text = self.bank_paste_text.get('1.0', tk.END)
+        owned_keys, recognized = _parse_bank_paste_text(text)
+        if not owned_keys:
+            messagebox.showwarning("No Items",
+                "No equippable items were recognized in the pasted text. Expected lines like:\n"
+                "12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]")
+            return
+
+        matched_items = [item for item in self.master_data if _bank_item_key(item) in owned_keys]
+        matched_key_count = len({_bank_item_key(item) for item in matched_items})
+        unmatched_count = len(owned_keys) - matched_key_count
+
+        if self.bank_prioritize_var.get():
+            self._bank_owned_keys = owned_keys
+            try:
+                self._find_optimal_build()
+            finally:
+                self._bank_owned_keys = None
+            mode_text = "searched everything, prioritizing owned items"
+        else:
+            if not matched_items:
+                messagebox.showwarning("No Matches",
+                    "None of the pasted items were recognized against the loaded master database.")
+                return
+            original_master_data = self.master_data
+            self.master_data = matched_items
+            try:
+                self._find_optimal_build()
+            finally:
+                self.master_data = original_master_data
+            mode_text = "restricted to owned items only"
+
+        self.bank_status.config(
+            text=f"Parsed {recognized} equippable item(s) from the paste - {matched_key_count} recognized in the "
+                 f"master database ({unmatched_count} not found/unmatched) - {mode_text}.")
+
     def _find_optimal_build(self):
         """Find optimal item combination that covers ALL wanted spells"""
         # Set this immediately, before any validation checks below can
@@ -4778,6 +4938,14 @@ class App(tk.Tk):
         # Sigil value instead of its Spell, and only for the armor slots
         # Wanted Sigils applies to (see ARMOR_SIGIL_SLOTS).
         wanted_sigils_lower = {s.strip().lower() for s in wanted_sigils}
+
+        # Bank Build's "Prioritize items I own" - set by _find_bank_build
+        # right before calling this, cleared right after. None (the normal
+        # case, every other search) means owned_match is always 0 below.
+        bank_owned_keys = getattr(self, '_bank_owned_keys', None)
+
+        def _is_bank_owned(item):
+            return bool(bank_owned_keys) and _bank_item_key(item) in bank_owned_keys
 
         # Clear previous results
         self.search_results_tv.delete(*self.search_results_tv.get_children())
@@ -5497,6 +5665,12 @@ class App(tk.Tk):
         # but above the passive per-slot Sigil preference dropdown since
         # this is a more deliberate ask than that soft tie-break.
         W_WANTED_SIGIL = 10**39
+        # Bank Build's "Prioritize items I own" - deliberately below
+        # W_TIER_PRIORITY/W_PRIORITY/W_COVERAGE (an actual Wanted Spell/
+        # Priority Tier need still wins over mere ownership), but above
+        # W_WANTED_SIGIL since owning an item is a firmer asset than a
+        # soft Sigil wish. 0 for every candidate outside Bank Build.
+        W_BANK_OWNED = 10**40
         W_TIER_PRIORITY = 10**42
         W_PRIORITY = 10**48
         W_COVERAGE = 10**54
@@ -5546,6 +5720,11 @@ class App(tk.Tk):
                 wanted_sigil_match = 1 if (lookup_slot in ARMOR_SIGIL_SLOTS
                                             and item_sigil in wanted_sigils_lower) else 0
 
+                # Bank Build's "Prioritize items I own" - always 0 outside
+                # that flow (bank_owned_keys is None), so this is a no-op
+                # for every other search.
+                owned_match = 1 if _is_bank_owned(item) else 0
+
                 # Zero-coverage items are normally useless (they can never
                 # win over "leave the slot empty"), except weapon/shield
                 # slots a combo has mandated be filled regardless of spell,
@@ -5575,14 +5754,15 @@ class App(tk.Tk):
                     _melee_constraint_score(item, item_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
 
                 sig = (item_bitmask, priority_matches, tier_priority_match, sigil_match,
-                       sigil_level, wanted_sigil_match, melee_priority_match, melee_match,
+                       sigil_level, wanted_sigil_match, owned_match, melee_priority_match, melee_match,
                        defense_priority_match, item_tier, is_crafted)
                 prev = seen.get(sig)
                 if prev is None or item_level_num > prev[1]:
                     seen[sig] = (item, item_level_num)
 
             candidates_by_slot[lookup_slot] = [
-                (item, sig[0], sig[1], sig[2], sig[3], sig[4], sig[5], sig[6], sig[7], sig[8], sig[9], lvl, sig[10])
+                (item, sig[0], sig[1], sig[2], sig[3], sig[4], sig[5], sig[6], sig[7], sig[8], sig[9],
+                 sig[10], lvl, sig[11])
                 for sig, (item, lvl) in seen.items()
             ]
 
@@ -5603,8 +5783,8 @@ class App(tk.Tk):
             best_choice = None
 
             for (item, item_bitmask, priority_matches, tier_priority_match, sigil_match, sigil_level,
-                 wanted_sigil_match, melee_priority_match, melee_match, defense_priority_match, item_tier,
-                 item_level_num, is_crafted) in candidates_by_slot.get(lookup_slot, []):
+                 wanted_sigil_match, owned_match, melee_priority_match, melee_match, defense_priority_match,
+                 item_tier, item_level_num, is_crafted) in candidates_by_slot.get(lookup_slot, []):
                 new_bases = item_bitmask & ~covered
                 # Same fallback as above: a combo-mandated weapon/shield slot
                 # can still take a zero-new-coverage item (any positive score
@@ -5642,6 +5822,7 @@ class App(tk.Tk):
                               + effective_priority_matches * W_PRIORITY
                               + effective_tier_priority_match * W_TIER_PRIORITY
                               + wanted_sigil_match * W_WANTED_SIGIL
+                              + owned_match * W_BANK_OWNED
                               + sigil_match * W_SIGIL_MATCH
                               + sigil_level * W_SIGIL_LEVEL
                               + melee_priority_match * W_MELEE_PRIORITY_MATCH
@@ -5713,6 +5894,7 @@ class App(tk.Tk):
             item_sigil_match, item_sigil_level = _sigil_priority_score(item, lookup_slot)
             item_wanted_sigil_match = 1 if (lookup_slot in ARMOR_SIGIL_SLOTS
                                              and (item.get('Sigil') or '').strip().lower() in wanted_sigils_lower) else 0
+            item_owned_match = 1 if _is_bank_owned(item) else 0
             item_melee_priority_match, item_melee_match = (
                 _melee_constraint_score(item, item_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
             try:
@@ -5720,7 +5902,7 @@ class App(tk.Tk):
             except (ValueError, TypeError):
                 item_level_num = 0
             chosen_key = (priority_matches, tier_priority_match, item_sigil_match, item_sigil_level,
-                          item_wanted_sigil_match, item_melee_priority_match, item_melee_match,
+                          item_wanted_sigil_match, item_owned_match, item_melee_priority_match, item_melee_match,
                           item_defense_priority_match, item_tier, item_level_num)
 
             alternates = []
@@ -5756,6 +5938,7 @@ class App(tk.Tk):
                 other_sigil_match, other_sigil_level = _sigil_priority_score(other, lookup_slot)
                 other_wanted_sigil_match = 1 if (lookup_slot in ARMOR_SIGIL_SLOTS
                                                   and (other.get('Sigil') or '').strip().lower() in wanted_sigils_lower) else 0
+                other_owned_match = 1 if _is_bank_owned(other) else 0
                 other_melee_priority_match, other_melee_match = (
                     _melee_constraint_score(other, other_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
                 try:
@@ -5763,7 +5946,7 @@ class App(tk.Tk):
                 except (ValueError, TypeError):
                     other_level_num = 0
                 other_key = (other_priority_matches, other_tier_priority_match, other_sigil_match, other_sigil_level,
-                            other_wanted_sigil_match, other_melee_priority_match, other_melee_match,
+                            other_wanted_sigil_match, other_owned_match, other_melee_priority_match, other_melee_match,
                             other_defense_priority_match, other_tier, other_level_num)
                 if other_key != chosen_key:
                     continue
@@ -5800,7 +5983,7 @@ class App(tk.Tk):
 
             best_item = None
             best_matched_bases = []
-            best_key = (-1, -1, -1, -1, -1, -1, -1, -1, -1, -1)
+            best_key = (-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1)
             tied_items = []
 
             for item in items_by_slot[lookup_slot]:
@@ -5843,8 +6026,10 @@ class App(tk.Tk):
                     except (ValueError, TypeError):
                         claw_sigil_level = 0
 
+                owned_match = 1 if _is_bank_owned(item) else 0
+
                 key = (priority_matches, len(matched_bases), tier_priority_match,
-                      claw_sigil_match, claw_sigil_level,
+                      claw_sigil_match, claw_sigil_level, owned_match,
                       melee_priority_match, melee_match, defense_priority_match,
                       item_tier, item_level_num)
                 if key > best_key:
