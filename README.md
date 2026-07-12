@@ -137,6 +137,7 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 ### v5.1.1 (Current)
 - Class Specific: added Reverb.enhance
 - Class Specific spells no longer offer tier iii in the tier dropdown (none of them go that high) - just (any)/i/ii now
+- Added a Bank column (farthest left) to Build Search Results: shows a 📦 icon on any row whose item came from a Bank Build paste - most useful with "Prioritize items I own" checked, where it's the only way to tell which recommended items you already have versus which you'd still need to get
 
 ### v5.1.0
 - Added a Bank Build tab (Build > Bank Build): paste a bank/inventory listing (the same format the game's own "Items in Strongbox" listing uses) and click "Find Best Bank Build" to get the best gear combo using it. "Prioritize items I own" unchecked restricts the search to only what you pasted; checked instead searches the full database like a normal build, just favoring owned items over non-owned ones when otherwise close. Every other setting (Wanted Spells, Armor/Weapon Constraints, etc.) still applies exactly as normal on top of this

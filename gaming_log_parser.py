@@ -3273,7 +3273,7 @@ class App(tk.Tk):
         results_frame = ttk.LabelFrame(t, text="Suggested Build", padding=10)
         results_frame.pack(fill='both', expand=True)
         
-        cols = ('Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Mob', 'Area', 'Div', 'Alt Options')
+        cols = ('Bank', 'Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Mob', 'Area', 'Div', 'Alt Options')
         col_widths = {'Slot': 55, 'Item': 200, 'Type': 60, 'Spell': 100, 'Sigil': 60, 'Level': 45,
                      'Mob': 120, 'Area': 120, 'Alt Options': 280}
         self.search_results_tv = ttk.Treeview(results_frame, columns=cols,
@@ -3282,6 +3282,14 @@ class App(tk.Tk):
             if col == 'Div':
                 self.search_results_tv.heading(col, text='')
                 self.search_results_tv.column(col, width=14, stretch=False, anchor='center')
+            elif col == 'Bank':
+                # Marks a row whose item came from a Bank Build paste (see
+                # _build_dict_to_rows) - a plain emoji "icon" cell rather
+                # than an image, same "icon-as-text" pattern already used
+                # throughout this app's buttons/labels. Fixed-width like
+                # Div, not autosized, since it only ever holds one glyph.
+                self.search_results_tv.heading(col, text='📦', anchor='center')
+                self.search_results_tv.column(col, width=28, stretch=False, anchor='center')
             else:
                 heading_anchor = 'w' if col == 'Alt Options' else 'center'
                 self.search_results_tv.heading(col, text=col, anchor=heading_anchor)
@@ -4282,8 +4290,8 @@ class App(tk.Tk):
                     if not str(tv.item(iid)['values'][0]).startswith('█')]
 
         for idx, col in enumerate(cols):
-            if col == 'Div':
-                continue  # fixed-width visual spacer, not content-driven
+            if col in ('Div', 'Bank'):
+                continue  # fixed-width visual spacer/icon column, not content-driven
             max_width = font.measure(tv.heading(col)['text'])
             for values in real_rows:
                 w = font.measure(str(values[idx]))
@@ -4314,7 +4322,7 @@ class App(tk.Tk):
                     display_slot = ('jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw')
                                     else 'off-hand' if slot == 'weapon_off' else slot)
                     rows.append((
-                        display_slot.title(), 'No suitable item found',
+                        '', display_slot.title(), 'No suitable item found',
                         '', '', '', '', '', '', '████████', '(none)'
                     ))
                 continue
@@ -4358,6 +4366,7 @@ class App(tk.Tk):
             alt_text = ', '.join(text for _, text in alts) if alts else '(none)'
 
             rows.append((
+                '📦' if self._is_bank_owned(item) else '',
                 display_slot.title(),
                 item.get('Item', ''),
                 item.get('Type', ''),
@@ -4556,13 +4565,13 @@ class App(tk.Tk):
         """Collect the currently displayed results as (headers, rows), with
         the visual Div spacer column and any divider rows (between stacked
         build variants) stripped out - shared by every "Save As" format."""
-        headers = ['Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Mob', 'Area', 'Alt Options']
+        headers = ['Bank', 'Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Mob', 'Area', 'Alt Options']
         rows = []
         for item_id in self.search_results_tv.get_children():
             values = list(self.search_results_tv.item(item_id)['values'])
             if str(values[0]).startswith('█'):
                 continue  # divider row between stacked build variants
-            del values[8]  # drop the Div spacer column
+            del values[9]  # drop the Div spacer column
             rows.append(values)
         return headers, rows
 
@@ -4876,6 +4885,14 @@ class App(tk.Tk):
             text=f"Parsed {recognized} equippable item(s) from the paste - {matched_key_count} recognized in the "
                  f"master database ({unmatched_count} not found/unmatched) - {mode_text}.")
 
+    def _is_bank_owned(self, item):
+        """True if this item matches something from the currently active
+        Bank Build paste - self._bank_owned_keys is only set (non-None)
+        while a Bank Build "Prioritize" search is actually running (see
+        _find_bank_build). Also used by _build_dict_to_rows to mark a
+        result row with the Bank column's icon."""
+        return bool(self._bank_owned_keys) and _bank_item_key(item) in self._bank_owned_keys
+
     def _find_optimal_build(self):
         """Find optimal item combination that covers ALL wanted spells"""
         # Set this immediately, before any validation checks below can
@@ -4941,13 +4958,10 @@ class App(tk.Tk):
         # Wanted Sigils applies to (see ARMOR_SIGIL_SLOTS).
         wanted_sigils_lower = {s.strip().lower() for s in wanted_sigils}
 
-        # Bank Build's "Prioritize items I own" - set by _find_bank_build
-        # right before calling this, cleared right after. None (the normal
-        # case, every other search) means owned_match is always 0 below.
-        bank_owned_keys = getattr(self, '_bank_owned_keys', None)
-
-        def _is_bank_owned(item):
-            return bool(bank_owned_keys) and _bank_item_key(item) in bank_owned_keys
+        # Bank Build's "Prioritize items I own" - self._bank_owned_keys is
+        # set by _find_bank_build right before calling this, cleared right
+        # after (see _is_bank_owned). None (the normal case, every other
+        # search) means owned_match is always 0 below.
 
         # Clear previous results
         self.search_results_tv.delete(*self.search_results_tv.get_children())
@@ -5725,7 +5739,7 @@ class App(tk.Tk):
                 # Bank Build's "Prioritize items I own" - always 0 outside
                 # that flow (bank_owned_keys is None), so this is a no-op
                 # for every other search.
-                owned_match = 1 if _is_bank_owned(item) else 0
+                owned_match = 1 if self._is_bank_owned(item) else 0
 
                 # Zero-coverage items are normally useless (they can never
                 # win over "leave the slot empty"), except weapon/shield
@@ -5896,7 +5910,7 @@ class App(tk.Tk):
             item_sigil_match, item_sigil_level = _sigil_priority_score(item, lookup_slot)
             item_wanted_sigil_match = 1 if (lookup_slot in ARMOR_SIGIL_SLOTS
                                              and (item.get('Sigil') or '').strip().lower() in wanted_sigils_lower) else 0
-            item_owned_match = 1 if _is_bank_owned(item) else 0
+            item_owned_match = 1 if self._is_bank_owned(item) else 0
             item_melee_priority_match, item_melee_match = (
                 _melee_constraint_score(item, item_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
             try:
@@ -5940,7 +5954,7 @@ class App(tk.Tk):
                 other_sigil_match, other_sigil_level = _sigil_priority_score(other, lookup_slot)
                 other_wanted_sigil_match = 1 if (lookup_slot in ARMOR_SIGIL_SLOTS
                                                   and (other.get('Sigil') or '').strip().lower() in wanted_sigils_lower) else 0
-                other_owned_match = 1 if _is_bank_owned(other) else 0
+                other_owned_match = 1 if self._is_bank_owned(other) else 0
                 other_melee_priority_match, other_melee_match = (
                     _melee_constraint_score(other, other_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
                 try:
@@ -6028,7 +6042,7 @@ class App(tk.Tk):
                     except (ValueError, TypeError):
                         claw_sigil_level = 0
 
-                owned_match = 1 if _is_bank_owned(item) else 0
+                owned_match = 1 if self._is_bank_owned(item) else 0
 
                 key = (priority_matches, len(matched_bases), tier_priority_match,
                       claw_sigil_match, claw_sigil_level, owned_match,
@@ -6485,6 +6499,7 @@ class App(tk.Tk):
                     covered_spells.add(wanted)
             
             row = (
+                '',
                 slot.title(),
                 item.get('Item', ''),
                 item.get('Type', ''),
