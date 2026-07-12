@@ -1322,6 +1322,7 @@ class App(tk.Tk):
         self.geometry("1350x815")
         self.minsize(1150, 750)
         self.resizable(True, True)
+        self._set_app_icon()
 
         self.files: list[dict] = []       # {path, name, size, type}
         self.parsed = {'chat': [], 'combat': [], 'loot': []}
@@ -4001,6 +4002,26 @@ class App(tk.Tk):
         if path:
             self.search_master_path.set(path)
     
+    def _set_app_icon(self):
+        """Set the window/taskbar icon from the bundled swirl_icon.ico, if
+        present - same "look next to the script, bundled via --add-data"
+        lookup as _find_community_list_path. iconbitmap(default=...) also
+        propagates to every Toplevel dialog (ItemMatchDialog, etc.), not
+        just the main window. Wrapped in try/except since a missing or
+        unreadable icon file shouldn't ever stop the app from starting."""
+        possible_paths = [
+            os.path.join(os.path.dirname(__file__), 'swirl_icon.ico'),
+            'swirl_icon.ico',
+            os.path.join(os.path.dirname(__file__), '..', 'swirl_icon.ico'),
+        ]
+        for path in possible_paths:
+            if os.path.exists(path):
+                try:
+                    self.iconbitmap(default=os.path.abspath(path))
+                except tk.TclError:
+                    pass
+                return
+
     def _find_community_list_path(self):
         """Look for the bundled community equipment list in common locations,
         returning its absolute path or None if it isn't found."""
