@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.1.5"
+VERSION = "5.1.6"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1042,55 +1042,109 @@ def _item_tier_rank(item_spell):
 
 # Bank Build - parses a pasted bank/inventory listing (see
 # App._find_bank_build) into a set of "owned item" keys that can be looked
-# up against self.master_data. One line looks like:
-#   12.) a softly glowing mushroom wreath necklace [60|Jewel|elementalprotect1]
-# The bracket's tags are a numeric Level followed by a Slot name (or, for
-# consumables/held junk that isn't equippable gear at all, something else
-# entirely - "Held Left", "Uses N", or no numeric Level as the first tag -
-# those are skipped outright rather than guessed at). The trailing tags
-# after Level/Slot are the game client's own abbreviated stat codes (e.g.
-# "CP2", "M5") - deliberately never decoded here: the same item name
-# already exists in the master database with real Spell/Sigil/Type data,
-# so matching by (cleaned name, Slot, Level) borrows that directly instead
-# of trying to reverse-engineer the abbreviations.
+# up against self.master_data. Four paste shapes are recognized, each
+# handled by its own regex below but all feeding the same owned_keys set:
+#
+# 1. Strongbox listing, numbered:
+#      12.) a softly glowing mushroom wreath necklace [60|Jewel|elementalprotect1]
+# 2. Strongbox listing, unnumbered (same bracket shape, no "N.)" prefix):
+#      a softly glowing mushroom wreath necklace [60|Jewel|elementalprotect1]
+#    For both 1 and 2, the bracket's tags are a numeric Level followed by a
+#    Slot name (or, for consumables/held junk that isn't equippable gear at
+#    all, something else entirely - "Held Left", "Uses N", or no numeric
+#    Level as the first tag - those are skipped outright rather than
+#    guessed at). Trailing tags after Level/Slot are the game client's own
+#    abbreviated stat codes (e.g. "CP2", "M5") - deliberately never decoded
+#    here: the same item name already exists in the master database with
+#    real Spell/Sigil/Type data, so matching by (cleaned name, Slot, Level)
+#    borrows that directly instead of trying to reverse-engineer the codes.
+# 3. "Inventory:" listing - only "(w)" (worn/equipped) lines count; a bare
+#    quantity like "( 3)" or an unmarked line is inventory clutter, not
+#    gear, and is skipped:
+#      (w) A lustrous wispweave hood of fallen snow
+#       ( 3) A bottle of Buccaneer's rum
+#    No Slot/Level is present here, so the key wildcards both (matched by
+#    name alone - see _bank_owned_match).
+# 4. "Items in use:" listing - explicit Slot, no Level ("nothing" means the
+#    slot is empty and is skipped):
+#      On Head:  a lustrous wispweave hood of fallen snow
+#      Held Left:  nothing
+#    The key wildcards Level only, since Slot is known here.
 _BANK_LINE_RE = re.compile(r'^\s*\d+\.\)\s*(.+?)\s*\[(.+)\]\s*$')
+_BANK_LINE_RE_UNNUMBERED = re.compile(r'^\s*(.+?)\s*\[(.+)\]\s*$')
+_BANK_INVENTORY_WORN_RE = re.compile(r'^\s*\(\s*[wW]\s*\)\s*(.+?)\s*$')
+_BANK_EQUIPPED_RE = re.compile(r'^\s*(On\s+[A-Za-z]+|Held\s+Right|Held\s+Left)\s*:\s*(.+?)\s*$', re.IGNORECASE)
 _BANK_SLOT_MAP = {
     'head': 'head', 'feet': 'feet', 'hands': 'hands', 'legs': 'legs',
     'jewel': 'jewel', 'cloak': 'cloak', 'body': 'body', 'weap': 'weapon',
     'shield': 'shield',
 }
+_BANK_EQUIPPED_SLOT_MAP = {
+    'head': 'head', 'feet': 'feet', 'hands': 'hands', 'legs': 'legs',
+    'jewel': 'jewel', 'cloak': 'cloak', 'body': 'body',
+    'held right': 'weapon', 'held left': 'shield',
+}
 
 
 def _parse_bank_paste_text(text):
-    """Parse a pasted bank/inventory listing into (owned_keys, recognized)
-    - owned_keys is a set of (cleaned item name lower, canonical slot,
-    level string) tuples, one per recognized equippable line; recognized
-    is how many lines qualified (lines that don't match the "N.) name
-    [tags]" format at all - like the "Items in Strongbox..." header - or
-    that describe a consumable/held item rather than gear are silently
-    skipped, not counted as an error)."""
+    """Parse a pasted bank/inventory listing into (owned_keys, recognized).
+    owned_keys is a set of (cleaned item name lower, slot or None, level
+    string or None) tuples - None marks a field the paste format doesn't
+    provide, matched as a wildcard by _bank_owned_match. recognized is how
+    many lines qualified across all four supported formats (see the module
+    comment above); everything else - format headers like "Items in
+    Strongbox..."/"Inventory:", unmarked/quantity inventory lines,
+    consumables, "nothing" equip slots - is silently skipped, not counted
+    as an error."""
     owned_keys = set()
     recognized = 0
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
-        m = _BANK_LINE_RE.match(line)
-        if not m:
+
+        m = _BANK_LINE_RE.match(line) or _BANK_LINE_RE_UNNUMBERED.match(line)
+        if m:
+            raw_name, tags_str = m.groups()
+            tags = [t.strip() for t in tags_str.split('|')]
+            if len(tags) < 2 or not tags[0].isdigit():
+                continue  # consumable/potion (e.g. "restpot5") - no numeric Level
+            level = tags[0]
+            slot = _BANK_SLOT_MAP.get(tags[1].strip().lower())
+            if not slot:
+                continue  # "Held Left", "Uses N", or an unrecognized slot tag
+            cleaned = LootParser.clean_item_name(raw_name).strip().lower()
+            if not cleaned:
+                continue
+            owned_keys.add((cleaned, slot, level))
+            recognized += 1
             continue
-        raw_name, tags_str = m.groups()
-        tags = [t.strip() for t in tags_str.split('|')]
-        if len(tags) < 2 or not tags[0].isdigit():
-            continue  # consumable/potion (e.g. "restpot5") - no numeric Level
-        level = tags[0]
-        slot = _BANK_SLOT_MAP.get(tags[1].strip().lower())
-        if not slot:
-            continue  # "Held Left", "Uses N", or an unrecognized slot tag
-        cleaned = LootParser.clean_item_name(raw_name).strip().lower()
-        if not cleaned:
+
+        m = _BANK_INVENTORY_WORN_RE.match(line)
+        if m:
+            cleaned = LootParser.clean_item_name(m.group(1)).strip().lower()
+            if cleaned:
+                owned_keys.add((cleaned, None, None))
+                recognized += 1
             continue
-        owned_keys.add((cleaned, slot, level))
-        recognized += 1
+
+        m = _BANK_EQUIPPED_RE.match(line)
+        if m:
+            label, value = m.groups()
+            if value.strip().lower() == 'nothing':
+                continue
+            label_key = label.strip().lower()
+            if label_key.startswith('on '):
+                label_key = label_key[3:].strip()
+            slot = _BANK_EQUIPPED_SLOT_MAP.get(label_key)
+            if not slot:
+                continue
+            cleaned = LootParser.clean_item_name(value).strip().lower()
+            if cleaned:
+                owned_keys.add((cleaned, slot, None))
+                recognized += 1
+            continue
+
     return owned_keys, recognized
 
 
@@ -1101,6 +1155,20 @@ def _bank_item_key(item):
         (item.get('Item') or '').strip().lower(),
         (item.get('Slot') or '').strip().lower(),
         str(item.get('Level') or '').strip(),
+    )
+
+
+def _bank_owned_match(item_key, owned_keys):
+    """True if a master_data item's (name, slot, level) key matches any
+    owned key, where an owned key's slot and/or level may be None -
+    a wildcard for paste formats that don't carry that information (see
+    _parse_bank_paste_text)."""
+    name, slot, level = item_key
+    return (
+        item_key in owned_keys
+        or (name, slot, None) in owned_keys
+        or (name, None, level) in owned_keys
+        or (name, None, None) in owned_keys
     )
 
 
@@ -5049,11 +5117,13 @@ class App(tk.Tk):
         owned_keys, recognized = _parse_bank_paste_text(text)
         if not owned_keys:
             messagebox.showwarning("No Items",
-                "No equippable items were recognized in the pasted text. Expected lines like:\n"
-                "12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]")
+                "No equippable items were recognized in the pasted text. Expected a Strongbox "
+                "listing (\"12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]\", "
+                "the \"12.)\" is optional), an Inventory listing (only \"(w)\" lines count), or an "
+                "Items in use listing (\"On Head:  ...\").")
             return
 
-        matched_items = [item for item in self.master_data if _bank_item_key(item) in owned_keys]
+        matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
         matched_key_count = len({_bank_item_key(item) for item in matched_items})
         unmatched_count = len(owned_keys) - matched_key_count
 
@@ -5128,11 +5198,13 @@ class App(tk.Tk):
         owned_keys, recognized = _parse_bank_paste_text(text)
         if not owned_keys:
             messagebox.showwarning("No Items",
-                "No equippable items were recognized in the pasted text. Expected lines like:\n"
-                "12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]")
+                "No equippable items were recognized in the pasted text. Expected a Strongbox "
+                "listing (\"12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]\", "
+                "the \"12.)\" is optional), an Inventory listing (only \"(w)\" lines count), or an "
+                "Items in use listing (\"On Head:  ...\").")
             return
 
-        matched_items = [item for item in self.master_data if _bank_item_key(item) in owned_keys]
+        matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
         matched_key_count = len({_bank_item_key(item) for item in matched_items})
         unmatched_count = len(owned_keys) - matched_key_count
 
@@ -5170,7 +5242,7 @@ class App(tk.Tk):
         while a Bank Build "Prioritize" search is actually running (see
         _find_bank_build). Also used by _build_dict_to_rows to mark a
         result row with the Bank column's icon."""
-        return bool(self._bank_owned_keys) and _bank_item_key(item) in self._bank_owned_keys
+        return bool(self._bank_owned_keys) and _bank_owned_match(_bank_item_key(item), self._bank_owned_keys)
 
     def _find_optimal_build(self):
         """Find optimal item combination that covers ALL wanted spells"""
