@@ -3146,20 +3146,37 @@ class App(tk.Tk):
         bank_text_frame.rowconfigure(0, weight=1)
         bank_text_frame.columnconfigure(0, weight=1)
 
+        # Prioritize and Only are mutually exclusive modes for the same
+        # underlying choice (see _find_bank_build) - checking either one
+        # disables (and clears) the other, rather than letting both be
+        # checked at once with ambiguous meaning.
+        bank_checks_frame = ttk.Frame(bank_tab)
+        bank_checks_frame.pack(fill='x', pady=(8,0))
+
+        self.bank_prioritize_var = tk.BooleanVar(value=False)
+        self.bank_prioritize_checkbox = ttk.Checkbutton(bank_checks_frame,
+            text="Prioritize items I own (search everything, but favor owned items over ones you don't have)",
+            variable=self.bank_prioritize_var, command=self._on_bank_prioritize_toggle)
+        self.bank_prioritize_checkbox.pack(anchor='w')
+
+        self.bank_only_var = tk.BooleanVar(value=True)
+        self.bank_only_checkbox = ttk.Checkbutton(bank_checks_frame,
+            text="Only Items I own (build only from the pasted list, nothing else)",
+            variable=self.bank_only_var, command=self._on_bank_only_toggle)
+        self.bank_only_checkbox.pack(anchor='w', pady=(2,0))
+        # Only starts checked, so Prioritize starts disabled to match.
+        self.bank_prioritize_checkbox.config(state='disabled')
+
         bank_controls_frame = ttk.Frame(bank_tab)
         bank_controls_frame.pack(fill='x', pady=(8,0))
-        self.bank_prioritize_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(bank_controls_frame,
-                       text="Prioritize items I own (search everything, but favor owned items over ones you don't have)",
-                       variable=self.bank_prioritize_var).pack(side='left')
         ttk.Button(bank_controls_frame, text="🏦 Find Best Bank Build",
-                  command=self._find_bank_build).pack(side='left', padx=(16,4))
+                  command=self._find_bank_build).pack(side='left', padx=(0,4))
         ttk.Button(bank_controls_frame, text="Clear",
                   command=self._clear_bank_paste).pack(side='left', padx=4)
 
         self.bank_status = ttk.Label(bank_tab, text=(
-            "Unchecked: only pasted items are considered - the best build achievable from what you own right now. "
-            "Checked: searches everything, just favoring items you own when otherwise close."),
+            "\"Only\": only pasted items are considered - the best build achievable from what you own right now. "
+            "\"Prioritize\": searches everything, just favoring items you own when otherwise close."),
             foreground='#666', wraplength=760, justify='left')
         self.bank_status.pack(anchor='w', pady=(6,0))
 
@@ -4836,8 +4853,25 @@ class App(tk.Tk):
         """Clear the Bank Build paste box and its status line"""
         self.bank_paste_text.delete('1.0', tk.END)
         self.bank_status.config(text=(
-            "Unchecked: only pasted items are considered - the best build achievable from what you own right now. "
-            "Checked: searches everything, just favoring items you own when otherwise close."))
+            "\"Only\": only pasted items are considered - the best build achievable from what you own right now. "
+            "\"Prioritize\": searches everything, just favoring items you own when otherwise close."))
+
+    def _on_bank_only_toggle(self):
+        """Only Items I own and Prioritize items I own are mutually
+        exclusive - checking one clears and disables the other."""
+        if self.bank_only_var.get():
+            self.bank_prioritize_var.set(False)
+            self.bank_prioritize_checkbox.config(state='disabled')
+        else:
+            self.bank_prioritize_checkbox.config(state='normal')
+
+    def _on_bank_prioritize_toggle(self):
+        """See _on_bank_only_toggle - same mutual exclusion, other direction."""
+        if self.bank_prioritize_var.get():
+            self.bank_only_var.set(False)
+            self.bank_only_checkbox.config(state='disabled')
+        else:
+            self.bank_only_checkbox.config(state='normal')
 
     def _find_bank_build(self):
         """Parse the pasted bank/inventory listing, then run Find Optimal
