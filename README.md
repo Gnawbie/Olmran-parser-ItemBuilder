@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.1.4
+# Gaming Log Parser v5.1.5
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.1.4 (Current)
+### v5.1.5 (Current)
+- Fixed a rendering glitch where the Build tab's bottom controls (Min/Max/Specific Level, the "If no match at Specific Level" radio buttons, and the search buttons) could show garbled/overlapping text after maximizing or restoring the window - a known Windows + ttk 'clam' theme redraw bug, now worked around with a forced repaint on maximize/restore
+
+### v5.1.4
 - Only Found In now has an "All" checkbox - an explicit way to say "no realm restriction" instead of relying on every box being left unchecked to mean the same thing. Mutually exclusive with every individual box (checking one greys out the other side)
 
 ### v5.1.3

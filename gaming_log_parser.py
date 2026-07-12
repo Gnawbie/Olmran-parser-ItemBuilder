@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.1.4"
+VERSION = "5.1.5"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1341,6 +1341,34 @@ class App(tk.Tk):
 
         # Save config on close
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+        # Windows + the 'clam' theme sometimes leave stale/garbled pixels
+        # behind on custom-drawn ttk widgets (e.g. Radiobutton glyphs) when
+        # the window is maximized/restored, because Tk's damage-region
+        # tracking doesn't always invalidate the whole client area on that
+        # kind of native resize. Force a full repaint on any zoomed<->normal
+        # state change via a near-invisible alpha nudge, which makes DWM
+        # recomposite the whole window without actually resizing it.
+        self._last_wm_state = self.state()
+        self.bind('<Configure>', self._on_root_configure)
+
+    def _on_root_configure(self, event):
+        if event.widget is not self:
+            return
+        try:
+            current_state = self.state()
+        except tk.TclError:
+            return
+        if current_state != self._last_wm_state:
+            self._last_wm_state = current_state
+            self.after(50, self._force_full_redraw)
+
+    def _force_full_redraw(self):
+        try:
+            self.attributes('-alpha', 0.999)
+            self.after(10, lambda: self.attributes('-alpha', 1.0))
+        except tk.TclError:
+            pass
     
     def _load_config(self):
         """Load saved configuration from file"""
