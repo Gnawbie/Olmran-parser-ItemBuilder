@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.1.10"
+VERSION = "5.1.11"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -892,6 +892,15 @@ SPELL_VALUE_OVERRIDES = {
 
 _TIER_RANK = {'i': 1, 'ii': 2, 'iii': 3, 'iv': 4}
 
+# Items whose Area is one of these are excluded from self.master_data
+# entirely at load time (see _load_master_for_search), so every search -
+# Find Optimal Build, Show All Matches, Bank Build, Saved Items, Search
+# Missing Slots, all of it - never sees them, no matter where the search
+# comes from. "Class" items are excluded unconditionally for now; this is
+# expected to grow a per-search override later (letting some searches opt
+# back in), not just a permanent blanket ban.
+BLOCKED_AREAS = {'class'}
+
 DEFENSE_LEVELS = ['much worse', 'worse', 'normal', 'better', 'much better']
 DEFENSE_RANK = {level: i for i, level in enumerate(DEFENSE_LEVELS)}
 
@@ -994,6 +1003,25 @@ def _two_handed_matches(item_type, item_spell, style, damage):
     if style == 'Direct' and not _direct_weapon_eligible(item_spell):
         return False
     return _weapon_style_matches(item_type, style) and _weapon_damage_matches(item_type, damage)
+
+
+def _unicode_bold(text):
+    """Best-effort "bold" for a plain-text-only widget - a stock
+    ttk.Combobox's popdown is a single Tk Listbox, which only ever has one
+    font for the whole list, not per-substring styling, so there's no way
+    to bold just part of an entry through normal font/tag options. Maps
+    A-Z/0-9 to their Unicode Mathematical Bold code points instead; spaces
+    and anything else pass through unchanged (used for the Class Items
+    dropdown's Mob segment - see _refresh_blocked_area_dropdown)."""
+    out = []
+    for ch in text:
+        if 'A' <= ch <= 'Z':
+            out.append(chr(0x1D400 + (ord(ch) - ord('A'))))
+        elif '0' <= ch <= '9':
+            out.append(chr(0x1D7CE + (ord(ch) - ord('0'))))
+        else:
+            out.append(ch)
+    return ''.join(out)
 
 
 def _spell_base(spell):
@@ -3127,6 +3155,31 @@ class App(tk.Tk):
         ttk.Label(required_block, text="(e.g. a specific weapon/armor piece - typos are OK, it'll offer close matches)",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w', pady=(2,0))
 
+        # Class Items - items excluded from every search (see BLOCKED_AREAS)
+        # are still explicitly requestable here. Selecting one and adding it
+        # goes straight into Required Items, the same bypass any other
+        # Required Item already gets (see _assign_required_items) - this is
+        # the one deliberate way back in for an otherwise-excluded item.
+        blocked_area_input_frame = ttk.Frame(required_block)
+        blocked_area_input_frame.pack(fill='x', pady=(6,0))
+        ttk.Label(blocked_area_input_frame, text="Class Items:").pack(anchor='w')
+        self.blocked_area_var = tk.StringVar(value='')
+        self.blocked_area_items_by_display = {}
+        self.blocked_area_combo = ttk.Combobox(blocked_area_input_frame, textvariable=self.blocked_area_var,
+                                               state='readonly', width=24)
+        self.blocked_area_combo.pack(side='left', padx=(0,4), pady=(2,0))
+        # The closed box stays a fixed, narrow width, but its dropdown list
+        # widens to fit the longest "Item-Mob-Spell" entry - otherwise every
+        # value would be truncated in the popup too (see
+        # _setup_combobox_dropdown_widen for why this has to hook the
+        # popdown window itself, not just a click/keypress on the combo).
+        self._setup_combobox_dropdown_widen(self.blocked_area_combo)
+        ttk.Button(blocked_area_input_frame, text="Add to Build",
+                  command=self._add_blocked_area_required_item).pack(side='left', padx=4, pady=(2,0))
+
+        ttk.Label(required_block, text="(excluded from every search - only usable this way, as a Required Item)",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w', pady=(2,0))
+
         # Min/Max/Specific Level moved out to shared_controls_frame below
         # (see the comment at the top of this method) - Min/Max Tier stays
         # here since it's specific to this tab's spell/tier matching.
@@ -3278,6 +3331,7 @@ class App(tk.Tk):
         
         # Store loaded data
         self.master_data = []
+        self.blocked_area_items = []
         self._bank_owned_keys = None
 
         # Saved Items' "Hard Search" mode - see _find_saved_items_build,
@@ -4322,6 +4376,71 @@ class App(tk.Tk):
         self.required_item_var.set('')
         self._render_required_item_chips()
 
+    def _refresh_blocked_area_dropdown(self):
+        """Repopulate the Class Items dropdown from self.blocked_area_items
+        (set at master database load time - see _load_master_for_search),
+        formatted "Item-MOB-Spell" per entry, sorted by Mob (sorted on the
+        real value, not the displayed all-caps/bold one). The Mob segment
+        is upper-cased and rendered in (best-effort Unicode) bold via
+        _unicode_bold, to set it apart from the Item/Spell either side."""
+        display_strings = []
+        self.blocked_area_items_by_display = {}
+        sorted_items = sorted(self.blocked_area_items, key=lambda it: (it.get('Mob') or '').strip().lower())
+        for item in sorted_items:
+            mob_display = _unicode_bold((item.get('Mob') or '').strip().upper())
+            display = f"{item.get('Item', '')}-{mob_display}-{item.get('Spell', '')}"
+            display_strings.append(display)
+            self.blocked_area_items_by_display[display] = item
+        self.blocked_area_combo['values'] = display_strings
+        self.blocked_area_var.set('')
+
+    def _setup_combobox_dropdown_widen(self, combo):
+        """Make a ttk.Combobox's dropdown list widen to fit its longest
+        value while the closed box itself stays whatever fixed width it
+        was given. Setting the popdown's inner listbox -width alone has no
+        visible effect - ttk's own Tcl-level Post procedure (which runs on
+        every click/Down-arrow open) always resets the popdown toplevel's
+        geometry to match the combobox's own (narrow) width right before
+        showing it, overriding anything set beforehand. So instead this
+        hooks <Map> on the popdown toplevel itself (fires the instant it
+        actually becomes visible, i.e. right after Post's resize already
+        happened) and re-widens the toplevel's geometry at that moment -
+        recomputed fresh every time, so it always matches whatever values
+        are currently loaded. PopdownWindow creates the popdown toplevel
+        immediately if it doesn't exist yet, so this only needs to run
+        once, right after the combobox itself is created."""
+        popdown = combo.tk.call('ttk::combobox::PopdownWindow', combo)
+
+        def on_map():
+            values = combo['values']
+            if not values:
+                return
+            try:
+                font = tkfont.Font(font=combo.cget('font') or 'TkDefaultFont')
+                max_px = max(font.measure(str(v)) for v in values) + 30  # scrollbar/border slack
+                geo = combo.tk.call('wm', 'geometry', popdown)
+                m = re.match(r'\d+x(\d+)([+-]\d+[+-]\d+)', geo)
+                if m:
+                    height, pos = m.groups()
+                    combo.tk.call('wm', 'geometry', popdown, f'{max_px}x{height}{pos}')
+            except tk.TclError:
+                pass
+
+        funcid = combo.register(on_map)
+        combo.tk.call('bind', popdown, '<Map>', funcid)
+
+    def _add_blocked_area_required_item(self):
+        """Add the Class Items dropdown's current selection to Required
+        Items - the one deliberate way an excluded item can still end up
+        in a build (see BLOCKED_AREAS/_assign_required_items)."""
+        display = self.blocked_area_var.get()
+        if not display:
+            return
+        item = self.blocked_area_items_by_display.get(display)
+        if item is None:
+            return
+        self._confirm_and_add_required_item(item)
+
     def _remove_required_item(self, item):
         """Remove one required-item chip (called by a chip's own ✕ button)"""
         if item in self.required_items:
@@ -4506,6 +4625,13 @@ class App(tk.Tk):
 
             # Read all data
             self.master_data = []
+            # Kept separately rather than discarded outright - excluded from
+            # every search (see BLOCKED_AREAS), but still explicitly
+            # requestable via the Build tab's "Class Items" dropdown, which
+            # forces one straight into Required Items (bypassing the
+            # exclusion, same as any other Required Item bypasses every
+            # other filter - see _assign_required_items).
+            self.blocked_area_items = []
             headers = [cell.value for cell in ws[1]]
             item_col_idx = headers.index('Item') if 'Item' in headers else None
 
@@ -4523,16 +4649,23 @@ class App(tk.Tk):
                 for idx, header in enumerate(headers):
                     if header and idx < len(row):
                         item_dict[header] = row[idx].value or ''
-                if item_dict.get('Item'):  # Only add if has item name
-                    self.master_data.append(item_dict)
+                if not item_dict.get('Item'):  # Only add if has item name
+                    continue
+                if (item_dict.get('Area') or '').strip().lower() in BLOCKED_AREAS:
+                    self.blocked_area_items.append(item_dict)
+                    continue
+                self.master_data.append(item_dict)
 
             wb.close()
 
             status_text = f"✓ Loaded {len(self.master_data)} items from {os.path.basename(path)}"
             if skipped_struck:
                 status_text += f" ({skipped_struck} struck-through skipped)"
+            if self.blocked_area_items:
+                status_text += f" ({len(self.blocked_area_items)} Class-area items excluded)"
             self.search_status.config(text=status_text)
             self._refresh_area_items_dropdown()
+            self._refresh_blocked_area_dropdown()
             if hasattr(self, 'bank_saved_tv'):
                 self._refresh_bank_saved_tab()
             if not silent:

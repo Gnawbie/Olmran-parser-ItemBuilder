@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.1.10
+# Gaming Log Parser v5.1.11
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.1.10 (Current)
+### v5.1.11 (Current)
+- Items whose Area is "Class" are now excluded from every search (Find Optimal Build, Show All Matches, Bank Build, Saved Items, Search Missing Slots) - they're just never candidates anywhere
+- Added a "Class Items" dropdown next to Required Items (Basic Constraints), listing every excluded item as "Item-MOB-Spell" so one can still be deliberately forced into a build via Required Items - the one way back in for an otherwise-excluded item. The list is sorted by Mob, with Mob shown in bold caps; the closed dropdown stays a fixed width but its popup list widens to fit the longest entry
+
+### v5.1.10
 - Saved Items' "Hard Search" now holds each wanted spell's exact tier - it never quietly substitutes a lower/different tier the way every other search does. A slot with nothing at the exact tier shows "No available item" instead
 - Results tab: a new "Search Missing Slots (Full Database)" button appears whenever a Hard Search leaves gaps. It fills in just the missing slot(s) in place - every other slot's item, Alt Options, and Bank icon stay exactly as they were - by searching the full database for the same exact tier first; if nothing's found, it asks whether to accept a lower tier instead (yes searches and fills it in, no leaves it alone for another try later). A slot that's searched again and still comes up empty reads "No Items found after re-search"
 - Saved Items now has its own "Prioritize Saved Items" / "Hard Search" checkboxes and a "Find Best Bank Build" button, working the same way as Best Build's but sourced straight from the persisted Saved Items list instead of a fresh paste
