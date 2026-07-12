@@ -16,3 +16,12 @@ old/
 
 # Local per-user settings (created next to the script when run from source)
 .gaming_log_parser_config.json
+
+# Pre-release test build - launches with a hard-cleaned, isolated config
+# (see App.__init__'s OLMRAN_TEST_CONFIG handling) so changes can be tried
+# from a clean slate before a real version bump/push. Local-only, never
+# committed/pushed - the exe is rebuilt fresh from whatever's currently
+# staged for release, tested, then a normal version bump follows.
+test_launcher.py
+OlmranItemBuilder_TEST.exe
+.gaming_log_parser_TEST_config.json

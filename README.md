@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.1.9
+# Gaming Log Parser v5.1.10
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,13 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.1.9 (Current)
+### v5.1.10 (Current)
+- Saved Items' "Hard Search" now holds each wanted spell's exact tier - it never quietly substitutes a lower/different tier the way every other search does. A slot with nothing at the exact tier shows "No available item" instead
+- Results tab: a new "Search Missing Slots (Full Database)" button appears whenever a Hard Search leaves gaps. It fills in just the missing slot(s) in place - every other slot's item, Alt Options, and Bank icon stay exactly as they were - by searching the full database for the same exact tier first; if nothing's found, it asks whether to accept a lower tier instead (yes searches and fills it in, no leaves it alone for another try later). A slot that's searched again and still comes up empty reads "No Items found after re-search"
+- Saved Items now has its own "Prioritize Saved Items" / "Hard Search" checkboxes and a "Find Best Bank Build" button, working the same way as Best Build's but sourced straight from the persisted Saved Items list instead of a fresh paste
+- Saved Items has a new "Drop" column (between Slot and Item): "No Drop" for any Kaid-realm item, "Drop" for everything else
+
+### v5.1.9
 - Fixed a mistake in the Inventory paste format: "(h)" (held) lines are now recognized alongside "(w)" (worn) lines, not ignored
 
 ### v5.1.8

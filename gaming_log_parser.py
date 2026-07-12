@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.1.9"
+VERSION = "5.1.10"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1399,7 +1399,15 @@ class DropSnapshotViewer(tk.Toplevel):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"🎮 Olmran Log Parser and Gear Set Creator v{VERSION}")
+        # OLMRAN_TEST_CONFIG lets a separate local-only test build (see
+        # test_launcher.py, never committed/pushed) point at an isolated
+        # config file instead of the real one, and hard-clean it on every
+        # launch - so pre-release testing always starts from scratch
+        # without ever touching a real user's saved data. Unset for every
+        # normal build/user, so this is a no-op outside that test flow.
+        is_test_build = bool(os.environ.get('OLMRAN_TEST_CONFIG'))
+        title_suffix = " [TEST BUILD - clean slate]" if is_test_build else ""
+        self.title(f"🎮 Olmran Log Parser and Gear Set Creator v{VERSION}{title_suffix}")
         self.geometry("1350x815")
         self.minsize(1150, 750)
         self.resizable(True, True)
@@ -1408,10 +1416,11 @@ class App(tk.Tk):
         self.files: list[dict] = []       # {path, name, size, type}
         self.parsed = {'chat': [], 'combat': [], 'loot': []}
         self.fields = {k: [dict(f) for f in v] for k, v in DEFAULT_FIELDS.items()}
-        
+
         # Config file for persistent settings
-        self.config_file = os.path.join(os.path.expanduser("~"), ".gaming_log_parser_config.json")
-        
+        self.config_file = (os.environ.get('OLMRAN_TEST_CONFIG')
+                           or os.path.join(os.path.expanduser("~"), ".gaming_log_parser_config.json"))
+
         # Load saved directories or use home as default
         self._load_config()
 
@@ -3272,16 +3281,32 @@ class App(tk.Tk):
         self._bank_owned_keys = None
 
         # Saved Items' "Hard Search" mode - see _find_saved_items_build,
-        # _build_dict_to_rows, and _search_missing_slots. _hard_search_text_mode
-        # controls whether an empty attempted slot reads "No available item"
-        # (Hard Search) or "No suitable item found" (every other search);
-        # left on after a Hard Search (not reset immediately) so switching
-        # build variants afterward keeps the right wording, but every other
-        # top-level search entry point resets both back to the default at
-        # its own start. _saved_hard_search_missing_slots is None (button
-        # hidden) or a set of slot keys with no match at all (button shown).
-        self._hard_search_text_mode = False
+        # _build_dict_to_rows, and _search_missing_slots. _no_item_text_override
+        # (None or a string) overrides the default "No suitable item found"
+        # text for any empty attempted slot - "No available item" during/after
+        # a Hard Search, "No Items found after re-search" for a slot
+        # _search_missing_slots still couldn't fill even after trying a lower
+        # tier. _hard_search_strict_tier (read by _specific_level_qualifies
+        # inside _find_optimal_build) makes a wanted spell's explicit tier a
+        # hard requirement for coverage - a different tier never substitutes
+        # in, the base is simply left uncovered so the slot falls through to
+        # the override text instead. Both are left on after a Hard Search
+        # (not reset immediately) so switching build variants afterward keeps
+        # the right wording, but every other top-level search entry point
+        # resets everything back to the default at its own start.
+        # _saved_hard_search_missing_slots is None (button hidden) or a set of
+        # slot keys with no match at all (button shown).
+        # _saved_hard_search_build_dict snapshots the Hard Search's own build
+        # so _search_missing_slots can splice a found item into just the
+        # missing slot(s) instead of replacing the whole displayed build.
+        self._no_item_text_override = None
+        self._hard_search_strict_tier = False
         self._saved_hard_search_missing_slots = None
+        self._saved_hard_search_build_dict = None
+        self._saved_hard_search_attempted_slots = None
+        self._saved_hard_search_uncovered_chips = None
+        self._saved_hard_search_owned_keys = None
+        self._saved_hard_search_rows_by_slot = None
 
         # Bank Build's Saved Items tab (see _update_bank_saved_list) -
         # restored from the config file so the accumulated list survives
@@ -3443,8 +3468,9 @@ class App(tk.Tk):
         bank_saved_frame = ttk.Frame(bank_saved_tab)
         bank_saved_frame.pack(fill='both', expand=True)
 
-        saved_cols = ('Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
-        saved_col_widths = {'Slot': 55, 'Item': 220, 'Type': 60, 'Spell': 100, 'Sigil': 60, 'Level': 45, 'Area': 140}
+        saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
+        saved_col_widths = {'Slot': 55, 'Drop': 60, 'Item': 220, 'Type': 60, 'Spell': 100, 'Sigil': 60,
+                           'Level': 45, 'Area': 140}
         self.bank_saved_tv = ttk.Treeview(bank_saved_frame, columns=saved_cols, show='headings', height=16)
         for col in saved_cols:
             heading_anchor = 'w' if col == 'Item' else 'center'
@@ -4671,23 +4697,30 @@ class App(tk.Tk):
                     max_width = w
             tv.column(col, width=max_width + padding)
 
-    def _build_dict_to_rows(self, build_dict, slots_filter=None):
+    def _build_dict_to_rows(self, build_dict, slots_filter=None, with_slot_keys=False):
         """Turn a {slot: item} build mapping into result-table rows. Alt
         Options lists other items in the same slot that provide the same
         base spell (any item still within the active level/armor/weapon/realm
         constraints, not just exact scoring ties) - the spell is only shown
         for an alternate when its tier differs from the item actually picked,
         since restating the identical spell/tier is redundant. slots_filter,
-        when given, restricts output to just those slot keys (used by
-        _search_missing_slots to show only the slots a Saved Items Hard
-        Search couldn't fill)."""
+        when given, restricts output to just those slot keys. with_slot_keys,
+        when True, returns (rows, row_slots) instead of just rows - row_slots
+        is the internal slot key for each row in the same order (used by
+        _search_missing_slots to snapshot exactly which row belongs to which
+        slot, since two slots like jewel_1/jewel_2 share the same display
+        name and can't be told apart from the row text alone)."""
         slot_order = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet',
                      'weapon', 'weapon_off', 'shield', 'claw_1', 'claw_2']
         attempted_slots = getattr(self, 'attempted_slots', set())
-        # "No available item" during/after a Saved Items Hard Search (see
-        # _find_saved_items_build); "No suitable item found" everywhere else.
-        no_item_text = 'No available item' if getattr(self, '_hard_search_text_mode', False) \
-            else 'No suitable item found'
+        row_slots = []
+        # Default "No suitable item found", overridden to "No available
+        # item" during/after a Saved Items Hard Search, or per-slot (a dict
+        # instead of a plain string) by _search_missing_slots, which needs
+        # different wording for a slot it actually re-searched and still
+        # couldn't fill ("No Items found after re-search") versus one the
+        # user declined to re-search at all (still "No available item").
+        no_item_override = getattr(self, '_no_item_text_override', None)
         rows = []
         for slot in slot_order:
             if slots_filter is not None and slot not in slots_filter:
@@ -4702,10 +4735,15 @@ class App(tk.Tk):
                 if slot in attempted_slots:
                     display_slot = ('jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw')
                                     else 'off-hand' if slot == 'weapon_off' else slot)
+                    if isinstance(no_item_override, dict):
+                        no_item_text = no_item_override.get(slot, 'No suitable item found')
+                    else:
+                        no_item_text = no_item_override or 'No suitable item found'
                     rows.append((
                         '', display_slot.title(), no_item_text,
                         '', '', '', '', '', '', '████████', '(none)'
                     ))
+                    row_slots.append(slot)
                 continue
             item = build_dict[slot]
             # weapon_off (Dual-Wield 1h's off-hand slot) gets its own label -
@@ -4759,7 +4797,8 @@ class App(tk.Tk):
                 '████████',
                 alt_text
             ))
-        return rows
+            row_slots.append(slot)
+        return (rows, row_slots) if with_slot_keys else rows
 
     def _all_variants_rows(self):
         """Stack every build variant's rows into one list, in the current
@@ -5421,13 +5460,23 @@ class App(tk.Tk):
     def _reset_hard_search_state(self):
         """Clear Saved Items Hard Search state - called at the start of
         every OTHER top-level search (Find Optimal Build, Show All Matches,
-        Best Build, Search, and the Missing Slots follow-up itself) so a
-        stale "No available item"/Search Missing Slots button never lingers
-        past the search that actually produced it. _find_saved_items_build
-        sets _hard_search_text_mode back to True itself right before running
-        a Hard Search, and _saved_hard_search_missing_slots right after."""
-        self._hard_search_text_mode = False
+        Best Build, Search) so a stale "No available item"/Search Missing
+        Slots button never lingers past the search that actually produced
+        it. _find_saved_items_build sets _no_item_text_override/
+        _hard_search_strict_tier back on itself right before running a Hard
+        Search, and _saved_hard_search_missing_slots/_build_dict right
+        after. Deliberately NOT called by _search_missing_slots itself -
+        that flow needs this state (the snapshot build, which slots are
+        missing) to still be around while it works, and clears/updates it
+        piece by piece as it goes instead."""
+        self._no_item_text_override = None
+        self._hard_search_strict_tier = False
         self._saved_hard_search_missing_slots = None
+        self._saved_hard_search_build_dict = None
+        self._saved_hard_search_attempted_slots = None
+        self._saved_hard_search_uncovered_chips = None
+        self._saved_hard_search_owned_keys = None
+        self._saved_hard_search_rows_by_slot = None
         self._update_missing_slots_button_visibility()
 
     def _update_missing_slots_button_visibility(self):
@@ -5453,12 +5502,13 @@ class App(tk.Tk):
         an Inventory/Items-in-use paste line (see _bank_owned_match).
         "Prioritize" searches everything, favoring Saved Items when tied,
         same as Best Build's own Prioritize. "Hard Search" restricts
-        candidates to Saved Items only (like Best Build's "Only") and
-        additionally leaves _hard_search_text_mode on so any empty
-        attempted slot reads "No available item" (_build_dict_to_rows)
-        instead of "No suitable item found", then reveals the Results
-        tab's Search Missing Slots button for a full-database follow-up
-        on just those gaps."""
+        candidates to Saved Items only (like Best Build's "Only"), holds
+        every wanted spell's explicit tier exactly - never substituting a
+        different tier the way every other search mode does - and leaves
+        _no_item_text_override set to "No available item" so any empty
+        attempted slot reads that (_build_dict_to_rows) instead of "No
+        suitable item found", then reveals the Results tab's Search Missing
+        Slots button for a full-database follow-up on just those gaps."""
         if not self.master_data:
             messagebox.showwarning("No Data", "Please load a master database first")
             return
@@ -5484,12 +5534,37 @@ class App(tk.Tk):
                     return
                 original_master_data = self.master_data
                 self.master_data = matched_items
-                self._hard_search_text_mode = True
+                self._no_item_text_override = "No available item"
+                self._hard_search_strict_tier = True
                 try:
                     self._find_optimal_build()
                 finally:
                     self.master_data = original_master_data
                 self._saved_hard_search_missing_slots = self.attempted_slots - set(self.optimal_build.keys())
+                self._saved_hard_search_build_dict = dict(self.optimal_build)
+                self._saved_hard_search_attempted_slots = set(self.attempted_slots)
+                # So _search_missing_slots can restore the Bank column icon
+                # on slots it keeps unchanged - self._bank_owned_keys is
+                # cleared right below (see the finally block), but the
+                # already-filled slots in the displayed build are still
+                # genuinely Saved Items and should keep showing 📦.
+                self._saved_hard_search_owned_keys = set(owned_keys)
+                # Exact row snapshot per slot (Alt Options included) - so a
+                # later _search_missing_slots run can reuse an untouched
+                # slot's row verbatim instead of recomputing it against
+                # whatever items_by_slot a later, differently-scoped pass
+                # leaves behind (which would give a stale/wrong Alt Options
+                # list for a slot nothing actually changed about).
+                snapshot_rows, snapshot_slots = self._build_dict_to_rows(self.optimal_build, with_slot_keys=True)
+                self._saved_hard_search_rows_by_slot = dict(zip(snapshot_slots, snapshot_rows))
+                # Original wanted-spell chip strings (with their tier suffix)
+                # for exactly the bases that went uncovered - lets
+                # _search_missing_slots scope its follow-up search to just
+                # these instead of every wanted spell.
+                self._saved_hard_search_uncovered_chips = [
+                    chip for base in getattr(self, 'last_uncovered_bases', set())
+                    for chip in getattr(self, 'last_wanted_chips_by_base', {}).get(base, [])
+                ]
                 self._update_missing_slots_button_visibility()
                 mode_text = "hard search restricted to Saved Items only"
         finally:
@@ -5499,31 +5574,187 @@ class App(tk.Tk):
             text=f"{len(self.bank_saved_order)} saved item(s), {len(matched_items)} recognized in the master "
                  f"database - {mode_text}.")
 
+    def _find_best_item_for_slot(self, slot, chips, hold_tier):
+        """Look up the single best candidate for exactly `slot` (a slot key
+        like 'head'/'jewel_1'/'weapon') that provides one of the wanted
+        spell `chips` (chip-format strings like "constitution.ii"), using
+        self.items_by_slot - the pool of items already filtered by every
+        currently active armor/weapon/level/realm constraint (populated as
+        a side effect of the most recent _find_optimal_build call).
+
+        Deliberately doesn't touch the whole-build DP/self.optimal_build at
+        all: re-running _find_optimal_build (even with wanted_spells_data
+        scoped down) optimizes spell coverage globally and has no notion of
+        "it must be this exact slot" - it's just as likely to place a
+        matching item in some OTHER slot that also happens to qualify for
+        the same spell (e.g. a Jewel item instead of the Head item that's
+        actually needed). This looks at exactly one slot's own candidate
+        pool instead, so the result can only ever go where it's asked to.
+
+        hold_tier=True requires an exact tier match against whichever chips
+        share the item's base spell (chips with no explicit tier are
+        unrestricted either way); False accepts any tier, preferring the
+        highest level available. Returns the item dict, or None."""
+        lookup_slot = 'jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw') else slot
+        candidates = self.items_by_slot.get(lookup_slot, [])
+
+        target_ranks_by_base = {}
+        wanted_bases = set()
+        for chip in chips:
+            base = _spell_base(chip)
+            wanted_bases.add(base)
+            tier = _spell_tier_rank(chip)
+            if tier > 0:
+                target_ranks_by_base.setdefault(base, set()).add(tier)
+
+        best = None
+        best_level = -1
+        for item in candidates:
+            item_spell = (item.get('Spell') or '').lower()
+            item_base = _spell_base(item_spell)
+            if item_base not in wanted_bases:
+                continue
+            target_ranks = target_ranks_by_base.get(item_base)
+            if hold_tier and target_ranks and _item_tier_rank(item_spell) not in target_ranks:
+                continue
+            try:
+                item_level = int(item.get('Level') or 0)
+            except (ValueError, TypeError):
+                item_level = 0
+            if item_level > best_level:
+                best = item
+                best_level = item_level
+        return best
+
     def _search_missing_slots(self):
         """Results tab button, only visible after a Saved Items Hard Search
         left one or more slots as "No available item" (see
-        _find_saved_items_build). Re-runs a normal, unrestricted search
-        (the full master database, no Saved Items filtering) and displays
-        only the previously-missing slots, so the user can see what's
-        actually available to go acquire for exactly the gaps Hard Search
-        found."""
+        _find_saved_items_build). Fills in just the missing slot(s) in
+        place, on top of self._saved_hard_search_build_dict (the build
+        currently on screen) - it never replaces the whole displayed
+        build, only the gaps.
+
+        First tries the full master database while still holding each
+        wanted spell's exact tier (same rule as Hard Search itself, just
+        without the Saved Items restriction). Whatever's still missing
+        after that gets one popup asking whether to accept a lower tier
+        instead:
+          - Yes: search again with tier relaxed (normal behavior) and
+            fill in whatever that finds.
+          - No: leave that slot alone entirely (still "No available
+            item") and keep it eligible for another click later.
+        A slot that WAS re-searched (the "Yes" path) and still found
+        nothing reads "No Items found after re-search" instead, and isn't
+        offered again - only a declined slot stays clickable."""
         missing = self._saved_hard_search_missing_slots
-        if not missing:
+        base_build = self._saved_hard_search_build_dict
+        if not missing or base_build is None:
             return
-        self._reset_hard_search_state()
 
-        self._find_optimal_build()
+        base_build = dict(base_build)
+        base_attempted = set(getattr(self, '_saved_hard_search_attempted_slots', missing))
+        rows_by_slot = dict(getattr(self, '_saved_hard_search_rows_by_slot', None) or {})
+        still_missing = set(missing)
+        newly_filled_rows = {}
+        uncovered_chips = list(getattr(self, '_saved_hard_search_uncovered_chips', None) or [])
 
-        rows = self._build_dict_to_rows(self.optimal_build, slots_filter=missing)
+        # Populate self.items_by_slot against the full, unrestricted
+        # database under every currently active constraint (armor type,
+        # level, realm, weapon style, etc.) - _find_optimal_build's normal
+        # side effect, reused below via _find_best_item_for_slot instead of
+        # this call's own DP slot assignment (self.optimal_build), which
+        # optimizes coverage globally and could put a matching item in some
+        # OTHER slot that also qualifies rather than the one that's missing.
+        original_wanted = self.wanted_spells_data
+        original_priority_spells = self.priority_spells_data
+        original_priority_tiers = self.priority_tiers_data
+        self.wanted_spells_data = uncovered_chips
+        self.priority_spells_data = []
+        self.priority_tiers_data = []
+        try:
+            self._find_optimal_build()
+        finally:
+            self.wanted_spells_data = original_wanted
+            self.priority_spells_data = original_priority_spells
+            self.priority_tiers_data = original_priority_tiers
+
+        def fill(hold_tier):
+            for slot in list(still_missing):
+                item = self._find_best_item_for_slot(slot, uncovered_chips, hold_tier)
+                if item is None:
+                    continue
+                base_build[slot] = item
+                row, = self._build_dict_to_rows({slot: item}, slots_filter={slot})
+                newly_filled_rows[slot] = row
+                still_missing.discard(slot)
+
+        # Pass 1: tier held exactly.
+        fill(hold_tier=True)
+
+        declined_slots = set()
+        if still_missing:
+            slot_list = ', '.join(sorted(s.replace('_', ' ').title() for s in still_missing))
+            want_lower = messagebox.askyesno(
+                "No Exact-Tier Match Found",
+                f"No item matching the wanted spell/tier was found in the full database for: "
+                f"{slot_list}.\n\nSearch for a lower tier instead?")
+            if want_lower:
+                # Pass 2: tier relaxed (normal behavior).
+                fill(hold_tier=False)
+            if still_missing and not want_lower:
+                declined_slots = set(still_missing)
+                still_missing = set()
+
+        # Compose the final row list slot-by-slot: an untouched slot reuses
+        # its EXACT original row (byte-for-byte - Alt Options, Bank icon,
+        # everything) instead of being recomputed against whatever the last
+        # pass left in self.items_by_slot, which would give a stale/wrong
+        # answer for a slot nothing was actually searched for this round.
+        slot_order = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet',
+                     'weapon', 'weapon_off', 'shield', 'claw_1', 'claw_2']
+        final_rows = []
+        for slot in slot_order:
+            if slot in newly_filled_rows:
+                final_rows.append(newly_filled_rows[slot])
+            elif slot in rows_by_slot and slot not in still_missing and slot not in declined_slots:
+                final_rows.append(rows_by_slot[slot])
+            elif slot in declined_slots or slot in still_missing:
+                display_slot = ('jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw')
+                                else 'off-hand' if slot == 'weapon_off' else slot)
+                text = "No available item" if slot in declined_slots else "No Items found after re-search"
+                row = ('', display_slot.title(), text, '', '', '', '', '', '', '████████', '(none)')
+                final_rows.append(row)
+                rows_by_slot[slot] = row
+
+        self.optimal_build = base_build
+        self.attempted_slots = base_attempted
+        self.build_variants = [dict(base_build)]
+        self.build_variant_var.set('Build 1')
+        self.build_variant_combo['values'] = ['Build 1']
+        self.build_variant_combo.config(state='disabled')
+        self.slot_alternates = {}
+        self.results_display_mode.set('optimal')
+
         self.search_results_tv.delete(*self.search_results_tv.get_children())
-        for row in rows:
+        for row in final_rows:
             self.search_results_tv.insert('', 'end', values=row)
         self._autosize_results_columns()
-        self.last_optimal_results = rows
+        self.last_optimal_results = final_rows
 
-        missing_display = ', '.join(sorted(s.title() for s in missing))
-        self.search_status.config(
-            text=f"Full-database search for previously missing slot(s): {missing_display}.")
+        # Declined slots stay eligible for another click; exhausted ones
+        # don't - nothing further this button can do would change them.
+        rows_by_slot.update(newly_filled_rows)
+        self._saved_hard_search_missing_slots = declined_slots if declined_slots else None
+        self._saved_hard_search_build_dict = dict(base_build)
+        self._saved_hard_search_rows_by_slot = rows_by_slot
+        self._update_missing_slots_button_visibility()
+
+        if still_missing or declined_slots:
+            leftover = ', '.join(sorted(s.replace('_', ' ').title() for s in (still_missing | declined_slots)))
+            status = f"Re-searched missing slot(s) - still not filled: {leftover}."
+        else:
+            status = "Re-searched missing slot(s) - all filled."
+        self.search_status.config(text=status)
 
     def _update_bank_saved_list(self, source, name_counts):
         """Merge one tab's parse into the persistent Saved Items list.
@@ -5551,9 +5782,11 @@ class App(tk.Tk):
     def _refresh_bank_saved_tab(self):
         """Redraw the Saved Items tab from self.bank_saved_order/
         bank_saved_sources. Each unique item gets one row (enriched with
-        Slot/Type/Spell/Sigil/Level/Area from master_data when a name
+        Slot/Drop/Type/Spell/Sigil/Level/Area from master_data when a name
         match is found); any copies beyond the first are appended at the
-        bottom, prefixed "::extra::" in the Item cell."""
+        bottom, prefixed "::extra::" in the Item cell. Drop reads "No Drop"
+        for a Kaid-realm item (Kaid gear doesn't drop when you die), "Drop"
+        for everything else."""
         self.bank_saved_tv.delete(*self.bank_saved_tv.get_children())
 
         master_by_name = {}
@@ -5563,9 +5796,10 @@ class App(tk.Tk):
         def row_for(name, extra):
             m = master_by_name.get(name, {})
             display_name = f"::extra:: {name}" if extra else name
+            is_kaid = 'kaid' in (m.get('Realm') or '').strip().lower()
             return (
-                (m.get('Slot') or '').title(), display_name, m.get('Type', ''),
-                m.get('Spell', ''), m.get('Sigil', ''), m.get('Level', ''), m.get('Area', ''),
+                (m.get('Slot') or '').title(), 'No Drop' if is_kaid else 'Drop', display_name,
+                m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''), m.get('Level', ''), m.get('Area', ''),
             )
 
         total_counts = {
@@ -6220,12 +6454,24 @@ class App(tk.Tk):
             requested) requires both exactly. Levels/tiers are only ever
             relaxed downward, never up - matching the widened raw level
             filter above, which never lets an item above Specific Level
-            through in the first place."""
+            through in the first place.
+
+            Saved Items' Hard Search (self._hard_search_strict_tier) adds
+            its own tier gate on top, independent of Specific Level: a
+            wanted spell's explicit tier is a hard requirement there, so an
+            item at any other tier never counts as covering that base
+            (regardless of what the Specific Level fallback policy would
+            otherwise allow) - the base is simply left uncovered, which
+            falls through to the "No available item" reporting instead of
+            silently substituting a different tier."""
+            target_ranks = base_target_tier_ranks.get(base)
+            tier_exact = (not target_ranks) or (item_tier in target_ranks)
+            if getattr(self, '_hard_search_strict_tier', False) and not tier_exact:
+                return False
+
             if specific_level is None:
                 return True
-            target_ranks = base_target_tier_ranks.get(base)
             level_exact = (item_level_num == specific_level)
-            tier_exact = (not target_ranks) or (item_tier in target_ranks)
 
             if specific_level_fallback == 'none':
                 return level_exact and tier_exact
@@ -6804,6 +7050,13 @@ class App(tk.Tk):
         # is already covered elsewhere just means it wasn't needed, not
         # that the search failed to find anything for it.
         uncovered = sorted(set(wanted_bases) - covered_bases)
+        # Exposed for _search_missing_slots, which needs to know exactly
+        # which original wanted-spell chips (not just bare base names) went
+        # uncovered, so a follow-up search can be scoped to just those
+        # instead of re-solving the whole build (which could otherwise
+        # reassign an already-covered spell to a different slot).
+        self.last_uncovered_bases = set(uncovered)
+        self.last_wanted_chips_by_base = dict(wanted_bases)
         if uncovered:
             self.attempted_slots = set(slots_to_fill)
         else:
