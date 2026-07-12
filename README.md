@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.1.1
+# Gaming Log Parser v5.1.2
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.1.1 (Current)
+### v5.1.2 (Current)
+- Removed the white/gray card background from the program's icon, so its colors show clearly instead of sitting on a white square
+
+### v5.1.1
 - Class Specific: added Reverb.enhance
 - Class Specific spells no longer offer tier iii in the tier dropdown (none of them go that high) - just (any)/i/ii now
 - Added a Bank column (farthest left) to Build Search Results: shows a 📦 icon on any row whose item came from a Bank Build paste - most useful with "Prioritize items I own" checked, where it's the only way to tell which recommended items you already have versus which you'd still need to get
