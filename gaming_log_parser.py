@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.1.7"
+VERSION = "5.1.8"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -3270,6 +3270,18 @@ class App(tk.Tk):
         self.master_data = []
         self._bank_owned_keys = None
 
+        # Saved Items' "Hard Search" mode - see _find_saved_items_build,
+        # _build_dict_to_rows, and _search_missing_slots. _hard_search_text_mode
+        # controls whether an empty attempted slot reads "No available item"
+        # (Hard Search) or "No suitable item found" (every other search);
+        # left on after a Hard Search (not reset immediately) so switching
+        # build variants afterward keeps the right wording, but every other
+        # top-level search entry point resets both back to the default at
+        # its own start. _saved_hard_search_missing_slots is None (button
+        # hidden) or a set of slot keys with no match at all (button shown).
+        self._hard_search_text_mode = False
+        self._saved_hard_search_missing_slots = None
+
         # Bank Build's Saved Items tab (see _update_bank_saved_list) -
         # restored from the config file so the accumulated list survives
         # closing and reopening the program. Keyed per source tab
@@ -3448,10 +3460,45 @@ class App(tk.Tk):
         bank_saved_frame.rowconfigure(0, weight=1)
         bank_saved_frame.columnconfigure(0, weight=1)
 
+        # Same idea as Best Build's Prioritize/Only pair (see
+        # _on_bank_prioritize_toggle/_on_bank_only_toggle), sourced from
+        # this persisted list instead of a freshly pasted listing. "Hard
+        # Search" takes Only's place here - restricts candidates to Saved
+        # Items only, same as Only did, but additionally reports any
+        # wanted spell/tier with zero matches as an explicit "No available
+        # item" row (see _build_dict_to_rows) and reveals the Results
+        # tab's "Search Missing Slots" button for a full-database follow-up
+        # search on just those gaps (see _search_missing_slots).
+        bank_saved_checks_frame = ttk.Frame(bank_saved_tab)
+        bank_saved_checks_frame.pack(fill='x', pady=(8,0))
+
+        self.bank_saved_prioritize_var = tk.BooleanVar(value=False)
+        self.bank_saved_prioritize_checkbox = ttk.Checkbutton(bank_saved_checks_frame,
+            text="Prioritize Saved Items (search everything, but favor them over items you don't have)",
+            variable=self.bank_saved_prioritize_var, command=self._on_bank_saved_prioritize_toggle)
+        self.bank_saved_prioritize_checkbox.pack(anchor='w')
+
+        self.bank_saved_hard_var = tk.BooleanVar(value=True)
+        self.bank_saved_hard_checkbox = ttk.Checkbutton(bank_saved_checks_frame,
+            text="Hard Search (build only from Saved Items; report exactly what's missing)",
+            variable=self.bank_saved_hard_var, command=self._on_bank_saved_hard_toggle)
+        self.bank_saved_hard_checkbox.pack(anchor='w', pady=(2,0))
+        # Hard Search starts checked, so Prioritize starts disabled to match.
+        self.bank_saved_prioritize_checkbox.config(state='disabled')
+
         bank_saved_controls_frame = ttk.Frame(bank_saved_tab)
         bank_saved_controls_frame.pack(fill='x', pady=(8,0))
+        ttk.Button(bank_saved_controls_frame, text="🏦 Find Best Bank Build",
+                  command=self._find_saved_items_build).pack(side='left', padx=(0,4))
         ttk.Button(bank_saved_controls_frame, text="Clear Saved List",
-                  command=self._clear_bank_saved_list).pack(side='left')
+                  command=self._clear_bank_saved_list).pack(side='left', padx=4)
+
+        self.bank_saved_search_status = ttk.Label(bank_saved_tab, text=(
+            "\"Hard Search\": only Saved Items are considered - any wanted spell/tier with nothing available "
+            "shows \"No available item\", and the Results tab gets a button to search the full database for just "
+            "those slots. \"Prioritize\": searches everything, just favoring Saved Items when otherwise close."),
+            foreground='#666', wraplength=760, justify='left')
+        self.bank_saved_search_status.pack(anchor='w', pady=(6,0))
 
         self.bank_saved_status = ttk.Label(bank_saved_tab, text="", foreground='#666',
                                            wraplength=760, justify='left')
@@ -3519,7 +3566,7 @@ class App(tk.Tk):
         shared_button_frame.pack(pady=8)
 
         ttk.Button(shared_button_frame, text="🎯 Find Optimal Build",
-                  command=self._find_optimal_build, width=20).pack(side='left', padx=4)
+                  command=self._on_find_optimal_build_clicked, width=20).pack(side='left', padx=4)
         ttk.Button(shared_button_frame, text="📋 Show All Matches",
                   command=self._show_all_matches, width=20).pack(side='left', padx=4)
 
@@ -3563,7 +3610,14 @@ class App(tk.Tk):
                   command=self._export_build_results).pack(side='right')
         ttk.Button(header_frame, text="📌 Save Build",
                   command=self._save_current_results).pack(side='right', padx=(0,6))
-        
+
+        # Only shown after a Saved Items "Hard Search" leaves one or more
+        # slots as "No available item" - see _update_missing_slots_button_visibility.
+        # Not packed here (starts hidden); _update_missing_slots_button_visibility
+        # packs/forgets it based on self._saved_hard_search_missing_slots.
+        self.search_missing_slots_button = ttk.Button(header_frame, text="🔍 Search Missing Slots (Full Database)",
+                                                       command=self._search_missing_slots)
+
         # Results treeview
         results_frame = ttk.LabelFrame(t, text="Suggested Build", padding=10)
         results_frame.pack(fill='both', expand=True)
@@ -4616,18 +4670,27 @@ class App(tk.Tk):
                     max_width = w
             tv.column(col, width=max_width + padding)
 
-    def _build_dict_to_rows(self, build_dict):
+    def _build_dict_to_rows(self, build_dict, slots_filter=None):
         """Turn a {slot: item} build mapping into result-table rows. Alt
         Options lists other items in the same slot that provide the same
         base spell (any item still within the active level/armor/weapon/realm
         constraints, not just exact scoring ties) - the spell is only shown
         for an alternate when its tier differs from the item actually picked,
-        since restating the identical spell/tier is redundant."""
+        since restating the identical spell/tier is redundant. slots_filter,
+        when given, restricts output to just those slot keys (used by
+        _search_missing_slots to show only the slots a Saved Items Hard
+        Search couldn't fill)."""
         slot_order = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet',
                      'weapon', 'weapon_off', 'shield', 'claw_1', 'claw_2']
         attempted_slots = getattr(self, 'attempted_slots', set())
+        # "No available item" during/after a Saved Items Hard Search (see
+        # _find_saved_items_build); "No suitable item found" everywhere else.
+        no_item_text = 'No available item' if getattr(self, '_hard_search_text_mode', False) \
+            else 'No suitable item found'
         rows = []
         for slot in slot_order:
+            if slots_filter is not None and slot not in slots_filter:
+                continue
             if slot not in build_dict:
                 # Shown instead of a "No Items For Some Spells" popup - a
                 # slot the search actually tried to fill (per the current
@@ -4639,7 +4702,7 @@ class App(tk.Tk):
                     display_slot = ('jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw')
                                     else 'off-hand' if slot == 'weapon_off' else slot)
                     rows.append((
-                        '', display_slot.title(), 'No suitable item found',
+                        '', display_slot.title(), no_item_text,
                         '', '', '', '', '', '', '████████', '(none)'
                     ))
                 continue
@@ -5198,6 +5261,8 @@ class App(tk.Tk):
             messagebox.showwarning("No Data", "Please load a master database first")
             return
 
+        self._reset_hard_search_state()
+
         text = self.bank_search_text.get('1.0', tk.END)
         owned_keys, recognized, name_counts = _parse_bank_paste_text(text)
         if not owned_keys:
@@ -5281,6 +5346,8 @@ class App(tk.Tk):
             messagebox.showwarning("No Data", "Please load a master database first")
             return
 
+        self._reset_hard_search_state()
+
         text = self.bank_paste_text.get('1.0', tk.END)
         owned_keys, recognized, name_counts = _parse_bank_paste_text(text)
         if not owned_keys:
@@ -5332,6 +5399,130 @@ class App(tk.Tk):
         _find_bank_build). Also used by _build_dict_to_rows to mark a
         result row with the Bank column's icon."""
         return bool(self._bank_owned_keys) and _bank_owned_match(_bank_item_key(item), self._bank_owned_keys)
+
+    def _on_bank_saved_prioritize_toggle(self):
+        """See _on_bank_saved_hard_toggle - same mutual exclusion, other direction."""
+        if self.bank_saved_prioritize_var.get():
+            self.bank_saved_hard_var.set(False)
+            self.bank_saved_hard_checkbox.config(state='disabled')
+        else:
+            self.bank_saved_hard_checkbox.config(state='normal')
+
+    def _on_bank_saved_hard_toggle(self):
+        """Hard Search and Prioritize Saved Items are mutually exclusive -
+        checking one clears and disables the other."""
+        if self.bank_saved_hard_var.get():
+            self.bank_saved_prioritize_var.set(False)
+            self.bank_saved_prioritize_checkbox.config(state='disabled')
+        else:
+            self.bank_saved_prioritize_checkbox.config(state='normal')
+
+    def _reset_hard_search_state(self):
+        """Clear Saved Items Hard Search state - called at the start of
+        every OTHER top-level search (Find Optimal Build, Show All Matches,
+        Best Build, Search, and the Missing Slots follow-up itself) so a
+        stale "No available item"/Search Missing Slots button never lingers
+        past the search that actually produced it. _find_saved_items_build
+        sets _hard_search_text_mode back to True itself right before running
+        a Hard Search, and _saved_hard_search_missing_slots right after."""
+        self._hard_search_text_mode = False
+        self._saved_hard_search_missing_slots = None
+        self._update_missing_slots_button_visibility()
+
+    def _update_missing_slots_button_visibility(self):
+        if getattr(self, '_saved_hard_search_missing_slots', None):
+            self.search_missing_slots_button.pack(side='right', padx=(0,6))
+        else:
+            self.search_missing_slots_button.pack_forget()
+
+    def _on_find_optimal_build_clicked(self):
+        """Thin wrapper for the Basic Constraints "Find Optimal Build"
+        button - resets Saved Items Hard Search state (see
+        _reset_hard_search_state) before running a normal, unrestricted
+        search, since _find_optimal_build itself is also called
+        internally by _find_saved_items_build and must not reset that
+        state out from under it."""
+        self._reset_hard_search_state()
+        self._find_optimal_build()
+
+    def _find_saved_items_build(self):
+        """Same idea as _find_bank_build, but sourced from the persisted
+        Saved Items list (self.bank_saved_order) instead of a freshly
+        pasted listing - matched by name only, same wildcard matching as
+        an Inventory/Items-in-use paste line (see _bank_owned_match).
+        "Prioritize" searches everything, favoring Saved Items when tied,
+        same as Best Build's own Prioritize. "Hard Search" restricts
+        candidates to Saved Items only (like Best Build's "Only") and
+        additionally leaves _hard_search_text_mode on so any empty
+        attempted slot reads "No available item" (_build_dict_to_rows)
+        instead of "No suitable item found", then reveals the Results
+        tab's Search Missing Slots button for a full-database follow-up
+        on just those gaps."""
+        if not self.master_data:
+            messagebox.showwarning("No Data", "Please load a master database first")
+            return
+        if not self.bank_saved_order:
+            messagebox.showwarning("No Saved Items",
+                "The Saved Items list is empty - run a Best Build or Search parse first.")
+            return
+
+        self._reset_hard_search_state()
+
+        owned_keys = {(name, None, None) for name in self.bank_saved_order}
+        matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
+
+        self._bank_owned_keys = owned_keys
+        try:
+            if self.bank_saved_prioritize_var.get():
+                self._find_optimal_build()
+                mode_text = "searched everything, prioritizing Saved Items"
+            else:
+                if not matched_items:
+                    messagebox.showwarning("No Matches",
+                        "None of the Saved Items were recognized against the loaded master database.")
+                    return
+                original_master_data = self.master_data
+                self.master_data = matched_items
+                self._hard_search_text_mode = True
+                try:
+                    self._find_optimal_build()
+                finally:
+                    self.master_data = original_master_data
+                self._saved_hard_search_missing_slots = self.attempted_slots - set(self.optimal_build.keys())
+                self._update_missing_slots_button_visibility()
+                mode_text = "hard search restricted to Saved Items only"
+        finally:
+            self._bank_owned_keys = None
+
+        self.bank_saved_search_status.config(
+            text=f"{len(self.bank_saved_order)} saved item(s), {len(matched_items)} recognized in the master "
+                 f"database - {mode_text}.")
+
+    def _search_missing_slots(self):
+        """Results tab button, only visible after a Saved Items Hard Search
+        left one or more slots as "No available item" (see
+        _find_saved_items_build). Re-runs a normal, unrestricted search
+        (the full master database, no Saved Items filtering) and displays
+        only the previously-missing slots, so the user can see what's
+        actually available to go acquire for exactly the gaps Hard Search
+        found."""
+        missing = self._saved_hard_search_missing_slots
+        if not missing:
+            return
+        self._reset_hard_search_state()
+
+        self._find_optimal_build()
+
+        rows = self._build_dict_to_rows(self.optimal_build, slots_filter=missing)
+        self.search_results_tv.delete(*self.search_results_tv.get_children())
+        for row in rows:
+            self.search_results_tv.insert('', 'end', values=row)
+        self._autosize_results_columns()
+        self.last_optimal_results = rows
+
+        missing_display = ', '.join(sorted(s.title() for s in missing))
+        self.search_status.config(
+            text=f"Full-database search for previously missing slot(s): {missing_display}.")
 
     def _update_bank_saved_list(self, source, name_counts):
         """Merge one tab's parse into the persistent Saved Items list.
@@ -6673,6 +6864,7 @@ class App(tk.Tk):
         # this before any validation checks below can return early, so the
         # Results tab's mode always reflects the button actually clicked.
         self.results_display_mode.set('all')
+        self._reset_hard_search_state()
 
         if not self.master_data:
             messagebox.showwarning("No Data", "Please load a master database first")
