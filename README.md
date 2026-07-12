@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.1.2
+# Gaming Log Parser v5.1.3
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.1.2 (Current)
+### v5.1.3 (Current)
+- Bank Build now has two inner tabs: "Best Build" (the existing feature, unchanged) and a new "Search" tab - paste a bank/inventory listing and click Search to list every recognized item as-is (no combo-building), showing which Area each one actually drops in. Includes the same Only Found In checkboxes as Basic Constraints (the same settings, not a separate copy) to narrow it down by realm
+
+### v5.1.2
 - Removed the white/gray card background from the program's icon, so its colors show clearly instead of sitting on a white square
 
 ### v5.1.1

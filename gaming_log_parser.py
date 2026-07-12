@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.1.2"
+VERSION = "5.1.3"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -3125,17 +3125,30 @@ class App(tk.Tk):
         self.master_data = []
         self._bank_owned_keys = None
 
-        # Bank Build - paste a bank/inventory listing and build the best
-        # gear combo either strictly from those items, or from the whole
-        # master database with owned items favored - see _find_bank_build.
-        # Every other constraint (Wanted Spells, Armor/Weapon Constraints,
-        # Min/Max Level, etc.) still applies exactly as normal; this only
-        # adds ownership as an extra dimension on top.
-        bank_tab = self.build_bank_subtab
-        ttk.Label(bank_tab, text="Paste a bank/inventory listing below, then click "
+        # Bank Build - two inner tabs sharing the paste-a-listing idea:
+        # "Best Build" builds the best gear combo either strictly from those
+        # items or from the whole master database with owned items favored
+        # (see _find_bank_build); "Search" instead just lists every
+        # recognized item as-is (no per-slot combo), filtered by Only Found
+        # In, showing which Area each one actually drops in (see
+        # _search_bank_items). Every other constraint (Wanted Spells,
+        # Armor/Weapon Constraints, Min/Max Level, etc.) still applies
+        # exactly as normal on the Best Build side; this only adds
+        # ownership as an extra dimension on top.
+        bank_sub_notebook = ttk.Notebook(self.build_bank_subtab)
+        bank_sub_notebook.pack(fill='both', expand=True)
+
+        bank_best_tab = ttk.Frame(bank_sub_notebook, padding=8)
+        bank_sub_notebook.add(bank_best_tab, text='Best Build')
+
+        bank_search_tab = ttk.Frame(bank_sub_notebook, padding=8)
+        bank_sub_notebook.add(bank_search_tab, text='Search')
+
+        # ── Best Build ──
+        ttk.Label(bank_best_tab, text="Paste a bank/inventory listing below, then click "
                  "\"Find Best Bank Build\".", foreground='#666').pack(anchor='w', pady=(0,6))
 
-        bank_text_frame = ttk.Frame(bank_tab)
+        bank_text_frame = ttk.Frame(bank_best_tab)
         bank_text_frame.pack(fill='both', expand=True)
         self.bank_paste_text = tk.Text(bank_text_frame, height=14, wrap='none')
         bank_vsb = ttk.Scrollbar(bank_text_frame, orient='vertical', command=self.bank_paste_text.yview)
@@ -3151,7 +3164,7 @@ class App(tk.Tk):
         # underlying choice (see _find_bank_build) - checking either one
         # disables (and clears) the other, rather than letting both be
         # checked at once with ambiguous meaning.
-        bank_checks_frame = ttk.Frame(bank_tab)
+        bank_checks_frame = ttk.Frame(bank_best_tab)
         bank_checks_frame.pack(fill='x', pady=(8,0))
 
         self.bank_prioritize_var = tk.BooleanVar(value=False)
@@ -3168,18 +3181,67 @@ class App(tk.Tk):
         # Only starts checked, so Prioritize starts disabled to match.
         self.bank_prioritize_checkbox.config(state='disabled')
 
-        bank_controls_frame = ttk.Frame(bank_tab)
+        bank_controls_frame = ttk.Frame(bank_best_tab)
         bank_controls_frame.pack(fill='x', pady=(8,0))
         ttk.Button(bank_controls_frame, text="🏦 Find Best Bank Build",
                   command=self._find_bank_build).pack(side='left', padx=(0,4))
         ttk.Button(bank_controls_frame, text="Clear",
                   command=self._clear_bank_paste).pack(side='left', padx=4)
 
-        self.bank_status = ttk.Label(bank_tab, text=(
+        self.bank_status = ttk.Label(bank_best_tab, text=(
             "\"Only\": only pasted items are considered - the best build achievable from what you own right now. "
             "\"Prioritize\": searches everything, just favoring items you own when otherwise close."),
             foreground='#666', wraplength=760, justify='left')
         self.bank_status.pack(anchor='w', pady=(6,0))
+
+        # ── Search ──
+        ttk.Label(bank_search_tab, text="Paste a bank/inventory listing below, then click \"Search\" to see "
+                 "which of those items match the master database and which Area each one actually drops in.",
+                 foreground='#666', wraplength=760, justify='left').pack(anchor='w', pady=(0,6))
+
+        bank_search_text_frame = ttk.Frame(bank_search_tab)
+        bank_search_text_frame.pack(fill='both', expand=True)
+        self.bank_search_text = tk.Text(bank_search_text_frame, height=14, wrap='none')
+        bank_search_vsb = ttk.Scrollbar(bank_search_text_frame, orient='vertical',
+                                        command=self.bank_search_text.yview)
+        bank_search_hsb = ttk.Scrollbar(bank_search_text_frame, orient='horizontal',
+                                        command=self.bank_search_text.xview)
+        self.bank_search_text.configure(yscrollcommand=bank_search_vsb.set, xscrollcommand=bank_search_hsb.set)
+        self.bank_search_text.grid(row=0, column=0, sticky='nsew')
+        bank_search_vsb.grid(row=0, column=1, sticky='ns')
+        bank_search_hsb.grid(row=1, column=0, sticky='ew')
+        bank_search_text_frame.rowconfigure(0, weight=1)
+        bank_search_text_frame.columnconfigure(0, weight=1)
+
+        # Same Only Found In checkboxes as Basic Constraints - literally the
+        # same self.realm_filters variables (not a separate copy), so
+        # checking one here or there is the same setting either place.
+        bank_search_realm_frame = ttk.LabelFrame(bank_search_tab, text="Only Found In", padding=8)
+        bank_search_realm_frame.pack(anchor='w', pady=(8,0))
+
+        realm_options = ['Evil', 'Glory Bea', 'Good', 'Event', 'Chaos', 'Crafted']
+        realm_cols = 2
+        for i, realm in enumerate(realm_options):
+            ttk.Checkbutton(bank_search_realm_frame, text=realm, variable=self.realm_filters[realm]).grid(
+                row=i // realm_cols, column=i % realm_cols, sticky='w', padx=4, pady=2)
+        ttk.Checkbutton(bank_search_realm_frame, text="Kaid All", variable=self.realm_filters['Kaid']).grid(
+            row=0, column=2, sticky='w', padx=(16,4), pady=2)
+        for i, color in enumerate(['Kaid White', 'Kaid Green', 'Kaid Red', 'Kaid Purple'], start=1):
+            ttk.Checkbutton(bank_search_realm_frame, text=color, variable=self.realm_filters[color]).grid(
+                row=i, column=2, sticky='w', padx=(16,4), pady=2)
+
+        bank_search_controls_frame = ttk.Frame(bank_search_tab)
+        bank_search_controls_frame.pack(fill='x', pady=(8,0))
+        ttk.Button(bank_search_controls_frame, text="🔎 Search",
+                  command=self._search_bank_items).pack(side='left', padx=(0,4))
+        ttk.Button(bank_search_controls_frame, text="Clear",
+                  command=self._clear_bank_search).pack(side='left', padx=4)
+
+        self.bank_search_status = ttk.Label(bank_search_tab, text=(
+            "Lists every pasted item recognized in the master database, with the Area it actually drops in - "
+            "no build/combo, just a lookup. Check any Only Found In box(es) to narrow it to those realms."),
+            foreground='#666', wraplength=760, justify='left')
+        self.bank_search_status.pack(anchor='w', pady=(6,0))
 
         # Shared controls - Min/Max/Specific Level and the search buttons -
         # packed under the sub-notebook rather than inside any one sub-tab,
@@ -4876,6 +4938,75 @@ class App(tk.Tk):
         self.bank_status.config(text=(
             "\"Only\": only pasted items are considered - the best build achievable from what you own right now. "
             "\"Prioritize\": searches everything, just favoring items you own when otherwise close."))
+
+    def _clear_bank_search(self):
+        """Clear the Bank Build Search paste box and its status line"""
+        self.bank_search_text.delete('1.0', tk.END)
+        self.bank_search_status.config(text=(
+            "Lists every pasted item recognized in the master database, with the Area it actually drops in - "
+            "no build/combo, just a lookup. Check any Only Found In box(es) to narrow it to those realms."))
+
+    def _search_bank_items(self):
+        """Parse the pasted bank/inventory listing and list every
+        recognized item as-is - filtered by Only Found In if any realm is
+        checked - showing which Area each one actually drops in. Unlike
+        Find Best Bank Build, this doesn't assemble a per-slot combo; it's
+        a flat lookup, same shape as Show All Matches but scoped to only
+        what was pasted instead of every wanted-spell match."""
+        if not self.master_data:
+            messagebox.showwarning("No Data", "Please load a master database first")
+            return
+
+        text = self.bank_search_text.get('1.0', tk.END)
+        owned_keys, recognized = _parse_bank_paste_text(text)
+        if not owned_keys:
+            messagebox.showwarning("No Items",
+                "No equippable items were recognized in the pasted text. Expected lines like:\n"
+                "12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]")
+            return
+
+        matched_items = [item for item in self.master_data if _bank_item_key(item) in owned_keys]
+        matched_key_count = len({_bank_item_key(item) for item in matched_items})
+        unmatched_count = len(owned_keys) - matched_key_count
+
+        selected_realms = [realm for realm, var in self.realm_filters.items() if var.get()]
+        if selected_realms:
+            matched_items = [
+                item for item in matched_items
+                if any(sel.lower() in (item.get('Realm') or '').strip().lower() for sel in selected_realms)
+            ]
+
+        self.results_display_mode.set('all')
+        self.notebook.select(self.tab_results)
+        self.search_results_tv.delete(*self.search_results_tv.get_children())
+
+        self._bank_owned_keys = owned_keys
+        try:
+            rows = [(
+                '📦' if self._is_bank_owned(item) else '',
+                (item.get('Slot') or '').title(),
+                item.get('Item', ''),
+                item.get('Type', ''),
+                item.get('Spell', ''),
+                item.get('Sigil', ''),
+                item.get('Level', ''),
+                item.get('Mob', ''),
+                item.get('Area', ''),
+                '████████',
+                '',
+            ) for item in matched_items]
+        finally:
+            self._bank_owned_keys = None
+
+        self.last_all_results = rows
+        for row in rows:
+            self.search_results_tv.insert('', 'end', values=row)
+        self._autosize_results_columns()
+
+        filter_note = f", {len(matched_items)} shown after Only Found In filter" if selected_realms else ""
+        self.bank_search_status.config(
+            text=f"Parsed {recognized} equippable item(s) from the paste - {matched_key_count} recognized in the "
+                 f"master database ({unmatched_count} not found/unmatched){filter_note}.")
 
     def _on_bank_only_toggle(self):
         """Only Items I own and Prioritize items I own are mutually
