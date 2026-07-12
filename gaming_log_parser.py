@@ -4895,25 +4895,29 @@ class App(tk.Tk):
         matched_key_count = len({_bank_item_key(item) for item in matched_items})
         unmatched_count = len(owned_keys) - matched_key_count
 
-        if self.bank_prioritize_var.get():
-            self._bank_owned_keys = owned_keys
-            try:
+        # Set for both modes, not just Prioritize - _is_bank_owned (and so
+        # the Results tab's Bank column icon) needs this regardless of
+        # which mode actually ran, including Only mode where every result
+        # is trivially owned by definition.
+        self._bank_owned_keys = owned_keys
+        try:
+            if self.bank_prioritize_var.get():
                 self._find_optimal_build()
-            finally:
-                self._bank_owned_keys = None
-            mode_text = "searched everything, prioritizing owned items"
-        else:
-            if not matched_items:
-                messagebox.showwarning("No Matches",
-                    "None of the pasted items were recognized against the loaded master database.")
-                return
-            original_master_data = self.master_data
-            self.master_data = matched_items
-            try:
-                self._find_optimal_build()
-            finally:
-                self.master_data = original_master_data
-            mode_text = "restricted to owned items only"
+                mode_text = "searched everything, prioritizing owned items"
+            else:
+                if not matched_items:
+                    messagebox.showwarning("No Matches",
+                        "None of the pasted items were recognized against the loaded master database.")
+                    return
+                original_master_data = self.master_data
+                self.master_data = matched_items
+                try:
+                    self._find_optimal_build()
+                finally:
+                    self.master_data = original_master_data
+                mode_text = "restricted to owned items only"
+        finally:
+            self._bank_owned_keys = None
 
         self.bank_status.config(
             text=f"Parsed {recognized} equippable item(s) from the paste - {matched_key_count} recognized in the "
