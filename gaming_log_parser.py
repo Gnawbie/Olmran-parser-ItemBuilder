@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.0.19"
+VERSION = "5.0.20"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -2704,6 +2704,25 @@ class App(tk.Tk):
             priority_cb.pack(side='left', padx=(8,0))
             self.melee_priority_checkbuttons.append(priority_cb)
 
+        # Weight - a min/max range on the item list's Weight column, same
+        # "applies to any weapon-style pick, including claws" scope as the
+        # rest of this box. Soft preference by default (favors in-range
+        # weapons, folded into _melee_constraint_score's normal_matches, but
+        # never excludes one), same as Damage/Timer/Fumble/Accuracy/Sigil
+        # above - checking "Hard Filter" instead excludes out-of-range
+        # weapons outright, like Min/Max Level does for level.
+        weight_row = ttk.Frame(melee_box)
+        weight_row.pack(fill='x', pady=2)
+        ttk.Label(weight_row, text="Weight:", width=10).pack(side='left')
+        self.weapon_weight_min_var = tk.StringVar(value='')
+        ttk.Entry(weight_row, textvariable=self.weapon_weight_min_var, width=6).pack(side='left')
+        ttk.Label(weight_row, text=" to ").pack(side='left')
+        self.weapon_weight_max_var = tk.StringVar(value='')
+        ttk.Entry(weight_row, textvariable=self.weapon_weight_max_var, width=6).pack(side='left')
+        self.weapon_weight_hard_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(weight_row, text="Hard Filter", variable=self.weapon_weight_hard_var).pack(
+            side='left', padx=(8,0))
+
         # Shield Constraints - Defense works exactly like Armor Constraints'
         # per-slot Defense (soft preference, fed into the same
         # _defense_priority_score machinery, just as a single-value range
@@ -4058,6 +4077,9 @@ class App(tk.Tk):
         self.melee_fumble_priority_var.set(False)
         self.melee_accuracy_priority_var.set(False)
         self.melee_sigil_priority_var.set(False)
+        self.weapon_weight_min_var.set('')
+        self.weapon_weight_max_var.set('')
+        self.weapon_weight_hard_var.set(False)
         self._update_melee_priority_cap()
 
         # Clear Shield Constraints
@@ -4353,6 +4375,9 @@ class App(tk.Tk):
             'melee_fumble_priority': self.melee_fumble_priority_var.get(),
             'melee_accuracy_priority': self.melee_accuracy_priority_var.get(),
             'melee_sigil_priority': self.melee_sigil_priority_var.get(),
+            'weapon_weight_min': self.weapon_weight_min_var.get(),
+            'weapon_weight_max': self.weapon_weight_max_var.get(),
+            'weapon_weight_hard': self.weapon_weight_hard_var.get(),
             'shield_defense': self.shield_defense_var.get(),
             'shield_sigil': self.shield_sigil_var.get(),
             'shield_armor_types': [t for t in ('cloth', 'leather', 'studded', 'plate')
@@ -4405,6 +4430,9 @@ class App(tk.Tk):
             self.melee_fumble_priority_var.set(combos.get('melee_fumble_priority', False))
             self.melee_accuracy_priority_var.set(combos.get('melee_accuracy_priority', False))
             self.melee_sigil_priority_var.set(combos.get('melee_sigil_priority', False))
+            self.weapon_weight_min_var.set(combos.get('weapon_weight_min', ''))
+            self.weapon_weight_max_var.set(combos.get('weapon_weight_max', ''))
+            self.weapon_weight_hard_var.set(combos.get('weapon_weight_hard', False))
             self.shield_defense_var.set(combos.get('shield_defense', 'Any'))
             self.shield_sigil_var.set(combos.get('shield_sigil', 'Any'))
             shield_armor_types = combos.get('shield_armor_types', [])
@@ -4798,6 +4826,68 @@ class App(tk.Tk):
             messagebox.showwarning("Invalid Range", "Minimum tier cannot be greater than maximum tier")
             return
 
+        # Weight range - Melee Weapon Constraints' min/max on the item
+        # list's Weight column (blank side = unbounded). Soft preference by
+        # default; "Hard Filter" checked makes it exclude out-of-range
+        # weapons outright instead, same as Min/Max Level does for level.
+        weapon_weight_min = None
+        weapon_weight_max = None
+        weapon_weight_min_str = self.weapon_weight_min_var.get().strip()
+        if weapon_weight_min_str:
+            try:
+                weapon_weight_min = int(weapon_weight_min_str)
+            except ValueError:
+                messagebox.showwarning("Invalid Weight", "Minimum weight must be a number")
+                return
+        weapon_weight_max_str = self.weapon_weight_max_var.get().strip()
+        if weapon_weight_max_str:
+            try:
+                weapon_weight_max = int(weapon_weight_max_str)
+            except ValueError:
+                messagebox.showwarning("Invalid Weight", "Maximum weight must be a number")
+                return
+        if weapon_weight_min is not None and weapon_weight_max is not None and weapon_weight_min > weapon_weight_max:
+            messagebox.showwarning("Invalid Range", "Minimum weight cannot be greater than maximum weight")
+            return
+        weapon_weight_hard = self.weapon_weight_hard_var.get()
+
+        def _weapon_weight_in_range(item):
+            """True if item's Weight falls within the configured range, or
+            there's no range set at all. An item with a blank/non-numeric
+            Weight fails this (same convention as Level filtering elsewhere
+            in this search: missing data can't be confirmed in range, so it
+            doesn't pass a hard filter) - only matters when Hard Filter is
+            actually checked, since this is never called otherwise."""
+            if weapon_weight_min is None and weapon_weight_max is None:
+                return True
+            try:
+                item_weight = int(item.get('Weight') or '')
+            except (ValueError, TypeError):
+                return False
+            if weapon_weight_min is not None and item_weight < weapon_weight_min:
+                return False
+            if weapon_weight_max is not None and item_weight > weapon_weight_max:
+                return False
+            return True
+
+        def _weapon_weight_soft_match(item):
+            """True only if item has a real, in-range Weight - unlike
+            _weapon_weight_in_range (used for the hard filter, where a
+            blank/non-numeric Weight passes through untouched), a blank
+            Weight earns no soft-preference bonus here since there's
+            nothing to actually match."""
+            if weapon_weight_min is None and weapon_weight_max is None:
+                return False
+            try:
+                item_weight = int(item.get('Weight') or '')
+            except (ValueError, TypeError):
+                return False
+            if weapon_weight_min is not None and item_weight < weapon_weight_min:
+                return False
+            if weapon_weight_max is not None and item_weight > weapon_weight_max:
+                return False
+            return True
+
         # Defense range - always a soft preference here (never excludes an
         # item, so every slot still gets filled even when nothing in range
         # is available): checking "Defense:" prioritizes in-range items over
@@ -4921,6 +5011,12 @@ class App(tk.Tk):
                         priority_matches += 1
                     else:
                         normal_matches += 1
+            # Weight - no Priority checkbox of its own (see the Hard Filter
+            # toggle instead), so it's always counted as a normal (non-
+            # priority) match, same tier as an unchecked Damage/Timer/
+            # Fumble/Accuracy/Sigil field above.
+            if _weapon_weight_soft_match(item):
+                normal_matches += 1
             return (priority_matches, normal_matches)
 
         # Get armor type constraints from checkboxes
@@ -5027,6 +5123,12 @@ class App(tk.Tk):
                 if not realm_match:
                     continue
 
+            # Weight - only meaningful for weapons (includes claws, which
+            # are stored as Slot=weapon too). Hard Filter excludes anything
+            # outside the range outright; otherwise it's left as a soft
+            # preference, scored later in _melee_constraint_score.
+            if item_slot == 'weapon' and weapon_weight_hard and not _weapon_weight_in_range(item):
+                continue
 
             # Wanted Sigils - many armor pieces carry a Sigil but no Spell at
             # all, so without this an item that only satisfies a Wanted

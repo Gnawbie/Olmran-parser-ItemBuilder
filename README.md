@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.0.19
+# Gaming Log Parser v5.0.20
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.0.19 (Current)
+### v5.0.20 (Current)
+- Added a Weight range to Melee Weapon Constraints (applies to any weapon, including claws): soft preference by default (favors weapons in the range, but won't leave a slot empty over it), or check "Hard Filter" to exclude out-of-range weapons outright
+
+### v5.0.19
 - Weapon Constraints' 1 Claw/2 Claw now has two Sigil dropdowns: the 1st applies to the first claw slot (used whether 1 Claw or 2 Claw is checked), the 2nd applies to the second claw slot (only meaningful when 2 Claw is checked) - same soft preference as every other Sigil dropdown
 - Find Optimal Build no longer requires a wanted spell/priority spell/wanted sigil/required item to run - a search with none of those set still works (e.g. just checking a Weapon Type/Combo to hunt for weapons alone), instead of being blocked with a "please add at least one" warning
 
