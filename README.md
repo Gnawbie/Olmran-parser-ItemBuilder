@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.1.8
+# Gaming Log Parser v5.1.9
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.1.8 (Current)
+### v5.1.9 (Current)
+- Fixed a mistake in the Inventory paste format: "(h)" (held) lines are now recognized alongside "(w)" (worn) lines, not ignored
+
+### v5.1.8
 - Bank Build's Saved Items tab now searches too: "Prioritize Saved Items" (search everything, favoring them when tied) and "Hard Search" (build only from Saved Items) work the same way Best Build's checkboxes do, just sourced from the persisted list instead of a fresh paste. Hard Search also reports any wanted spell/tier with nothing available as an explicit "No available item" row
 - When a Hard Search leaves slots empty, the Results tab shows a new "Search Missing Slots (Full Database)" button - click it to re-search just those gaps against the whole master database, so you can see what to go acquire. It only appears after a Hard Search actually leaves something missing
 

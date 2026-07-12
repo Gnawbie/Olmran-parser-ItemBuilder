@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.1.8"
+VERSION = "5.1.9"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1058,10 +1058,11 @@ def _item_tier_rank(item_spell):
 #    here: the same item name already exists in the master database with
 #    real Spell/Sigil/Type data, so matching by (cleaned name, Slot, Level)
 #    borrows that directly instead of trying to reverse-engineer the codes.
-# 3. "Inventory:" listing - only "(w)" (worn/equipped) lines count; a bare
-#    quantity like "( 3)" or an unmarked line is inventory clutter, not
-#    gear, and is skipped:
+# 3. "Inventory:" listing - only "(w)" (worn/equipped) or "(h)" (held)
+#    lines count; a bare quantity like "( 3)" or an unmarked line is
+#    inventory clutter, not gear, and is skipped:
 #      (w) A lustrous wispweave hood of fallen snow
+#      (h) A translucent rock
 #       ( 3) A bottle of Buccaneer's rum
 #    No Slot/Level is present here, so the key wildcards both (matched by
 #    name alone - see _bank_owned_match).
@@ -1072,7 +1073,7 @@ def _item_tier_rank(item_spell):
 #    The key wildcards Level only, since Slot is known here.
 _BANK_LINE_RE = re.compile(r'^\s*\d+\.\)\s*(.+?)\s*\[(.+)\]\s*$')
 _BANK_LINE_RE_UNNUMBERED = re.compile(r'^\s*(.+?)\s*\[(.+)\]\s*$')
-_BANK_INVENTORY_WORN_RE = re.compile(r'^\s*\(\s*[wW]\s*\)\s*(.+?)\s*$')
+_BANK_INVENTORY_WORN_RE = re.compile(r'^\s*\(\s*[wWhH]\s*\)\s*(.+?)\s*$')
 _BANK_EQUIPPED_RE = re.compile(r'^\s*(On\s+[A-Za-z]+|Held\s+Right|Held\s+Left)\s*:\s*(.+?)\s*$', re.IGNORECASE)
 _BANK_SLOT_MAP = {
     'head': 'head', 'feet': 'feet', 'hands': 'hands', 'legs': 'legs',
@@ -5269,7 +5270,7 @@ class App(tk.Tk):
             messagebox.showwarning("No Items",
                 "No equippable items were recognized in the pasted text. Expected a Strongbox "
                 "listing (\"12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]\", "
-                "the \"12.)\" is optional), an Inventory listing (only \"(w)\" lines count), or an "
+                "the \"12.)\" is optional), an Inventory listing (only \"(w)\"/\"(h)\" lines count), or an "
                 "Items in use listing (\"On Head:  ...\").")
             return
 
@@ -5354,7 +5355,7 @@ class App(tk.Tk):
             messagebox.showwarning("No Items",
                 "No equippable items were recognized in the pasted text. Expected a Strongbox "
                 "listing (\"12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]\", "
-                "the \"12.)\" is optional), an Inventory listing (only \"(w)\" lines count), or an "
+                "the \"12.)\" is optional), an Inventory listing (only \"(w)\"/\"(h)\" lines count), or an "
                 "Items in use listing (\"On Head:  ...\").")
             return
 
