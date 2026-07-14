@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.1.11"
+VERSION = "5.2.0"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1086,12 +1086,15 @@ def _item_tier_rank(item_spell):
 #    here: the same item name already exists in the master database with
 #    real Spell/Sigil/Type data, so matching by (cleaned name, Slot, Level)
 #    borrows that directly instead of trying to reverse-engineer the codes.
-# 3. "Inventory:" listing - only "(w)" (worn/equipped) or "(h)" (held)
-#    lines count; a bare quantity like "( 3)" or an unmarked line is
-#    inventory clutter, not gear, and is skipped:
+# 3. "Inventory:" listing - "(w)" (worn/equipped) and "(h)" (held) lines
+#    always count; a bare quantity like "( 3)" or an unmarked line ALSO
+#    counts if its name matches something in self.master_data (a real
+#    piece of gear just sitting in inventory, not worn) - otherwise it's
+#    inventory clutter (crafting mats, consumables) and is skipped:
 #      (w) A lustrous wispweave hood of fallen snow
 #      (h) A translucent rock
-#       ( 3) A bottle of Buccaneer's rum
+#       ( 3) A bottle of Buccaneer's rum          <- skipped, not real gear
+#            A gladiator's studded hood           <- counted if it's a real item
 #    No Slot/Level is present here, so the key wildcards both (matched by
 #    name alone - see _bank_owned_match).
 # 4. "Items in use:" listing - explicit Slot, no Level ("nothing" means the
@@ -1101,7 +1104,7 @@ def _item_tier_rank(item_spell):
 #    The key wildcards Level only, since Slot is known here.
 _BANK_LINE_RE = re.compile(r'^\s*\d+\.\)\s*(.+?)\s*\[(.+)\]\s*$')
 _BANK_LINE_RE_UNNUMBERED = re.compile(r'^\s*(.+?)\s*\[(.+)\]\s*$')
-_BANK_INVENTORY_WORN_RE = re.compile(r'^\s*\(\s*[wWhH]\s*\)\s*(.+?)\s*$')
+_BANK_INVENTORY_LINE_RE = re.compile(r'^\s*(?:\(\s*([wWhH]|\d+)\s*\))?\s*(.+?)\s*$')
 _BANK_EQUIPPED_RE = re.compile(r'^\s*(On\s+[A-Za-z]+|Held\s+Right|Held\s+Left)\s*:\s*(.+?)\s*$', re.IGNORECASE)
 _BANK_SLOT_MAP = {
     'head': 'head', 'feet': 'feet', 'hands': 'hands', 'legs': 'legs',
@@ -1115,26 +1118,45 @@ _BANK_EQUIPPED_SLOT_MAP = {
 }
 
 
-def _parse_bank_paste_text(text):
+def _parse_bank_paste_text(text, master_data=None):
     """Parse a pasted bank/inventory listing into (owned_keys, recognized,
-    name_counts). owned_keys is a set of (cleaned item name lower, slot or
-    None, level string or None) tuples - None marks a field the paste
-    format doesn't provide, matched as a wildcard by _bank_owned_match.
-    recognized is how many lines qualified across all four supported
-    formats (see the module comment above); everything else - format
-    headers like "Items in Strongbox..."/"Inventory:", unmarked/quantity
-    inventory lines, consumables, "nothing" equip slots - is silently
-    skipped, not counted as an error. name_counts maps cleaned name (slot/
-    level dropped) to how many times it was recognized in this parse -
-    used by the Saved Items tab to detect duplicate copies, which cares
-    about physical copies of an item regardless of which slot/format it
-    happened to be listed under (see _update_bank_saved_list)."""
+    name_counts_by_type). owned_keys is a set of (cleaned item name lower,
+    slot or None, level string or None) tuples - None marks a field the
+    paste format doesn't provide, matched as a wildcard by
+    _bank_owned_match. recognized is how many lines qualified across all
+    four supported formats (see the module comment above); everything else
+    - format headers like "Items in Strongbox..."/"Inventory:", consumables,
+    "nothing" equip slots, and an unmarked/quantity Inventory line that
+    doesn't match anything in master_data - is silently skipped, not
+    counted as an error.
+
+    master_data, when given, lets an Inventory listing recognize a real
+    piece of gear even without a "(w)"/"(h)" marker (e.g. it's sitting in
+    inventory, not worn) - any line's name that matches an item there
+    counts, on top of the always-counted "(w)"/"(h)" lines; without it
+    (None), only marked lines count, matching the old, stricter behavior.
+
+    name_counts_by_type splits the same per-name occurrence counts (used
+    by the Saved Items tab to detect duplicate copies) into two
+    independent buckets by where the line actually came from - 'bank' for
+    the numbered/unnumbered Strongbox bracket format, 'inventory' for the
+    Inventory listing or "On Slot:"/"Held Right/Left:" formats - rather
+    than which paste box (Best Build vs Search) it was typed into. That's
+    what lets _update_bank_saved_list reconcile a fresh bank paste without
+    wiping out inventory-sourced items still on the list, and vice versa:
+    a paste that happens to contain none of one type simply leaves that
+    bucket alone instead of clearing it."""
     owned_keys = set()
     recognized = 0
-    name_counts = {}
+    name_counts_by_type = {'bank': {}, 'inventory': {}}
+    known_item_names = (
+        {(item.get('Item') or '').strip().lower() for item in master_data}
+        if master_data is not None else None
+    )
 
-    def _count(name):
-        name_counts[name] = name_counts.get(name, 0) + 1
+    def _count(content_type, name):
+        bucket = name_counts_by_type[content_type]
+        bucket[name] = bucket.get(name, 0) + 1
 
     for line in text.splitlines():
         line = line.strip()
@@ -1156,16 +1178,7 @@ def _parse_bank_paste_text(text):
                 continue
             owned_keys.add((cleaned, slot, level))
             recognized += 1
-            _count(cleaned)
-            continue
-
-        m = _BANK_INVENTORY_WORN_RE.match(line)
-        if m:
-            cleaned = LootParser.clean_item_name(m.group(1)).strip().lower()
-            if cleaned:
-                owned_keys.add((cleaned, None, None))
-                recognized += 1
-                _count(cleaned)
+            _count('bank', cleaned)
             continue
 
         m = _BANK_EQUIPPED_RE.match(line)
@@ -1183,10 +1196,27 @@ def _parse_bank_paste_text(text):
             if cleaned:
                 owned_keys.add((cleaned, slot, None))
                 recognized += 1
-                _count(cleaned)
+                _count('inventory', cleaned)
             continue
 
-    return owned_keys, recognized, name_counts
+        # Inventory listing - checked last since it's the most permissive
+        # shape (an optional "(marker)" then just "whatever's left"), so
+        # it must never get a chance to steal a line meant for one of the
+        # more specific formats above.
+        m = _BANK_INVENTORY_LINE_RE.match(line)
+        if m:
+            marker, raw_name = m.groups()
+            is_marked = marker is not None and marker.lower() in ('w', 'h')
+            cleaned = LootParser.clean_item_name(raw_name).strip().lower()
+            if not cleaned:
+                continue
+            if is_marked or (known_item_names is not None and cleaned in known_item_names):
+                owned_keys.add((cleaned, None, None))
+                recognized += 1
+                _count('inventory', cleaned)
+            continue
+
+    return owned_keys, recognized, name_counts_by_type
 
 
 def _bank_item_key(item):
@@ -3362,17 +3392,37 @@ class App(tk.Tk):
         self._saved_hard_search_owned_keys = None
         self._saved_hard_search_rows_by_slot = None
 
+        # Results tab's right-click "Remove from Build" (see
+        # _remove_item_from_build) plus its two Rebuild buttons
+        # (_rebuild_full_database/_rebuild_saved_items_only). Persists
+        # across a Rebuild (that's the whole point - a removed item must
+        # stay gone), but resets whenever a genuinely different top-level
+        # search runs (_reset_hard_search_state) - a fresh search shouldn't
+        # stay tainted by exclusions from an unrelated previous build.
+        self.excluded_item_keys = set()
+
+        # When True, _find_optimal_build skips redrawing the Results tab
+        # entirely (still computes everything else normally - see the
+        # guarded sections inside it) - set around an internal-only call
+        # used purely to repopulate self.items_by_slot for a single-slot
+        # lookup (_search_missing_slots), so the half-finished intermediate
+        # build it computes is never actually flashed on screen before the
+        # real, final result replaces it.
+        self._suppress_results_redraw = False
+
         # Bank Build's Saved Items tab (see _update_bank_saved_list) -
         # restored from the config file so the accumulated list survives
-        # closing and reopening the program. Keyed per source tab
-        # ('best_build'/'search') so a fresh parse from one tab only
-        # reconciles what THAT tab most recently saw, never wiping out
-        # items only known via the other - see _update_bank_saved_list's
-        # docstring for why (an item can move between the two tabs'
-        # pastes between parses without ever "disappearing").
+        # closing and reopening the program. Keyed per CONTENT TYPE
+        # ('bank'/'inventory' - see _parse_bank_paste_text), not per paste
+        # box, so a fresh bank paste only reconciles what it recognizes as
+        # bank-sourced and never wipes out inventory-sourced items still on
+        # the list, and vice versa - see _update_bank_saved_list's
+        # docstring for why (an item can move between bank and inventory
+        # between parses without ever "disappearing" just because this
+        # particular paste didn't happen to mention it).
         self.bank_saved_sources = {
-            'best_build': dict(getattr(self, '_persisted_bank_saved_sources', {}).get('best_build', {})),
-            'search': dict(getattr(self, '_persisted_bank_saved_sources', {}).get('search', {})),
+            'bank': dict(getattr(self, '_persisted_bank_saved_sources', {}).get('bank', {})),
+            'inventory': dict(getattr(self, '_persisted_bank_saved_sources', {}).get('inventory', {})),
         }
         self.bank_saved_order = list(getattr(self, '_persisted_bank_saved_order', []))
 
@@ -3441,6 +3491,12 @@ class App(tk.Tk):
         bank_controls_frame.pack(fill='x', pady=(8,0))
         ttk.Button(bank_controls_frame, text="🏦 Find Best Bank Build",
                   command=self._find_bank_build).pack(side='left', padx=(0,4))
+        # Just the parse-and-save half of "Find Best Bank Build" - updates
+        # Saved Items without running the actual build search or switching
+        # to the Results tab, for when all you want is to sync Saved Items
+        # from a fresh paste (see _save_bank_paste_to_saved_items).
+        ttk.Button(bank_controls_frame, text="💾 Save to Saved Items",
+                  command=self._save_bank_paste_to_saved_items).pack(side='left', padx=4)
         ttk.Button(bank_controls_frame, text="Clear",
                   command=self._clear_bank_paste).pack(side='left', padx=4)
 
@@ -3503,6 +3559,11 @@ class App(tk.Tk):
         bank_search_controls_frame.pack(fill='x', pady=(8,0))
         ttk.Button(bank_search_controls_frame, text="🔎 Search",
                   command=self._search_bank_items).pack(side='left', padx=(0,4))
+        # Just the parse-and-save half of "Search" - updates Saved Items
+        # without running the actual lookup or switching to the Results
+        # tab (see _save_bank_search_to_saved_items).
+        ttk.Button(bank_search_controls_frame, text="💾 Save to Saved Items",
+                  command=self._save_bank_search_to_saved_items).pack(side='left', padx=4)
         ttk.Button(bank_search_controls_frame, text="Clear",
                   command=self._clear_bank_search).pack(side='left', padx=4)
 
@@ -3699,6 +3760,22 @@ class App(tk.Tk):
         self.search_missing_slots_button = ttk.Button(header_frame, text="🔍 Search Missing Slots (Full Database)",
                                                        command=self._search_missing_slots)
 
+        # Only shown once an item has been right-clicked and removed from
+        # the current build (see _remove_item_from_build) - not packed here
+        # (start hidden); _update_rebuild_buttons_visibility packs/forgets
+        # both based on self.excluded_item_keys. "Full Database" ignores
+        # Saved Items entirely (objectively best build available anywhere);
+        # "Saved Items First" builds as much as it can from what's actually
+        # owned and only reaches into the full database for whatever's left
+        # uncovered (see _rebuild_saved_items_first) - e.g. removing a good
+        # item you don't want to risk losing in PvP, then rebuilding to get
+        # a full set again: reuse the bank wherever possible, plus a clear
+        # "go acquire this" list (any row without the 📦 icon) for the rest.
+        self.rebuild_full_button = ttk.Button(header_frame, text="🔄 Rebuild (Full Database)",
+                                              command=self._rebuild_full_database)
+        self.rebuild_saved_items_button = ttk.Button(header_frame, text="🔄 Rebuild (Saved Items First)",
+                                                     command=self._rebuild_saved_items_first)
+
         # Results treeview
         results_frame = ttk.LabelFrame(t, text="Suggested Build", padding=10)
         results_frame.pack(fill='both', expand=True)
@@ -3739,7 +3816,12 @@ class App(tk.Tk):
         hsb.grid(row=1, column=0, sticky='ew')
         results_frame.rowconfigure(0, weight=1)
         results_frame.columnconfigure(0, weight=1)
-        
+
+        # Right-click a Build 1 row (Best Per Slot view only) to remove that
+        # item from the build entirely - see _on_results_right_click/
+        # _remove_item_from_build, and the two Rebuild buttons above.
+        self.search_results_tv.bind('<Button-3>', self._on_results_right_click)
+
         # Filter controls at bottom
         filter_frame = ttk.Frame(t)
         filter_frame.pack(fill='x', pady=(8,0))
@@ -4918,7 +5000,7 @@ class App(tk.Tk):
             alt_text = ', '.join(text for _, text in alts) if alts else '(none)'
 
             rows.append((
-                '📦' if self._is_bank_owned(item) else '',
+                '📦' if self._is_bank_owned(item) or self._is_saved_item(item) else '',
                 display_slot.title(),
                 item.get('Item', ''),
                 item.get('Type', ''),
@@ -5423,6 +5505,37 @@ class App(tk.Tk):
             "Lists every pasted item recognized in the master database, with the Area it actually drops in - "
             "no build/combo, just a lookup. Check any Only Found In box(es) to narrow it to those realms."))
 
+    def _save_bank_text_to_saved_items(self, text_widget, status_label):
+        """Shared "💾 Save to Saved Items" logic for both Best Build and
+        Search - parses `text_widget` exactly like _find_bank_build/
+        _search_bank_items already do, then updates the persisted Saved
+        Items list via _update_bank_saved_list (reconciled by content type,
+        bank vs inventory - not by which paste box this is, which no longer
+        matters), but stops there: no build search runs, no tab switch
+        happens. For when all you want is to sync Saved Items from a fresh
+        paste, not run the more expensive search/build that would normally
+        trigger the same save as a side effect."""
+        text = text_widget.get('1.0', tk.END)
+        owned_keys, recognized, name_counts_by_type = _parse_bank_paste_text(text, self.master_data)
+        if not owned_keys:
+            messagebox.showwarning("No Items",
+                "No equippable items were recognized in the pasted text. Expected a Strongbox "
+                "listing (\"12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]\", "
+                "the \"12.)\" is optional), an Inventory listing (\"(w)\"/\"(h)\" lines, or any line matching a real item), or an "
+                "Items in use listing (\"On Head:  ...\").")
+            return
+        self._update_bank_saved_list(name_counts_by_type)
+        unique_count = len(set().union(*name_counts_by_type.values())) if name_counts_by_type else 0
+        status_label.config(
+            text=f"Saved {recognized} equippable item(s) from the paste to Saved Items "
+                 f"({unique_count} unique item(s)).")
+
+    def _save_bank_paste_to_saved_items(self):
+        self._save_bank_text_to_saved_items(self.bank_paste_text, self.bank_status)
+
+    def _save_bank_search_to_saved_items(self):
+        self._save_bank_text_to_saved_items(self.bank_search_text, self.bank_search_status)
+
     def _search_bank_items(self):
         """Parse the pasted bank/inventory listing and list every
         recognized item as-is - filtered by Only Found In if any realm is
@@ -5437,16 +5550,16 @@ class App(tk.Tk):
         self._reset_hard_search_state()
 
         text = self.bank_search_text.get('1.0', tk.END)
-        owned_keys, recognized, name_counts = _parse_bank_paste_text(text)
+        owned_keys, recognized, name_counts_by_type = _parse_bank_paste_text(text, self.master_data)
         if not owned_keys:
             messagebox.showwarning("No Items",
                 "No equippable items were recognized in the pasted text. Expected a Strongbox "
                 "listing (\"12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]\", "
-                "the \"12.)\" is optional), an Inventory listing (only \"(w)\"/\"(h)\" lines count), or an "
+                "the \"12.)\" is optional), an Inventory listing (\"(w)\"/\"(h)\" lines, or any line matching a real item), or an "
                 "Items in use listing (\"On Head:  ...\").")
             return
 
-        self._update_bank_saved_list('search', name_counts)
+        self._update_bank_saved_list(name_counts_by_type)
 
         matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
         matched_key_count = len({_bank_item_key(item) for item in matched_items})
@@ -5467,7 +5580,7 @@ class App(tk.Tk):
         self._bank_owned_keys = owned_keys
         try:
             rows = [(
-                '📦' if self._is_bank_owned(item) else '',
+                '📦' if self._is_bank_owned(item) or self._is_saved_item(item) else '',
                 (item.get('Slot') or '').title(),
                 item.get('Item', ''),
                 item.get('Type', ''),
@@ -5522,16 +5635,16 @@ class App(tk.Tk):
         self._reset_hard_search_state()
 
         text = self.bank_paste_text.get('1.0', tk.END)
-        owned_keys, recognized, name_counts = _parse_bank_paste_text(text)
+        owned_keys, recognized, name_counts_by_type = _parse_bank_paste_text(text, self.master_data)
         if not owned_keys:
             messagebox.showwarning("No Items",
                 "No equippable items were recognized in the pasted text. Expected a Strongbox "
                 "listing (\"12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]\", "
-                "the \"12.)\" is optional), an Inventory listing (only \"(w)\"/\"(h)\" lines count), or an "
+                "the \"12.)\" is optional), an Inventory listing (\"(w)\"/\"(h)\" lines, or any line matching a real item), or an "
                 "Items in use listing (\"On Head:  ...\").")
             return
 
-        self._update_bank_saved_list('best_build', name_counts)
+        self._update_bank_saved_list(name_counts_by_type)
 
         matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
         matched_key_count = len({_bank_item_key(item) for item in matched_items})
@@ -5568,10 +5681,22 @@ class App(tk.Tk):
     def _is_bank_owned(self, item):
         """True if this item matches something from the currently active
         Bank Build paste - self._bank_owned_keys is only set (non-None)
-        while a Bank Build "Prioritize" search is actually running (see
-        _find_bank_build). Also used by _build_dict_to_rows to mark a
-        result row with the Bank column's icon."""
+        while a Bank Build "Prioritize"-style search is actually running
+        (see _find_bank_build/_find_saved_items_build/_rebuild_saved_items_first),
+        used for the W_BANK_OWNED scoring bonus during that search only."""
         return bool(self._bank_owned_keys) and _bank_owned_match(_bank_item_key(item), self._bank_owned_keys)
+
+    def _is_saved_item(self, item):
+        """True if `item`'s name matches something in the persisted Saved
+        Items list (self.bank_saved_order) - checked unconditionally for
+        the Bank column's 📦 icon on every search's results, regardless of
+        which search mode produced them (unlike _is_bank_owned's scoring
+        bonus, which only applies during an explicit Prioritize-style
+        search). This is what makes the icon a plain "you already own
+        this" indicator everywhere, not just in Bank Build/Saved Items
+        flows."""
+        name = (item.get('Item') or '').strip().lower()
+        return name in self.bank_saved_order
 
     def _on_bank_saved_prioritize_toggle(self):
         """See _on_bank_saved_hard_toggle - same mutual exclusion, other direction."""
@@ -5601,7 +5726,14 @@ class App(tk.Tk):
         after. Deliberately NOT called by _search_missing_slots itself -
         that flow needs this state (the snapshot build, which slots are
         missing) to still be around while it works, and clears/updates it
-        piece by piece as it goes instead."""
+        piece by piece as it goes instead.
+
+        Also clears the Results tab's manual item removals (excluded_item_keys)
+        - a genuinely new search shouldn't stay tainted by exclusions from a
+        previous, unrelated build. The two Rebuild buttons
+        (_rebuild_full_database/_rebuild_saved_items_only) don't call this -
+        they run the search directly, so a removed item stays excluded
+        across as many Remove/Rebuild cycles as needed."""
         self._no_item_text_override = None
         self._hard_search_strict_tier = False
         self._saved_hard_search_missing_slots = None
@@ -5611,12 +5743,225 @@ class App(tk.Tk):
         self._saved_hard_search_owned_keys = None
         self._saved_hard_search_rows_by_slot = None
         self._update_missing_slots_button_visibility()
+        self.excluded_item_keys = set()
+        self._update_rebuild_buttons_visibility()
 
     def _update_missing_slots_button_visibility(self):
         if getattr(self, '_saved_hard_search_missing_slots', None):
             self.search_missing_slots_button.pack(side='right', padx=(0,6))
         else:
             self.search_missing_slots_button.pack_forget()
+
+    def _update_rebuild_buttons_visibility(self):
+        """Both Rebuild buttons only show once something's actually been
+        removed from the current build (see _remove_item_from_build)."""
+        if getattr(self, 'excluded_item_keys', None):
+            self.rebuild_full_button.pack(side='right', padx=(0,6))
+            self.rebuild_saved_items_button.pack(side='right', padx=(0,6))
+        else:
+            self.rebuild_full_button.pack_forget()
+            self.rebuild_saved_items_button.pack_forget()
+
+    def _on_results_right_click(self, event):
+        """Right-click handler for the Results tab - only meaningful in
+        Best Per Slot view, and only for Build 1 (the top/first of any
+        stacked "Generate multiple build options" variants); a divider row
+        or a row belonging to a different stacked variant just does
+        nothing. Resolves the clicked row back to its slot key the same way
+        _search_missing_slots does - by recomputing Build 1's own rows/
+        slot-keys fresh (with_slot_keys) and matching by Treeview row
+        position, rather than trying to parse the displayed Slot/Item text
+        (which can't tell jewel_1 from jewel_2, among other ambiguities).
+        A filled slot offers "Remove". An empty ("No suitable item
+        found"/etc.) slot offers the same two full Rebuild actions as the
+        header buttons (_rebuild_full_database/_rebuild_saved_items_only) -
+        earlier this instead searched for a replacement scoped to just that
+        one slot, but that meant every OTHER slot's item/Alt Options had to
+        be preserved by hand across an internal search call, which kept
+        turning up new edge cases; a full rebuild recomputes everything in
+        one consistent pass and still honors self.excluded_item_keys, so
+        anything already removed stays removed regardless of which slot
+        was clicked."""
+        if self.results_display_mode.get() != 'optimal' or not self.build_variants:
+            return
+        iid = self.search_results_tv.identify_row(event.y)
+        if not iid:
+            return
+        build1 = self.build_variants[0]
+        rows, slots = self._build_dict_to_rows(build1, with_slot_keys=True)
+        try:
+            row_index = self.search_results_tv.index(iid)
+        except tk.TclError:
+            return
+        if row_index >= len(slots):
+            return
+        slot = slots[row_index]
+        item = build1.get(slot)
+
+        menu = tk.Menu(self, tearoff=0)
+        if item is not None:
+            menu.add_command(label=f"Remove '{item.get('Item', '')}' from Build",
+                             command=lambda: self._remove_item_from_build(slot))
+        else:
+            menu.add_command(label="Rebuild (Full Database)", command=self._rebuild_full_database)
+            menu.add_command(label="Rebuild (Saved Items First)", command=self._rebuild_saved_items_first)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _remove_item_from_build(self, slot):
+        """Drop the item currently in `slot` (Build 1 only) from the build
+        and permanently exclude it from every future search (see the
+        items_by_slot filter in _find_optimal_build/_show_all_matches),
+        until a genuinely new top-level search runs (_reset_hard_search_state)
+        or the app restarts. Redraws immediately (the slot shows "No
+        suitable item found" if it's still attempted, or just vanishes if
+        it wasn't a required slot) and reveals the two Rebuild buttons."""
+        if not self.build_variants:
+            return
+        build1 = self.build_variants[0]
+        item = build1.get(slot)
+        if item is None:
+            return
+        self.excluded_item_keys.add(_bank_item_key(item))
+        del build1[slot]
+        self.optimal_build = build1
+
+        self.last_optimal_results = self._all_variants_rows()
+        self.search_results_tv.delete(*self.search_results_tv.get_children())
+        for row in self.last_optimal_results:
+            self.search_results_tv.insert('', 'end', values=row)
+        self._autosize_results_columns()
+        self._update_rebuild_buttons_visibility()
+
+    def _rebuild_full_database(self):
+        """Results tab "Rebuild (Full Database)" button - re-runs a normal,
+        unrestricted Find Optimal Build, now excluding whatever's been
+        right-clicked off the current build (self.excluded_item_keys - see
+        _remove_item_from_build/_find_optimal_build's items_by_slot filter).
+        Deliberately doesn't go through _on_find_optimal_build_clicked/
+        _reset_hard_search_state - that would wipe the very exclusions this
+        button exists to apply, and a removed item needs to stay excluded
+        across as many Remove/Rebuild cycles as the user wants."""
+        self._find_optimal_build()
+
+    def _rebuild_saved_items_first(self):
+        """Results tab "Rebuild (Saved Items First)" button - the PvP-gear
+        use case this was actually built for: you don't want to risk losing
+        a good item on death, so you right-click it off the build
+        (excluded_item_keys), then rebuild - but you still want a COMPLETE
+        gear set, using as much of the bank box as possible and only
+        reaching into the full database for whatever the bank genuinely
+        can't cover.
+
+        Pass 1 restricts candidates to Saved Items (like Bank Build's
+        "Only"/Saved Items' "Hard Search") and covers as much of the
+        wanted-spell list as it can from there alone - no tier-holding, any
+        tier the bank has is accepted, since the goal here is coverage, not
+        tier fidelity. Pass 2 takes whatever's STILL uncovered after that
+        and searches the full, unrestricted database for it instead,
+        automatically, with no per-slot prompt - the goal is one complete
+        build in a single click. The two passes are then merged into one
+        build: Saved-Items-sourced slots keep the 📦 Bank icon, full-
+        database fallback slots don't - so the Bank column alone doubles
+        as "here's what you still need to go acquire." Always excludes
+        self.excluded_item_keys, same as Rebuild (Full Database)."""
+        if not self.bank_saved_order:
+            messagebox.showwarning("No Saved Items",
+                "The Saved Items list is empty - run a Best Build or Search parse first.")
+            return
+        owned_keys = {(name, None, None) for name in self.bank_saved_order}
+        matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
+        if not matched_items:
+            messagebox.showwarning("No Matches",
+                "None of the Saved Items were recognized against the loaded master database.")
+            return
+
+        # Pass 1: Saved Items only.
+        original_master_data = self.master_data
+        self.master_data = matched_items
+        self._bank_owned_keys = owned_keys
+        self._suppress_results_redraw = True
+        try:
+            self._find_optimal_build()
+        finally:
+            self.master_data = original_master_data
+            self._bank_owned_keys = None
+            self._suppress_results_redraw = False
+
+        base_build = dict(self.optimal_build)
+        base_attempted = set(self.attempted_slots)
+        still_missing = {s for s in base_attempted if s not in base_build}
+        uncovered_chips = [
+            chip for base in getattr(self, 'last_uncovered_bases', set())
+            for chip in getattr(self, 'last_wanted_chips_by_base', {}).get(base, [])
+        ]
+
+        # Pass 2: whatever Saved Items couldn't cover, search the full
+        # database instead - no tier-holding or prompt here either; any
+        # real item that covers the gap completes the set. Uses
+        # _find_best_item_for_slot (per-slot, against self.items_by_slot
+        # freshly populated by the call below) rather than trusting this
+        # call's own self.optimal_build assignment - the whole-build DP
+        # optimizes coverage globally and could just as easily put the
+        # covering item in some OTHER slot that also qualifies (e.g. a
+        # bless item in Jewel instead of the Body slot that's actually
+        # missing), same pitfall _search_missing_slots already had to
+        # avoid.
+        if still_missing and uncovered_chips:
+            original_wanted = self.wanted_spells_data
+            original_priority_spells = self.priority_spells_data
+            original_priority_tiers = self.priority_tiers_data
+            self.wanted_spells_data = uncovered_chips
+            self.priority_spells_data = []
+            self.priority_tiers_data = []
+            self._suppress_results_redraw = True
+            try:
+                self._find_optimal_build()
+            finally:
+                self.wanted_spells_data = original_wanted
+                self.priority_spells_data = original_priority_spells
+                self.priority_tiers_data = original_priority_tiers
+                self._suppress_results_redraw = False
+
+            for slot in list(still_missing):
+                item = self._find_best_item_for_slot(slot, uncovered_chips, hold_tier=False)
+                if item is not None:
+                    base_build[slot] = item
+                    still_missing.discard(slot)
+
+        # Compose and display the merged build.
+        self.optimal_build = base_build
+        self.build_variants = [dict(base_build)]
+        self.build_variant_var.set('Build 1')
+        self.build_variant_combo['values'] = ['Build 1']
+        self.build_variant_combo.config(state='disabled')
+        self.slot_alternates = {}
+        self.attempted_slots = base_attempted
+        self.results_display_mode.set('optimal')
+
+        # owned_keys back in scope just for this render, so Saved-Items-
+        # sourced slots still show the 📦 icon distinguishing them from the
+        # full-database fallback fills.
+        self._bank_owned_keys = owned_keys
+        try:
+            self.last_optimal_results = self._all_variants_rows()
+        finally:
+            self._bank_owned_keys = None
+        self.search_results_tv.delete(*self.search_results_tv.get_children())
+        for row in self.last_optimal_results:
+            self.search_results_tv.insert('', 'end', values=row)
+        self._autosize_results_columns()
+
+        if still_missing:
+            leftover = ', '.join(sorted(s.replace('_', ' ').title() for s in still_missing))
+            status = (f"Built from Saved Items where possible, full database for the rest - "
+                     f"no item found anywhere for: {leftover}.")
+        else:
+            status = ("Full gear set assembled - 📦 marks what's already in your Saved Items; "
+                      "everything else needs to be acquired.")
+        self.search_status.config(text=status)
 
     def _on_find_optimal_build_clicked(self):
         """Thin wrapper for the Basic Constraints "Find Optimal Build"
@@ -5727,7 +6072,11 @@ class App(tk.Tk):
         hold_tier=True requires an exact tier match against whichever chips
         share the item's base spell (chips with no explicit tier are
         unrestricted either way); False accepts any tier, preferring the
-        highest level available. Returns the item dict, or None."""
+        highest level available. An empty `chips` (no wanted spell at all
+        applies to this slot - e.g. an always-fill Weapon/Shield slot with
+        no spell requirement) makes every candidate eligible instead of
+        none, since there's nothing to match against. Returns the item
+        dict, or None."""
         lookup_slot = 'jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw') else slot
         candidates = self.items_by_slot.get(lookup_slot, [])
 
@@ -5745,7 +6094,7 @@ class App(tk.Tk):
         for item in candidates:
             item_spell = (item.get('Spell') or '').lower()
             item_base = _spell_base(item_spell)
-            if item_base not in wanted_bases:
+            if wanted_bases and item_base not in wanted_bases:
                 continue
             target_ranks = target_ranks_by_base.get(item_base)
             if hold_tier and target_ranks and _item_tier_rank(item_spell) not in target_ranks:
@@ -5804,12 +6153,18 @@ class App(tk.Tk):
         self.wanted_spells_data = uncovered_chips
         self.priority_spells_data = []
         self.priority_tiers_data = []
+        # Suppressed - this call exists purely to populate self.items_by_slot;
+        # its own narrow "just the uncovered chips" build should never be
+        # flashed on screen before the real, composited result replaces it
+        # further down (see self._suppress_results_redraw).
+        self._suppress_results_redraw = True
         try:
             self._find_optimal_build()
         finally:
             self.wanted_spells_data = original_wanted
             self.priority_spells_data = original_priority_spells
             self.priority_tiers_data = original_priority_tiers
+            self._suppress_results_redraw = False
 
         def fill(hold_tier):
             for slot in list(still_missing):
@@ -5889,25 +6244,38 @@ class App(tk.Tk):
             status = "Re-searched missing slot(s) - all filled."
         self.search_status.config(text=status)
 
-    def _update_bank_saved_list(self, source, name_counts):
-        """Merge one tab's parse into the persistent Saved Items list.
-        Matched by cleaned item name only - not slot/level - since the
-        same physical item can legitimately show up in a different paste
-        format (e.g. it was in the bank last time, now it's worn and shows
-        up via an Items in use paste instead), and this list is meant to
-        track ownership, not location. source is 'best_build' or 'search':
-        each keeps its own latest counts, so a fresh parse from one tab
-        only reconciles what THAT tab most recently saw (remove names it
-        no longer recognizes, add ones it newly does) - never wiping out
-        items the other tab is still tracking."""
-        self.bank_saved_sources[source] = dict(name_counts)
-        all_names = set(self.bank_saved_sources['best_build']) | set(self.bank_saved_sources['search'])
+    def _update_bank_saved_list(self, name_counts_by_type):
+        """Merge one parse into the persistent Saved Items list. Matched by
+        cleaned item name only - not slot/level - since the same physical
+        item can legitimately show up in a different paste format (e.g. it
+        was in the bank last time, now it's worn and shows up via an Items
+        in use paste instead), and this list is meant to track ownership,
+        not location.
+
+        Reconciled per CONTENT TYPE ('bank' vs 'inventory' - see
+        _parse_bank_paste_text), not per paste box: pasting an updated bank
+        listing (with no inventory lines in it at all) only reconciles the
+        'bank' bucket - removing names it no longer recognizes, adding ones
+        it newly does - and leaves the 'inventory' bucket exactly as it
+        was, and vice versa. A type with nothing recognized in THIS parse
+        is skipped entirely rather than treated as "now empty" - otherwise
+        pasting just your inventory would wipe out everything from your
+        bank, which defeats the point of tracking them separately."""
+        for content_type, name_counts in name_counts_by_type.items():
+            if not name_counts:
+                continue  # nothing of this type in this paste - leave that bucket alone
+            self.bank_saved_sources[content_type] = dict(name_counts)
+
+        all_names = set()
+        for counts in self.bank_saved_sources.values():
+            all_names.update(counts)
         self.bank_saved_order = [n for n in self.bank_saved_order if n in all_names]
         existing = set(self.bank_saved_order)
-        for n in name_counts:
-            if n not in existing:
-                self.bank_saved_order.append(n)
-                existing.add(n)
+        for name_counts in name_counts_by_type.values():
+            for n in name_counts:
+                if n not in existing:
+                    self.bank_saved_order.append(n)
+                    existing.add(n)
         self._save_config()
         if hasattr(self, 'bank_saved_tv'):
             self._refresh_bank_saved_tab()
@@ -5936,7 +6304,7 @@ class App(tk.Tk):
             )
 
         total_counts = {
-            name: self.bank_saved_sources['best_build'].get(name, 0) + self.bank_saved_sources['search'].get(name, 0)
+            name: self.bank_saved_sources['bank'].get(name, 0) + self.bank_saved_sources['inventory'].get(name, 0)
             for name in self.bank_saved_order
         }
         for name in self.bank_saved_order:
@@ -5954,7 +6322,7 @@ class App(tk.Tk):
         if not messagebox.askyesno("Clear Saved List",
                 "Clear the entire Saved Items list? This can't be undone."):
             return
-        self.bank_saved_sources = {'best_build': {}, 'search': {}}
+        self.bank_saved_sources = {'bank': {}, 'inventory': {}}
         self.bank_saved_order = []
         self._save_config()
         self._refresh_bank_saved_tab()
@@ -6029,8 +6397,14 @@ class App(tk.Tk):
         # after (see _is_bank_owned). None (the normal case, every other
         # search) means owned_match is always 0 below.
 
-        # Clear previous results
-        self.search_results_tv.delete(*self.search_results_tv.get_children())
+        # Clear previous results - skipped when this call is only being
+        # used as an internal subroutine (see self._suppress_results_redraw,
+        # set by _search_missing_slots while repopulating self.items_by_slot
+        # for its own single-slot lookup), so the Results tab never visibly
+        # flashes an incomplete/unrelated build on screen while that lookup
+        # is in progress.
+        if not self._suppress_results_redraw:
+            self.search_results_tv.delete(*self.search_results_tv.get_children())
 
         # Get level constraints
         min_level = None
@@ -6323,6 +6697,8 @@ class App(tk.Tk):
         all_slots = ['head', 'jewel', 'jewel', 'cloak', 'body', 'hands', 'legs', 'feet', 'weapon', 'shield']
 
         for item in self.master_data:
+            if _bank_item_key(item) in self.excluded_item_keys:
+                continue  # manually removed from the Results tab (right-click) - see _remove_item_from_build
             item_slot = (item.get('Slot') or '').lower()
             item_spell = (item.get('Spell') or '').lower()
             item_type = (item.get('Type') or '').lower()
@@ -7171,7 +7547,8 @@ class App(tk.Tk):
         # to render until something else forces a redraw (e.g. picking a
         # different build variant), leaving the tab looking empty at first.
         self.results_display_mode.set('optimal')
-        self.notebook.select(self.tab_results)
+        if not self._suppress_results_redraw:
+            self.notebook.select(self.tab_results)
 
         # Slots worth flagging as "No suitable item found" (via
         # _build_dict_to_rows) if they stay unfilled. weapon/shield/claw are
@@ -7197,11 +7574,18 @@ class App(tk.Tk):
                                     if s in ('weapon', 'weapon_off', 'shield') or s.startswith('claw')}
 
         # Store and display every build variant stacked together, separated by
-        # a thin black divider row, with Build 1 on top
+        # a thin black divider row, with Build 1 on top - the actual Treeview
+        # insert is skipped under suppression (see above), but
+        # last_optimal_results/attempted_slots/etc. are still computed
+        # normally, since _search_missing_slots still needs those to
+        # determine what's uncovered and to power _find_best_item_for_slot's
+        # own candidate pool (self.items_by_slot, set earlier in this same
+        # method, unaffected by suppression).
         self.last_optimal_results = self._all_variants_rows()
-        for row in self.last_optimal_results:
-            self.search_results_tv.insert('', 'end', values=row)
-        self._autosize_results_columns()
+        if not self._suppress_results_redraw:
+            for row in self.last_optimal_results:
+                self.search_results_tv.insert('', 'end', values=row)
+            self._autosize_results_columns()
 
         # Show coverage (counted per distinct spell, not per tier requested)
         coverage = len(covered_bases)
@@ -7384,6 +7768,8 @@ class App(tk.Tk):
         all_slots = ['head', 'jewel', 'jewel', 'cloak', 'body', 'hands', 'legs', 'feet', 'weapon', 'shield']
 
         for item in self.master_data:
+            if _bank_item_key(item) in self.excluded_item_keys:
+                continue  # manually removed from the Results tab (right-click) - see _remove_item_from_build
             item_slot = (item.get('Slot') or '').lower()
             item_spell = (item.get('Spell') or '').lower()
             item_type = (item.get('Type') or '').lower()
@@ -7587,7 +7973,7 @@ class App(tk.Tk):
                     covered_spells.add(wanted)
             
             row = (
-                '',
+                '📦' if self._is_bank_owned(item) or self._is_saved_item(item) else '',
                 slot.title(),
                 item.get('Item', ''),
                 item.get('Type', ''),

@@ -1,4 +1,4 @@
-# Gaming Log Parser v5.1.11
+# Gaming Log Parser v5.2.0
 
 **[⬇ Download the latest release](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)**
 
@@ -134,7 +134,14 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.1.11 (Current)
+### v5.2.0 (Current)
+- Results tab: right-click any Build 1 item to remove it from the build - it stays excluded from every future search until a fresh search runs. Two new buttons appear once something's been removed: "Rebuild (Full Database)" (searches everywhere) and "Rebuild (Saved Items First)" (builds as much as possible from Saved Items, then automatically fills whatever it can't cover from the full database - a complete set every time, e.g. after removing a good item you don't want to risk losing in PvP). Right-clicking an empty slot offers the same two Rebuild actions
+- The 📦 Bank column icon now shows up on every search's results (Find Optimal Build, Show All Matches, everywhere) whenever an item matches your Saved Items list - not just Bank Build/Saved Items flows
+- Bank Build's Best Build and Search tabs each got a "💾 Save to Saved Items" button - parses the paste and updates Saved Items without running the full search/build
+- Saved Items now reconciles by content type (bank listing vs. inventory/equipped listing) instead of which paste box was used - updating just your bank paste no longer wipes out inventory-sourced items, and vice versa; a paste with both kinds updates both
+- An Inventory listing now also recognizes an unmarked (or stack-count) line if its name matches a real item in the master database, on top of the always-counted "(w)"/"(h)" lines - so unworn gear sitting in inventory gets picked up too, while crafting mats/consumables still don't
+
+### v5.1.11
 - Items whose Area is "Class" are now excluded from every search (Find Optimal Build, Show All Matches, Bank Build, Saved Items, Search Missing Slots) - they're just never candidates anywhere
 - Added a "Class Items" dropdown next to Required Items (Basic Constraints), listing every excluded item as "Item-MOB-Spell" so one can still be deliberately forced into a build via Required Items - the one way back in for an otherwise-excluded item. The list is sorted by Mob, with Mob shown in bold caps; the closed dropdown stays a fixed width but its popup list widens to fit the longest entry
 
