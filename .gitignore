@@ -25,3 +25,7 @@ old/
 test_launcher.py
 OlmranItemBuilder_TEST.exe
 .gaming_log_parser_TEST_config.json
+
+# Ad-hoc "build an older tagged version for comparison" test exe(s) - built
+# from an extracted old commit's script, never a real release artifact.
+OlmranItemBuilder_TEST_OLD*.exe

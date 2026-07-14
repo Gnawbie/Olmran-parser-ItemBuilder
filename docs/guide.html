@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Full Usage Guide - Olmran Item Builder</title>
+<style>
+  :root {
+    --bg: #14171c;
+    --panel: #1c2028;
+    --border: #2c313c;
+    --text: #e6e8eb;
+    --muted: #9aa2ad;
+    --accent: #4f8cff;
+    --accent-hover: #6ea0ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 56px 24px 100px;
+  }
+  h1 {
+    font-size: 2rem;
+    margin: 0 0 4px;
+  }
+  .tagline {
+    color: var(--muted);
+    margin: 0 0 28px;
+    font-size: 1.05rem;
+  }
+  .topbar {
+    margin-bottom: 36px;
+  }
+  .btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 600;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    transition: background 0.15s ease;
+  }
+  .btn:hover { background: var(--accent-hover); }
+  .btn-secondary {
+    display: inline-block;
+    margin-left: 14px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .btn-secondary:hover { color: var(--text); }
+  h2 {
+    font-size: 1.35rem;
+    margin: 44px 0 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  h2:first-of-type { border-top: none; }
+  h3 {
+    font-size: 1.05rem;
+    margin: 24px 0 8px;
+    color: var(--text);
+  }
+  p { margin: 0 0 12px; }
+  ul, ol { margin: 0 0 12px; padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  li ul, li ol { margin-top: 8px; }
+  code {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.9em;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 26px;
+    margin-bottom: 20px;
+  }
+  .toc {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 28px;
+    margin-bottom: 20px;
+  }
+  .toc ul { list-style: none; padding-left: 0; margin: 0; columns: 2; column-gap: 32px; }
+  .toc li { margin-bottom: 6px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); }
+  footer {
+    margin-top: 56px;
+    color: var(--muted);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+  }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Olmran Item Builder</h1>
+    <p class="tagline">Full usage guide - v5.2.0</p>
+
+    <div class="topbar">
+      <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
+      <a class="btn-secondary" href="index.html">Back to download page</a>
+      <a class="btn-secondary" href="https://github.com/Gnawbie/Olmran-parser-ItemBuilder">GitHub</a>
+    </div>
+
+    <div class="toc">
+      <ul>
+        <li><a href="#getting-started">1. Getting Started</a></li>
+        <li><a href="#parse">2. Parse Tab</a></li>
+        <li><a href="#fields">3. Fields Tab</a></li>
+        <li><a href="#export">4. Export Tab</a></li>
+        <li><a href="#build">5. Build Tab</a></li>
+        <li><a href="#results">6. Results Tab</a></li>
+        <li><a href="#saved-builds">7. Saved Builds Tab</a></li>
+        <li><a href="#area-items">8. Area Items Tab</a></li>
+        <li><a href="#tips">9. Tips and Example Builds</a></li>
+        <li><a href="#troubleshooting">10. Troubleshooting</a></li>
+      </ul>
+    </div>
+
+    <h2 id="getting-started">1. Getting Started</h2>
+    <ul>
+      <li>Download <code>OlmranItemBuilder.exe</code> from the download page and put it anywhere on your computer.</li>
+      <li>Double-click it to run - no Python install, no admin rights, no setup step.</li>
+      <li>Windows SmartScreen may warn about an unrecognized app the first time (it isn't code-signed yet) - click "More info" then "Run anyway".</li>
+      <li>It's a PyInstaller "onefile" build, so it unpacks itself to a temp folder on every launch - expect a few seconds of startup delay each time, not just the first.</li>
+      <li>The bundled community equipment list (<code>Olmran_Community_Eq_and_Stats_List.xlsx</code>) ships inside the .exe itself and loads automatically on startup.</li>
+    </ul>
+
+    <h2 id="parse">2. Parse Tab</h2>
+    <p>Load your game logs here and turn them into structured Chat, Combat, and Loot data.</p>
+    <ul>
+      <li>Load CHAT logs and ACTION logs - the file type is auto-detected from the filename.</li>
+      <li><b>Search Logs</b> finds every time an item actually dropped across a whole batch of loaded logs, independent of running a full parse:
+        <ul>
+          <li><b>Drops only</b> (default, on) - matches real drop events the same way the Loot parser does, so quality/material prefixes ("bright", "glowing", "shining", etc.) don't cause misses or false confidence. For each drop it shows a <b>snapshot</b>: every line from the last timestamp seen through the drop line itself, so you can see the fight and kill that led up to it. Click a result row to view its snapshot.</li>
+          <li>Uncheck <b>Drops only</b> to instead do a plain raw-text search of every loaded file's lines (any mention of the term, not just drops), showing filename, line number, and timestamp per match.</li>
+          <li>Case-sensitive matching is optional in both modes.</li>
+        </ul>
+      </li>
+      <li>Parse options (Chat / Combat / Loot) automatically enable or disable based on which file types are loaded.</li>
+      <li>Use the Snapshot buttons to preview parsed data before exporting.</li>
+      <li>Export everything to a formatted Excel workbook.</li>
+    </ul>
+
+    <h2 id="fields">3. Fields Tab</h2>
+    <ul>
+      <li>Customize which fields get extracted for Chat, Combat, and Loot.</li>
+      <li>Add, edit, remove, and reorder fields per data type.</li>
+      <li>"Reset to Defaults" restores the built-in field set.</li>
+    </ul>
+
+    <h2 id="export">4. Export Tab</h2>
+    <ul>
+      <li>Create a new Master Loot Database or append to an existing one (fodder items excluded automatically).</li>
+      <li>Export Combat and Loot as separate files if needed.</li>
+      <li>Optional summary sheet with run statistics.</li>
+      <li>Each chat log gets its own sheet on export.</li>
+    </ul>
+
+    <h2 id="build">5. Build Tab</h2>
+    <p>This is where you search a master equipment database for the best gear for your character. It's organized into four inner sub-tabs: Basic Constraints, Armor Constraints, Weapon Constraints, and Bank Build. A shared control area at the bottom (Min/Max/Specific Level, and the search buttons) stays visible no matter which sub-tab is active.</p>
+
+    <h3>5.1 Master Database File</h3>
+    <ul>
+      <li><b>Browse...</b> - pick your own .xlsx database.</li>
+      <li><b>Create New</b> - start a blank one.</li>
+      <li><b>Use Community List</b> - instantly loads the bundled community equipment list.</li>
+      <li><b>Load</b> - reads the selected file into memory for searching.</li>
+    </ul>
+    <p>Items whose Area is "Class" are excluded from every search entirely at load time (they're role-specific class-quest rewards, not found in the open world) - see the Class Items dropdown below for the one way to still use one deliberately.</p>
+
+    <h3>5.2 Basic Constraints</h3>
+    <p><b>Desired Spells</b> - pick spells from category dropdowns instead of typing them, each paired with a tier dropdown ((any), i, ii, iii):</p>
+    <ul>
+      <li><b>Basic</b> - Agility, Bless, Dexterity, Constitution, Intelligence, Wisdom, Strength, Evade, Combat, Tough.skin</li>
+      <li><b>Shields/Buffs</b> - Protect, Blur, Shield, Vitalize, Regenerate, Bleed.resist, Disease.resist, Poison.resist</li>
+      <li><b>Class Specific</b> - 23 combat/skill-enhance spells (Reverb, Aura, Backstab, Bash, Berzerk, Crush, Direct, Double, Fired, Improve, Leathers, Lockpick, Mark, Martialarts, Maul, Melee, Pummel, Rake, Repair, Slash, Tap, Thrust, Track, Volley - none of these go above tier ii)</li>
+      <li><b>General Skills</b> - Platemail, Leathers, Thrust, Chaos.crush, Slash, All.weapons, Weapons, Climb, Hide, Jump, Swim, Percept, Sneak</li>
+      <li><b>Protects</b> - the 8 elemental/mental protects (Cold/Earth/Elemental/Fire/Lightning/Mental/Shock/Water), with their own minor/normal/improved tier labels instead of i/ii/iii</li>
+    </ul>
+    <p>Some spells restrict which tiers are selectable (Agility/Bless cap at ii; Class Specific spells cap at ii; Disease.resist alone goes up to tier iv) - the tier dropdown greys out anything that spell can't reach. Click <b>Add to List</b> to add the current dropdown selection as a removable chip under <b>Wanted Spells</b>. Requesting the same spell at two different tiers (e.g. Dexterity i and Dexterity iii) is treated as one requirement, not two.</p>
+    <p><b>Wanted Sigils</b> - pick one or more Sigil types (Cold/Earth/Fire/Lightning/Pain/Shock/Water) and the search actively favors armor carrying them, the same way it does for Wanted Spells - useful since many armor pieces carry a Sigil but no Spell at all. Unlike spells, sigils don't need to be exclusive to one slot - multiple slots can each independently carry a wanted Sigil, and a Wanted Spell always outranks a Wanted Sigil for the same slot.</p>
+    <p><b>Priority Spells</b> and <b>Priority Tier</b> - Priority Spells are always actively searched for (not just preferred among items that already matched something else). Priority Tier pairs one specific spell with one specific tier, so the search targets exactly that tier for it, even over a higher tier that's available elsewhere.</p>
+    <p><b>Required Items</b> - type a specific item's name under <b>Require Item:</b> and click <b>Add to Build</b>. It's looked up by exact match first, falling back to a spelling-tolerant fuzzy search that asks you to confirm the closest match if there's no exact hit. Once added it's forced into its slot on every future search, with the rest of the build calculated around it.</p>
+    <p><b>Class Items</b> dropdown - lists every item excluded for being in the "Class" area, formatted as <i>Item-MOB-Spell</i> and sorted by Mob (Mob shown in bold caps). Selecting one and clicking <b>Add to Build</b> forces it into Required Items - the one deliberate way an otherwise-excluded item can still end up in a build.</p>
+    <p><b>Level Filtering</b> - Min Level / Max Level restrict to a range; Specific Level restricts to an exact level (mutually exclusive with Min/Max). Leave all three blank for no restriction.</p>
+    <p><b>If no match at Specific Level</b> (only enabled once Specific Level has a value) controls what Find Optimal Build does when nothing matches a wanted spell at exactly that level/tier:</p>
+    <ul>
+      <li><b>Go down a tier</b> - keep the exact level, accept a lower tier if needed</li>
+      <li><b>Go down in level</b> - keep the exact tier, search downward for the closest available level</li>
+      <li><b>Both</b> - relax level and tier together, preferring the closest combination</li>
+      <li><b>Don't populate slot</b> (default) - no fallback; the slot is left empty</li>
+    </ul>
+    <p><b>Only Found In</b> (realm filter) - check any combination of Evil, Chaos, Good, Glory Bea, Crafted, Event, or Kaid to restrict results to those realms. Leave everything unchecked (or check <b>All</b>) to search every realm except Crafted. Kaid has its own column: <b>Kaid All</b> matches any Kaid sub-realm, or check specific colors (White/Green/Red/Purple) instead - mutually exclusive with Kaid All. <b>Crafted items never appear unless the Crafted checkbox is checked</b>, and a build can include at most one Crafted-realm item even then.</p>
+
+    <h3>5.3 Armor Constraints</h3>
+    <ul>
+      <li>The <b>All:</b> row sets an armor type for every slot at once.</li>
+      <li>Override individual slots (Head, Cloak, Body, Hands, Legs, Feet) with Cloth / Leather / Studded / Plate.</li>
+      <li>Per-slot <b>Defense</b> (range) and <b>Sigil</b> dropdowns - soft preferences: a matching item is favored, but a slot is never left empty just because nothing matches.</li>
+      <li>Up to 3 slots can be marked <b>Max Lvl</b> priority - greedily locks that slot to the highest-level item that still carries a wanted/priority spell, before the normal search runs for everything else.</li>
+      <li><b>Set as Default</b> / <b>Clear Default</b> / <b>Clear All</b> manage your saved preferences, persisted between sessions.</li>
+    </ul>
+
+    <h3>5.4 Weapon Constraints</h3>
+    <ul>
+      <li><b>Weapon Types/Combo's</b> - check whichever your build uses: Dual-Wield 1h, 1h/Shield, 2h/Shield, Fired 1h/Shield, Two-Handed, 1 Claw, 2 Claw. Most have their own Style (Melee/Direct/Parry Staff/Fired) and Damage Type (Slashing/Thrusting/Crushing) dropdowns.</li>
+      <li>Leave everything unchecked and Weapon/Shield aren't populated at all. 1 Claw/2 Claw replace Weapon and Shield entirely rather than filling alongside them.</li>
+      <li><b>Melee Weapon Constraints</b> - soft-preference Damage/Timer/Fumble/Accuracy/Sigil dropdowns (each with an optional Priority checkbox, capped at 3), plus a <b>Weight</b> range - soft preference by default, or check <b>Hard Filter</b> to exclude out-of-range weapons outright. Applies to every weapon style and to Claw slots too. 1 Claw/2 Claw each get their own Sigil dropdown (first for claw 1, second for claw 2).</li>
+      <li><b>Shield Constraints</b> - Defense and Sigil dropdowns working like Armor Constraints' per-slot versions, plus Cloth/Leather/Studded/Plate checkboxes (a hard filter, same as Armor Constraints' own).</li>
+    </ul>
+
+    <h3>5.5 Bank Build</h3>
+    <p>Paste a bank/inventory listing from the game and use it as the basis for a search, instead of (or alongside) the full database. Three inner tabs share the idea:</p>
+    <ul>
+      <li><b>Best Build</b> - paste a listing, then click <b>Find Best Bank Build</b>. <b>Only Items I own</b> (default, checked) restricts the search to just what's pasted; <b>Prioritize items I own</b> instead searches everything, just favoring owned items when otherwise close - the two are mutually exclusive. A <b>Save to Saved Items</b> button parses the paste and updates Saved Items without running the search.</li>
+      <li><b>Search</b> - paste a listing and click <b>Search</b> to list every recognized item as-is (no build/combo), showing which Area each actually drops in. Shares the same Only Found In checkboxes as Basic Constraints. Also has its own Save to Saved Items button.</li>
+      <li><b>Saved Items</b> - a running, persisted list of everything ever recognized from a Best Build or Search paste (or the dedicated Save buttons). Has its own <b>Prioritize Saved Items</b> / <b>Hard Search</b> checkboxes and Find Best Bank Build button, sourced from this persisted list instead of a fresh paste. <b>Hard Search</b> holds each wanted spell's exact tier and restricts candidates to Saved Items only - a slot with nothing at the exact tier reads "No available item". A new column, <b>Drop</b>, reads "No Drop" for any Kaid-realm item, "Drop" otherwise.</li>
+    </ul>
+    <p>Four paste formats are recognized and can even be mixed in one paste: a numbered Strongbox listing (<code>12.) item name [Level|Slot|...tags]</code>), the same listing without numbering, an Inventory listing ("(w)"/"(h)" marked lines always count; an unmarked or stack-count line also counts if it matches a real item in the loaded database), and an Items in use listing (<code>On Head:  item name</code>, <code>Held Left:  nothing</code>).</p>
+    <p>Saved Items reconciles by <b>content type</b> - bank listing vs. inventory/equipped listing - rather than which paste box was used. Updating just your bank paste never wipes out inventory-sourced items, and vice versa; a paste containing both kinds updates both. A second (or further) copy of the same item is listed at the bottom of Saved Items, prefixed "::extra::".</p>
+    <p>The 📦 Bank icon appears in the leftmost column of every search's results (Find Optimal Build, Show All Matches, everywhere) whenever an item matches something in your Saved Items list.</p>
+
+    <h3>5.6 Shared Search Controls</h3>
+    <ul>
+      <li><b>🎯 Find Optimal Build</b> - exact search across every slot at once for the combination covering as many wanted spells as possible under your constraints.</li>
+      <li><b>📋 Show All Matches</b> - lists every item matching your filters, without narrowing to one per slot.</li>
+      <li><b>🎲 Generate multiple build options</b> - also generates up to 10 alternate full builds by swapping in equally-good tied items slot by slot.</li>
+    </ul>
+
+    <h2 id="results">6. Results Tab</h2>
+    <ul>
+      <li><b>Display: Best Per Slot / All Matches</b> toggles between the two search modes above.</li>
+      <li><b>Build Variant</b> dropdown - active when multiple build options were generated.</li>
+      <li>Columns: Bank icon, Slot, Item, Type, Spell, Sigil, Level, Mob, Area, and <b>Alt Options</b> (other items that tied for that slot).</li>
+      <li><b>Right-click a filled item</b> to remove it from the build - it stays excluded from every future search until a genuinely new search runs. Two buttons appear once something's been removed:
+        <ul>
+          <li><b>Rebuild (Full Database)</b> - re-searches everywhere, excluding what's been removed.</li>
+          <li><b>Rebuild (Saved Items First)</b> - builds as much of the set as possible from Saved Items, then automatically searches the full database for whatever it can't cover - a complete gear set every time. Useful for PvP: remove a good item you don't want to risk losing on death, rebuild, and get a full set that reuses your bank wherever possible and clearly shows (via the missing Bank icon) exactly what you'd still need to go acquire for the rest.</li>
+        </ul>
+      </li>
+      <li><b>Right-click an empty slot</b> ("No suitable item found", etc.) offers the same two Rebuild actions.</li>
+      <li><b>Search Missing Slots (Full Database)</b> button appears whenever a Saved Items Hard Search leaves gaps - fills them in place from the full database, asking about a lower tier if the exact one isn't found anywhere.</li>
+      <li><b>Remove Area</b> - strip all items from a given area out of the current results.</li>
+      <li><b>Export Results</b> / <b>Save Build</b> - save the current table to Excel, HTML, image, or text, or pin it as a permanent panel under Saved Builds.</li>
+    </ul>
+
+    <h2 id="saved-builds">7. Saved Builds Tab</h2>
+    <ul>
+      <li>Click <b>Save Build</b> from the Results tab to add the current results as a panel here.</li>
+      <li>Each panel has its own renamable name, its own Export As... (Excel/HTML/Image/Text), and a Remove button.</li>
+      <li>Saved Builds persist across closing and reopening the program.</li>
+    </ul>
+
+    <h2 id="area-items">8. Area Items Tab</h2>
+    <ul>
+      <li>Pick an Area and browse every item droppable there, straight from the loaded master database.</li>
+      <li>The Area field is typeable - type a few letters to narrow the list, or click/tab into it to see the full alphabetical list right away.</li>
+      <li>Results are sorted by slot: armor first (Plate, Studded, Leather, Cloth), then Jewel, Shield, Weapon.</li>
+    </ul>
+
+    <h2 id="tips">9. Tips and Example Builds</h2>
+    <p><b>Quick start:</b> Use Community List, add the spells you want, set level/armor/weapon/realm constraints as needed, click Find Optimal Build.</p>
+    <ul>
+      <li><b>Tank:</b> Melee + Plate armor + Weapon + Shield + Slashing + Min Level 60</li>
+      <li><b>Two-Handed Warrior:</b> Melee + Plate armor + Two-Handed + Crushing + Level 50-70</li>
+      <li><b>Dual-Wield Rogue:</b> Melee + Leather armor + Weapon + Dual-Wield + Thrusting</li>
+      <li><b>Dual-Claw Fighter:</b> Melee + 2 Claw + Slashing</li>
+      <li><b>Caster with Staff:</b> Direct (Caster) + Cloth armor + Two-Handed + Crushing</li>
+    </ul>
+
+    <h2 id="troubleshooting">10. Troubleshooting</h2>
+    <ul>
+      <li><b>"Windows protected your PC" / SmartScreen warning</b> - expected, the exe isn't code-signed yet. Click "More info" then "Run anyway".</li>
+      <li><b>The exe takes a few seconds to open every time</b> - expected; it's a PyInstaller onefile build that unpacks itself to a temp folder on every launch.</li>
+      <li><b>Files not loading</b> - check the file extension (.log, .txt, .xlsx), make sure it isn't open in another program, and try copying it somewhere else if the path has unusual characters.</li>
+      <li><b>Parse results empty</b> - verify the log actually contains delve output ("You examine X closely") and that CHAT vs ACTION auto-detection picked the right type.</li>
+      <li><b>Community List not found</b> - if running from source rather than the .exe, make sure <code>Olmran_Community_Eq_and_Stats_List.xlsx</code> is in the same folder, or use Browse... to point at it manually.</li>
+    </ul>
+
+    <footer>
+      Full version history and the latest release are on <a href="https://github.com/Gnawbie/Olmran-parser-ItemBuilder">GitHub</a>.
+      &middot; <a href="index.html">Back to download page</a>
+    </footer>
+  </div>
+</body>
+</html>
