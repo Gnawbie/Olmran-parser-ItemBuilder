@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.2.0"
+VERSION = "5.3.0"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1069,8 +1069,8 @@ def _item_tier_rank(item_spell):
 
 
 # Bank Build - parses a pasted bank/inventory listing (see
-# App._find_bank_build) into a set of "owned item" keys that can be looked
-# up against self.master_data. Four paste shapes are recognized, each
+# App._save_bank_import_to_character) into a set of "owned item" keys that
+# can be looked up against self.master_data. Four paste shapes are recognized, each
 # handled by its own regex below but all feeding the same owned_keys set:
 #
 # 1. Strongbox listing, numbered:
@@ -1140,12 +1140,11 @@ def _parse_bank_paste_text(text, master_data=None):
     by the Saved Items tab to detect duplicate copies) into two
     independent buckets by where the line actually came from - 'bank' for
     the numbered/unnumbered Strongbox bracket format, 'inventory' for the
-    Inventory listing or "On Slot:"/"Held Right/Left:" formats - rather
-    than which paste box (Best Build vs Search) it was typed into. That's
-    what lets _update_bank_saved_list reconcile a fresh bank paste without
-    wiping out inventory-sourced items still on the list, and vice versa:
-    a paste that happens to contain none of one type simply leaves that
-    bucket alone instead of clearing it."""
+    Inventory listing or "On Slot:"/"Held Right/Left:" formats. That's what
+    lets _save_bank_import_to_character reconcile a fresh bank paste
+    without wiping out inventory-sourced items still on the list, and vice
+    versa: a paste that happens to contain none of one type simply leaves
+    that bucket alone instead of clearing it."""
     owned_keys = set()
     recognized = 0
     name_counts_by_type = {'bank': {}, 'inventory': {}}
@@ -1466,7 +1465,13 @@ class App(tk.Tk):
         is_test_build = bool(os.environ.get('OLMRAN_TEST_CONFIG'))
         title_suffix = " [TEST BUILD - clean slate]" if is_test_build else ""
         self.title(f"🎮 Olmran Log Parser and Gear Set Creator v{VERSION}{title_suffix}")
-        self.geometry("1350x815")
+        # Bank Build's Saved Items (per-character tabs, Only Found In,
+        # Prioritize/Hard Search/Search-all-characters, etc.) needs more
+        # vertical space than the old 815px default fit - tall enough that
+        # the shared Min/Max/Specific Level + search buttons under the Build
+        # tab were cut off below the visible window on first launch. 836 is
+        # the confirmed comfortable height (measured from a live test run).
+        self.geometry("1350x836")
         self.minsize(1150, 750)
         self.resizable(True, True)
         self._set_app_icon()
@@ -1539,6 +1544,10 @@ class App(tk.Tk):
                     # bank_saved_order in _build_build_tab.
                     self._persisted_bank_saved_sources = config.get('bank_saved_sources', {})
                     self._persisted_bank_saved_order = config.get('bank_saved_order', [])
+                    # Bank Build's Import tab / per-character Saved Items -
+                    # same deal, turned into self.bank_characters in
+                    # _build_build_tab.
+                    self._persisted_bank_characters = config.get('bank_characters', {})
             else:
                 self.last_open_dir = os.path.expanduser("~")
                 self.last_save_dir = os.path.expanduser("~")
@@ -1548,6 +1557,7 @@ class App(tk.Tk):
                 self._persisted_saved_build_counter = 0
                 self._persisted_bank_saved_sources = {}
                 self._persisted_bank_saved_order = []
+                self._persisted_bank_characters = {}
         except Exception:
             self.last_open_dir = os.path.expanduser("~")
             self.last_save_dir = os.path.expanduser("~")
@@ -1557,6 +1567,7 @@ class App(tk.Tk):
             self._persisted_saved_build_counter = 0
             self._persisted_bank_saved_sources = {}
             self._persisted_bank_saved_order = []
+            self._persisted_bank_characters = {}
 
     def _save_config(self):
         """Save configuration to file"""
@@ -1576,6 +1587,13 @@ class App(tk.Tk):
                     src: dict(counts) for src, counts in getattr(self, 'bank_saved_sources', {}).items()
                 },
                 'bank_saved_order': list(getattr(self, 'bank_saved_order', [])),
+                'bank_characters': {
+                    char: {
+                        'sources': {src: dict(counts) for src, counts in cdata['sources'].items()},
+                        'order': list(cdata['order']),
+                    }
+                    for char, cdata in getattr(self, 'bank_characters', {}).items()
+                },
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f)
@@ -1588,13 +1606,72 @@ class App(tk.Tk):
         self.destroy()
 
     # ── BUILD UI ──────────────────────────────────────────────
+    def _build_scrollable_root(self):
+        """Wrap the whole app in a Canvas + visible vertical Scrollbar, so
+        shrinking the window (or a tab just plain needing more room than
+        fits on screen) never permanently hides anything below the visible
+        area - it can be reached by dragging the scrollbar or scrolling the
+        mouse wheel. Entirely transparent to every tab built afterward
+        (they're built into self._scroll_content exactly as if it were
+        `self`).
+
+        Mouse wheel scrolling is also bound app-wide (bind_all) as a
+        convenience, but a widget that already handles its own wheel
+        scrolling (Treeview/Text/Listbox/Combobox) is left alone rather
+        than also scrolling the outer window - otherwise hovering over e.g.
+        a Results table while scrolling would double-scroll both it and
+        the whole window. The Scrollbar itself is the reliable path either
+        way, in case the wheel handling ever doesn't fire for a given
+        widget."""
+        outer = ttk.Frame(self)
+        outer.pack(fill='both', expand=True)
+
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient='vertical', command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        content = ttk.Frame(canvas)
+        content_window = canvas.create_window((0, 0), window=content, anchor='nw')
+
+        def _on_content_configure(event):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+        content.bind('<Configure>', _on_content_configure)
+
+        def _on_canvas_configure(event):
+            canvas.itemconfig(content_window, width=event.width)
+        canvas.bind('<Configure>', _on_canvas_configure)
+
+        self_scrolling_classes = {'Treeview', 'Text', 'Listbox', 'TCombobox', 'ComboboxPopdownFrame'}
+
+        def _on_global_mousewheel(event):
+            w = event.widget
+            while w is not None:
+                try:
+                    if w.winfo_class() in self_scrolling_classes:
+                        return
+                except tk.TclError:
+                    break
+                if w is content:
+                    break
+                w = w.master
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+
+        canvas.bind_all('<MouseWheel>', _on_global_mousewheel)
+
+        self._scroll_canvas = canvas
+        self._scroll_content = content
+
     def _build_ui(self):
         style = ttk.Style(self)
         style.theme_use('clam')
         style.configure('TNotebook.Tab', font=('Arial', 10, 'bold'), padding=[12, 6])
         style.configure('Accent.TButton', font=('Arial', 10, 'bold'))
 
-        nb = ttk.Notebook(self)
+        self._build_scrollable_root()
+
+        nb = ttk.Notebook(self._scroll_content)
         nb.pack(fill='both', expand=True, padx=8, pady=8)
 
         self.tab_parse  = ttk.Frame(nb, padding=12)
@@ -2577,8 +2654,17 @@ class App(tk.Tk):
         # - each sub-tab already sizes itself to its own content, so letting
         # the notebook stretch to fill the whole tab would leave a big gap
         # before shared_controls_frame instead of it sitting right below.
+        #
+        # ttk.Notebook's own natural size, though, is based on the LARGEST
+        # of its tabs, not whichever is currently showing - since Bank
+        # Build's Saved Items grew a lot taller than Basic Constraints, that
+        # left exactly the big gap under Basic Constraints' shorter content
+        # this comment says shouldn't happen. _on_build_subtab_changed fixes
+        # it by explicitly resizing the notebook to match whichever tab is
+        # actually selected, instead of leaving it fixed at the tallest one.
         self.build_sub_notebook = ttk.Notebook(self.tab_build)
         self.build_sub_notebook.pack(fill='x')
+        self.build_sub_notebook.bind('<<NotebookTabChanged>>', self._on_build_subtab_changed)
 
         build_search_subtab = ttk.Frame(self.build_sub_notebook)
         self.build_sub_notebook.add(build_search_subtab, text='Basic Constraints')
@@ -3364,7 +3450,7 @@ class App(tk.Tk):
         self.blocked_area_items = []
         self._bank_owned_keys = None
 
-        # Saved Items' "Hard Search" mode - see _find_saved_items_build,
+        # Saved Items' "Hard Search" mode - see _find_character_saved_items_build,
         # _build_dict_to_rows, and _search_missing_slots. _no_item_text_override
         # (None or a string) overrides the default "No suitable item found"
         # text for any empty attempted slot - "No available item" during/after
@@ -3410,183 +3496,115 @@ class App(tk.Tk):
         # real, final result replaces it.
         self._suppress_results_redraw = False
 
-        # Bank Build's Saved Items tab (see _update_bank_saved_list) -
-        # restored from the config file so the accumulated list survives
-        # closing and reopening the program. Keyed per CONTENT TYPE
-        # ('bank'/'inventory' - see _parse_bank_paste_text), not per paste
-        # box, so a fresh bank paste only reconciles what it recognizes as
-        # bank-sourced and never wipes out inventory-sourced items still on
-        # the list, and vice versa - see _update_bank_saved_list's
-        # docstring for why (an item can move between bank and inventory
-        # between parses without ever "disappearing" just because this
-        # particular paste didn't happen to mention it).
+        # Bank Build's Saved Items "Main" tab - the legacy shared pool from
+        # before per-character tracking existed (Best Build/Search tabs used
+        # to feed this; both are gone now, so this is frozen historical data,
+        # kept only so nobody's already-saved items vanish). Keyed per
+        # CONTENT TYPE ('bank'/'inventory' - see _parse_bank_paste_text), not
+        # per paste box (an item can move between bank and inventory between
+        # parses without ever "disappearing" just because this particular
+        # paste didn't happen to mention it).
         self.bank_saved_sources = {
             'bank': dict(getattr(self, '_persisted_bank_saved_sources', {}).get('bank', {})),
             'inventory': dict(getattr(self, '_persisted_bank_saved_sources', {}).get('inventory', {})),
         }
         self.bank_saved_order = list(getattr(self, '_persisted_bank_saved_order', []))
 
-        # Bank Build - three inner tabs sharing the paste-a-listing idea:
-        # "Best Build" builds the best gear combo either strictly from those
-        # items or from the whole master database with owned items favored
-        # (see _find_bank_build); "Search" instead just lists every
-        # recognized item as-is (no per-slot combo), filtered by Only Found
-        # In, showing which Area each one actually drops in (see
-        # _search_bank_items); "Saved Items" accumulates everything ever
-        # recognized by either of the other two into one running, persisted
-        # list (see _update_bank_saved_list). Every other constraint (Wanted
+        # Per-character Saved Items - fed only by the Import tab
+        # (_save_bank_import_to_character). Same {'sources': {...}, 'order':
+        # [...]} shape as the legacy pool above, one per character name.
+        # Restored from the config file so every character's list survives
+        # closing and reopening the program.
+        self.bank_characters = {}
+        for _char, _cdata in getattr(self, '_persisted_bank_characters', {}).items():
+            self.bank_characters[_char] = {
+                'sources': {
+                    'bank': dict((_cdata.get('sources') or {}).get('bank', {})),
+                    'inventory': dict((_cdata.get('sources') or {}).get('inventory', {})),
+                },
+                'order': list(_cdata.get('order', [])),
+            }
+        # Populated per character name by _create_bank_character_tab - widget
+        # refs (treeview, checkboxes/vars, status labels) needed to read from
+        # or redraw that character's own tab.
+        self.bank_character_widgets = {}
+        self._recompute_all_saved_item_names()
+
+        # Bank Build - two inner tabs: "Import" parses a pasted bank/
+        # inventory listing and saves it to a named character's own Saved
+        # Items tab (see _save_bank_import_to_character); "Saved Items" has
+        # a read-only "Main" tab aggregating every character (plus the
+        # legacy pool above) and one tab per character actually used from
+        # Import, each with its own Find Best Bank Build (see
+        # _find_character_saved_items_build). Every other constraint (Wanted
         # Spells, Armor/Weapon Constraints, Min/Max Level, etc.) still
-        # applies exactly as normal on the Best Build side; this only adds
-        # ownership as an extra dimension on top.
+        # applies exactly as normal; this only adds ownership as an extra
+        # dimension on top.
         bank_sub_notebook = ttk.Notebook(self.build_bank_subtab)
         bank_sub_notebook.pack(fill='both', expand=True)
 
-        bank_best_tab = ttk.Frame(bank_sub_notebook, padding=8)
-        bank_sub_notebook.add(bank_best_tab, text='Best Build')
+        bank_import_tab = ttk.Frame(bank_sub_notebook, padding=8)
+        bank_sub_notebook.add(bank_import_tab, text='Import')
 
-        bank_search_tab = ttk.Frame(bank_sub_notebook, padding=8)
-        bank_sub_notebook.add(bank_search_tab, text='Search')
-
-        bank_saved_tab = ttk.Frame(bank_sub_notebook, padding=8)
+        bank_saved_tab = ttk.Frame(bank_sub_notebook, padding=4)
         bank_sub_notebook.add(bank_saved_tab, text='Saved Items')
 
-        # ── Best Build ──
-        ttk.Label(bank_best_tab, text="Paste a bank/inventory listing below, then click "
-                 "\"Find Best Bank Build\".", foreground='#666').pack(anchor='w', pady=(0,6))
-
-        bank_text_frame = ttk.Frame(bank_best_tab)
-        bank_text_frame.pack(fill='both', expand=True)
-        self.bank_paste_text = tk.Text(bank_text_frame, height=14, wrap='none')
-        bank_vsb = ttk.Scrollbar(bank_text_frame, orient='vertical', command=self.bank_paste_text.yview)
-        bank_hsb = ttk.Scrollbar(bank_text_frame, orient='horizontal', command=self.bank_paste_text.xview)
-        self.bank_paste_text.configure(yscrollcommand=bank_vsb.set, xscrollcommand=bank_hsb.set)
-        self.bank_paste_text.grid(row=0, column=0, sticky='nsew')
-        bank_vsb.grid(row=0, column=1, sticky='ns')
-        bank_hsb.grid(row=1, column=0, sticky='ew')
-        bank_text_frame.rowconfigure(0, weight=1)
-        bank_text_frame.columnconfigure(0, weight=1)
-
-        # Prioritize and Only are mutually exclusive modes for the same
-        # underlying choice (see _find_bank_build) - checking either one
-        # disables (and clears) the other, rather than letting both be
-        # checked at once with ambiguous meaning.
-        bank_checks_frame = ttk.Frame(bank_best_tab)
-        bank_checks_frame.pack(fill='x', pady=(8,0))
-
-        self.bank_prioritize_var = tk.BooleanVar(value=False)
-        self.bank_prioritize_checkbox = ttk.Checkbutton(bank_checks_frame,
-            text="Prioritize items I own (search everything, but favor owned items over ones you don't have)",
-            variable=self.bank_prioritize_var, command=self._on_bank_prioritize_toggle)
-        self.bank_prioritize_checkbox.pack(anchor='w')
-
-        self.bank_only_var = tk.BooleanVar(value=True)
-        self.bank_only_checkbox = ttk.Checkbutton(bank_checks_frame,
-            text="Only Items I own (build only from the pasted list, nothing else)",
-            variable=self.bank_only_var, command=self._on_bank_only_toggle)
-        self.bank_only_checkbox.pack(anchor='w', pady=(2,0))
-        # Only starts checked, so Prioritize starts disabled to match.
-        self.bank_prioritize_checkbox.config(state='disabled')
-
-        bank_controls_frame = ttk.Frame(bank_best_tab)
-        bank_controls_frame.pack(fill='x', pady=(8,0))
-        ttk.Button(bank_controls_frame, text="🏦 Find Best Bank Build",
-                  command=self._find_bank_build).pack(side='left', padx=(0,4))
-        # Just the parse-and-save half of "Find Best Bank Build" - updates
-        # Saved Items without running the actual build search or switching
-        # to the Results tab, for when all you want is to sync Saved Items
-        # from a fresh paste (see _save_bank_paste_to_saved_items).
-        ttk.Button(bank_controls_frame, text="💾 Save to Saved Items",
-                  command=self._save_bank_paste_to_saved_items).pack(side='left', padx=4)
-        ttk.Button(bank_controls_frame, text="Clear",
-                  command=self._clear_bank_paste).pack(side='left', padx=4)
-
-        self.bank_status = ttk.Label(bank_best_tab, text=(
-            "\"Only\": only pasted items are considered - the best build achievable from what you own right now. "
-            "\"Prioritize\": searches everything, just favoring items you own when otherwise close."),
-            foreground='#666', wraplength=760, justify='left')
-        self.bank_status.pack(anchor='w', pady=(6,0))
-
-        # ── Search ──
-        ttk.Label(bank_search_tab, text="Paste a bank/inventory listing below, then click \"Search\" to see "
-                 "which of those items match the master database and which Area each one actually drops in.",
+        # ── Import ──
+        ttk.Label(bank_import_tab, text="Paste a bank/inventory listing below, enter a character name, then "
+                 "click \"Save to Saved Items\" - it's saved to that character's own tab under Saved Items "
+                 "(a new tab is created automatically the first time you use a given name).",
                  foreground='#666', wraplength=760, justify='left').pack(anchor='w', pady=(0,6))
 
-        bank_search_text_frame = ttk.Frame(bank_search_tab)
-        bank_search_text_frame.pack(fill='both', expand=True)
-        self.bank_search_text = tk.Text(bank_search_text_frame, height=14, wrap='none')
-        bank_search_vsb = ttk.Scrollbar(bank_search_text_frame, orient='vertical',
-                                        command=self.bank_search_text.yview)
-        bank_search_hsb = ttk.Scrollbar(bank_search_text_frame, orient='horizontal',
-                                        command=self.bank_search_text.xview)
-        self.bank_search_text.configure(yscrollcommand=bank_search_vsb.set, xscrollcommand=bank_search_hsb.set)
-        self.bank_search_text.grid(row=0, column=0, sticky='nsew')
-        bank_search_vsb.grid(row=0, column=1, sticky='ns')
-        bank_search_hsb.grid(row=1, column=0, sticky='ew')
-        bank_search_text_frame.rowconfigure(0, weight=1)
-        bank_search_text_frame.columnconfigure(0, weight=1)
+        bank_import_text_frame = ttk.Frame(bank_import_tab)
+        bank_import_text_frame.pack(fill='both', expand=True)
+        self.bank_import_text = tk.Text(bank_import_text_frame, height=14, wrap='none')
+        bank_import_vsb = ttk.Scrollbar(bank_import_text_frame, orient='vertical',
+                                        command=self.bank_import_text.yview)
+        bank_import_hsb = ttk.Scrollbar(bank_import_text_frame, orient='horizontal',
+                                        command=self.bank_import_text.xview)
+        self.bank_import_text.configure(yscrollcommand=bank_import_vsb.set, xscrollcommand=bank_import_hsb.set)
+        self.bank_import_text.grid(row=0, column=0, sticky='nsew')
+        bank_import_vsb.grid(row=0, column=1, sticky='ns')
+        bank_import_hsb.grid(row=1, column=0, sticky='ew')
+        bank_import_text_frame.rowconfigure(0, weight=1)
+        bank_import_text_frame.columnconfigure(0, weight=1)
 
-        # Same Only Found In checkboxes as Basic Constraints - literally the
-        # same self.realm_filters variables (not a separate copy), so
-        # checking one here or there is the same setting either place.
-        bank_search_realm_frame = ttk.LabelFrame(bank_search_tab, text="Only Found In", padding=8)
-        bank_search_realm_frame.pack(anchor='w', pady=(8,0))
+        bank_import_char_frame = ttk.Frame(bank_import_tab)
+        bank_import_char_frame.pack(fill='x', pady=(8,0))
+        ttk.Label(bank_import_char_frame, text="Character Name:").pack(side='left', padx=(0,6))
+        self.bank_import_char_var = tk.StringVar(value='')
+        ttk.Entry(bank_import_char_frame, textvariable=self.bank_import_char_var, width=24).pack(side='left')
 
-        realm_options = ['Evil', 'Glory Bea', 'Good', 'Event', 'Chaos', 'Crafted']
-        realm_cols = 2
-        for i, realm in enumerate(realm_options):
-            cb = ttk.Checkbutton(bank_search_realm_frame, text=realm, variable=self.realm_filters[realm],
-                                 command=self._update_realm_all_exclusivity)
-            cb.grid(row=i // realm_cols, column=i % realm_cols, sticky='w', padx=4, pady=2)
-            self.realm_filter_checkbuttons.append(cb)
-        kaid_all_cb2 = ttk.Checkbutton(bank_search_realm_frame, text="Kaid All", variable=self.realm_filters['Kaid'],
-                                       command=self._update_kaid_exclusivity)
-        kaid_all_cb2.grid(row=0, column=2, sticky='w', padx=(16,4), pady=2)
-        self.realm_filter_checkbuttons.append(kaid_all_cb2)
-        for i, color in enumerate(['Kaid White', 'Kaid Green', 'Kaid Red', 'Kaid Purple'], start=1):
-            cb = ttk.Checkbutton(bank_search_realm_frame, text=color, variable=self.realm_filters[color],
-                                 command=self._update_kaid_exclusivity)
-            cb.grid(row=i, column=2, sticky='w', padx=(16,4), pady=2)
-            self.realm_filter_checkbuttons.append(cb)
+        bank_import_controls_frame = ttk.Frame(bank_import_tab)
+        bank_import_controls_frame.pack(fill='x', pady=(8,0))
+        ttk.Button(bank_import_controls_frame, text="💾 Save to Saved Items",
+                  command=self._save_bank_import_to_character).pack(side='left')
 
-        # "All" - see _update_realm_all_exclusivity; same shared
-        # self.realm_filter_all_var as Basic Constraints' own "All" box.
-        all_cb2 = ttk.Checkbutton(bank_search_realm_frame, text="All", variable=self.realm_filter_all_var,
-                                  command=self._update_realm_all_exclusivity)
-        all_cb2.grid(row=4, column=0, sticky='w', padx=4, pady=2)
-        self.realm_filter_all_checkbuttons.append(all_cb2)
-
-        bank_search_controls_frame = ttk.Frame(bank_search_tab)
-        bank_search_controls_frame.pack(fill='x', pady=(8,0))
-        ttk.Button(bank_search_controls_frame, text="🔎 Search",
-                  command=self._search_bank_items).pack(side='left', padx=(0,4))
-        # Just the parse-and-save half of "Search" - updates Saved Items
-        # without running the actual lookup or switching to the Results
-        # tab (see _save_bank_search_to_saved_items).
-        ttk.Button(bank_search_controls_frame, text="💾 Save to Saved Items",
-                  command=self._save_bank_search_to_saved_items).pack(side='left', padx=4)
-        ttk.Button(bank_search_controls_frame, text="Clear",
-                  command=self._clear_bank_search).pack(side='left', padx=4)
-
-        self.bank_search_status = ttk.Label(bank_search_tab, text=(
-            "Lists every pasted item recognized in the master database, with the Area it actually drops in - "
-            "no build/combo, just a lookup. Check any Only Found In box(es) to narrow it to those realms."),
+        self.bank_import_status = ttk.Label(bank_import_tab, text=(
+            "Enter a character name and click \"Save to Saved Items\" to add this paste to that character's tab."),
             foreground='#666', wraplength=760, justify='left')
-        self.bank_search_status.pack(anchor='w', pady=(6,0))
+        self.bank_import_status.pack(anchor='w', pady=(6,0))
 
         # ── Saved Items ──
-        ttk.Label(bank_saved_tab, text="Everything ever recognized from a Best Build or Search paste, kept "
-                 "up to date automatically - each new paste adds items it finds and removes items it no longer "
-                 "sees (an item can move between the two tabs' pastes without disappearing from here). A second "
-                 "copy of the same item is listed at the bottom, prefixed \"::extra::\".",
+        self.bank_saved_sub_notebook = ttk.Notebook(bank_saved_tab)
+        self.bank_saved_sub_notebook.pack(fill='both', expand=True)
+
+        bank_saved_main_tab = ttk.Frame(self.bank_saved_sub_notebook, padding=8)
+        self.bank_saved_sub_notebook.add(bank_saved_main_tab, text='Main')
+
+        ttk.Label(bank_saved_main_tab, text="Every item ever saved from the Import tab, across every "
+                 "character, plus anything saved before character tracking existed. Read-only - use a "
+                 "character's own tab (to the right) to search/build from just their items. A second copy of "
+                 "the same item is listed at the bottom, prefixed \"::extra::\".",
                  foreground='#666', wraplength=760, justify='left').pack(anchor='w', pady=(0,6))
 
-        bank_saved_frame = ttk.Frame(bank_saved_tab)
+        bank_saved_frame = ttk.Frame(bank_saved_main_tab)
         bank_saved_frame.pack(fill='both', expand=True)
 
         saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
         saved_col_widths = {'Slot': 55, 'Drop': 60, 'Item': 220, 'Type': 60, 'Spell': 100, 'Sigil': 60,
                            'Level': 45, 'Area': 140}
-        self.bank_saved_tv = ttk.Treeview(bank_saved_frame, columns=saved_cols, show='headings', height=16)
+        self.bank_saved_tv = ttk.Treeview(bank_saved_frame, columns=saved_cols, show='headings', height=14)
         for col in saved_cols:
             heading_anchor = 'w' if col == 'Item' else 'center'
             self.bank_saved_tv.heading(col, text=col, anchor=heading_anchor)
@@ -3602,49 +3620,19 @@ class App(tk.Tk):
         bank_saved_frame.rowconfigure(0, weight=1)
         bank_saved_frame.columnconfigure(0, weight=1)
 
-        # Same idea as Best Build's Prioritize/Only pair (see
-        # _on_bank_prioritize_toggle/_on_bank_only_toggle), sourced from
-        # this persisted list instead of a freshly pasted listing. "Hard
-        # Search" takes Only's place here - restricts candidates to Saved
-        # Items only, same as Only did, but additionally reports any
-        # wanted spell/tier with zero matches as an explicit "No available
-        # item" row (see _build_dict_to_rows) and reveals the Results
-        # tab's "Search Missing Slots" button for a full-database follow-up
-        # search on just those gaps (see _search_missing_slots).
-        bank_saved_checks_frame = ttk.Frame(bank_saved_tab)
-        bank_saved_checks_frame.pack(fill='x', pady=(8,0))
+        bank_saved_main_controls = ttk.Frame(bank_saved_main_tab)
+        bank_saved_main_controls.pack(fill='x', pady=(8,0))
+        ttk.Button(bank_saved_main_controls, text="Clear Saved List",
+                  command=self._clear_bank_saved_list).pack(side='left')
 
-        self.bank_saved_prioritize_var = tk.BooleanVar(value=False)
-        self.bank_saved_prioritize_checkbox = ttk.Checkbutton(bank_saved_checks_frame,
-            text="Prioritize Saved Items (search everything, but favor them over items you don't have)",
-            variable=self.bank_saved_prioritize_var, command=self._on_bank_saved_prioritize_toggle)
-        self.bank_saved_prioritize_checkbox.pack(anchor='w')
-
-        self.bank_saved_hard_var = tk.BooleanVar(value=True)
-        self.bank_saved_hard_checkbox = ttk.Checkbutton(bank_saved_checks_frame,
-            text="Hard Search (build only from Saved Items; report exactly what's missing)",
-            variable=self.bank_saved_hard_var, command=self._on_bank_saved_hard_toggle)
-        self.bank_saved_hard_checkbox.pack(anchor='w', pady=(2,0))
-        # Hard Search starts checked, so Prioritize starts disabled to match.
-        self.bank_saved_prioritize_checkbox.config(state='disabled')
-
-        bank_saved_controls_frame = ttk.Frame(bank_saved_tab)
-        bank_saved_controls_frame.pack(fill='x', pady=(8,0))
-        ttk.Button(bank_saved_controls_frame, text="🏦 Find Best Bank Build",
-                  command=self._find_saved_items_build).pack(side='left', padx=(0,4))
-        ttk.Button(bank_saved_controls_frame, text="Clear Saved List",
-                  command=self._clear_bank_saved_list).pack(side='left', padx=4)
-
-        self.bank_saved_search_status = ttk.Label(bank_saved_tab, text=(
-            "\"Hard Search\": only Saved Items are considered - any wanted spell/tier with nothing available "
-            "shows \"No available item\", and the Results tab gets a button to search the full database for just "
-            "those slots. \"Prioritize\": searches everything, just favoring Saved Items when otherwise close."),
-            foreground='#666', wraplength=760, justify='left')
-        self.bank_saved_search_status.pack(anchor='w', pady=(6,0))
-
-        self.bank_saved_status = ttk.Label(bank_saved_tab, text="", foreground='#666',
+        self.bank_saved_status = ttk.Label(bank_saved_main_tab, text="", foreground='#666',
                                            wraplength=760, justify='left')
         self.bank_saved_status.pack(anchor='w', pady=(6,0))
+
+        # One tab per character already used from Import, restored in the
+        # order they were saved.
+        for _char in self.bank_characters:
+            self._create_bank_character_tab(_char)
         self._refresh_bank_saved_tab()
 
         # Shared controls - Min/Max/Specific Level and the search buttons -
@@ -3715,6 +3703,26 @@ class App(tk.Tk):
         self.generate_multi_builds_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(shared_button_frame, text="🎲 Generate multiple build options",
                        variable=self.generate_multi_builds_var).pack(side='left', padx=(12,4))
+
+        # Every sub-tab is fully built by now - set the notebook's initial
+        # height to match whichever tab is selected first (Basic
+        # Constraints), same as _on_build_subtab_changed does on every
+        # later tab switch.
+        self.after_idle(self._on_build_subtab_changed)
+
+    def _on_build_subtab_changed(self, event=None):
+        """Resize self.build_sub_notebook to match only the currently
+        selected sub-tab's own required height, instead of ttk.Notebook's
+        default of sizing to the largest tab across all of them - see the
+        comment above self.build_sub_notebook's creation for why that
+        default left a large blank gap under any shorter tab (Basic/Armor/
+        Weapon Constraints) once Bank Build's Saved Items grew tall."""
+        try:
+            selected = self.build_sub_notebook.nametowidget(self.build_sub_notebook.select())
+        except (tk.TclError, KeyError):
+            return
+        selected.update_idletasks()
+        self.build_sub_notebook.configure(height=selected.winfo_reqheight())
 
     # ── RESULTS TAB ───────────────────────────────────────────────
     def _build_results_tab(self):
@@ -4750,6 +4758,8 @@ class App(tk.Tk):
             self._refresh_blocked_area_dropdown()
             if hasattr(self, 'bank_saved_tv'):
                 self._refresh_bank_saved_tab()
+                for _char in self.bank_character_widgets:
+                    self._refresh_bank_character_tab(_char)
             if not silent:
                 messagebox.showinfo("Loaded",
                     f"Master database loaded!\n{len(self.master_data)} items ready to search")
@@ -5077,10 +5087,10 @@ class App(tk.Tk):
         """"All" and every individual Only Found In checkbox are mutually
         exclusive, same disable-only pattern as Kaid All/colors (see
         _update_kaid_exclusivity) - checking "All" greys out every
-        individual box (across both places they're shown - Basic
-        Constraints and Bank Build's Search tab), checking any individual
-        box greys out "All". The actual search logic (_find_optimal_build/
-        _show_all_matches/_search_bank_items) also short-circuits to "no
+        individual box (across every place they're shown - Basic
+        Constraints and every Bank Build Character tab), checking any
+        individual box greys out "All". The actual search logic
+        (_find_optimal_build/_show_all_matches) also short-circuits to "no
         filter" whenever "All" is checked, so a stale-but-disabled
         individual box left checked underneath it can never sneak back in
         as a real restriction."""
@@ -5491,31 +5501,22 @@ class App(tk.Tk):
 
         return crafted_count, used_claw_items
 
-    def _clear_bank_paste(self):
-        """Clear the Bank Build paste box and its status line"""
-        self.bank_paste_text.delete('1.0', tk.END)
-        self.bank_status.config(text=(
-            "\"Only\": only pasted items are considered - the best build achievable from what you own right now. "
-            "\"Prioritize\": searches everything, just favoring items you own when otherwise close."))
+    def _save_bank_import_to_character(self):
+        """Import tab's only button - parses the pasted text exactly like
+        the old Best Build/Search Save-to-Saved-Items buttons did (see
+        _parse_bank_paste_text), then reconciles it into the named
+        character's own bucket (self.bank_characters), creating that
+        character's Saved Items tab the first time this name is used
+        (see _create_bank_character_tab). Reconciled by CONTENT TYPE
+        ('bank'/'inventory'), same as the legacy pool used to be - a paste
+        with nothing of one type leaves that type's existing entries alone
+        rather than clearing them."""
+        char_name = self.bank_import_char_var.get().strip()
+        if not char_name:
+            messagebox.showwarning("No Character Name", "Enter a character name first.")
+            return
 
-    def _clear_bank_search(self):
-        """Clear the Bank Build Search paste box and its status line"""
-        self.bank_search_text.delete('1.0', tk.END)
-        self.bank_search_status.config(text=(
-            "Lists every pasted item recognized in the master database, with the Area it actually drops in - "
-            "no build/combo, just a lookup. Check any Only Found In box(es) to narrow it to those realms."))
-
-    def _save_bank_text_to_saved_items(self, text_widget, status_label):
-        """Shared "💾 Save to Saved Items" logic for both Best Build and
-        Search - parses `text_widget` exactly like _find_bank_build/
-        _search_bank_items already do, then updates the persisted Saved
-        Items list via _update_bank_saved_list (reconciled by content type,
-        bank vs inventory - not by which paste box this is, which no longer
-        matters), but stops there: no build search runs, no tab switch
-        happens. For when all you want is to sync Saved Items from a fresh
-        paste, not run the more expensive search/build that would normally
-        trigger the same save as a side effect."""
-        text = text_widget.get('1.0', tk.END)
+        text = self.bank_import_text.get('1.0', tk.END)
         owned_keys, recognized, name_counts_by_type = _parse_bank_paste_text(text, self.master_data)
         if not owned_keys:
             messagebox.showwarning("No Items",
@@ -5524,203 +5525,208 @@ class App(tk.Tk):
                 "the \"12.)\" is optional), an Inventory listing (\"(w)\"/\"(h)\" lines, or any line matching a real item), or an "
                 "Items in use listing (\"On Head:  ...\").")
             return
-        self._update_bank_saved_list(name_counts_by_type)
+
+        is_new = char_name not in self.bank_characters
+        if is_new:
+            self.bank_characters[char_name] = {'sources': {'bank': {}, 'inventory': {}}, 'order': []}
+        cdata = self.bank_characters[char_name]
+
+        for content_type, name_counts in name_counts_by_type.items():
+            if not name_counts:
+                continue  # nothing of this type in this paste - leave that bucket alone
+            cdata['sources'][content_type] = dict(name_counts)
+        all_names = set()
+        for counts in cdata['sources'].values():
+            all_names.update(counts)
+        cdata['order'] = [n for n in cdata['order'] if n in all_names]
+        existing = set(cdata['order'])
+        for name_counts in name_counts_by_type.values():
+            for n in name_counts:
+                if n not in existing:
+                    cdata['order'].append(n)
+                    existing.add(n)
+
+        if is_new:
+            self._create_bank_character_tab(char_name)
+        else:
+            self._refresh_bank_character_tab(char_name)
+        self._refresh_bank_saved_tab()
+        self._recompute_all_saved_item_names()
+        self._save_config()
+
         unique_count = len(set().union(*name_counts_by_type.values())) if name_counts_by_type else 0
-        status_label.config(
-            text=f"Saved {recognized} equippable item(s) from the paste to Saved Items "
+        self.bank_import_status.config(
+            text=f"Saved {recognized} equippable item(s) from the paste to {char_name}'s Saved Items "
                  f"({unique_count} unique item(s)).")
-
-    def _save_bank_paste_to_saved_items(self):
-        self._save_bank_text_to_saved_items(self.bank_paste_text, self.bank_status)
-
-    def _save_bank_search_to_saved_items(self):
-        self._save_bank_text_to_saved_items(self.bank_search_text, self.bank_search_status)
-
-    def _search_bank_items(self):
-        """Parse the pasted bank/inventory listing and list every
-        recognized item as-is - filtered by Only Found In if any realm is
-        checked - showing which Area each one actually drops in. Unlike
-        Find Best Bank Build, this doesn't assemble a per-slot combo; it's
-        a flat lookup, same shape as Show All Matches but scoped to only
-        what was pasted instead of every wanted-spell match."""
-        if not self.master_data:
-            messagebox.showwarning("No Data", "Please load a master database first")
-            return
-
-        self._reset_hard_search_state()
-
-        text = self.bank_search_text.get('1.0', tk.END)
-        owned_keys, recognized, name_counts_by_type = _parse_bank_paste_text(text, self.master_data)
-        if not owned_keys:
-            messagebox.showwarning("No Items",
-                "No equippable items were recognized in the pasted text. Expected a Strongbox "
-                "listing (\"12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]\", "
-                "the \"12.)\" is optional), an Inventory listing (\"(w)\"/\"(h)\" lines, or any line matching a real item), or an "
-                "Items in use listing (\"On Head:  ...\").")
-            return
-
-        self._update_bank_saved_list(name_counts_by_type)
-
-        matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
-        matched_key_count = len({_bank_item_key(item) for item in matched_items})
-        unmatched_count = len(owned_keys) - matched_key_count
-
-        selected_realms = ([] if self.realm_filter_all_var.get()
-                          else [realm for realm, var in self.realm_filters.items() if var.get()])
-        if selected_realms:
-            matched_items = [
-                item for item in matched_items
-                if any(sel.lower() in (item.get('Realm') or '').strip().lower() for sel in selected_realms)
-            ]
-
-        self.results_display_mode.set('all')
-        self.notebook.select(self.tab_results)
-        self.search_results_tv.delete(*self.search_results_tv.get_children())
-
-        self._bank_owned_keys = owned_keys
-        try:
-            rows = [(
-                '📦' if self._is_bank_owned(item) or self._is_saved_item(item) else '',
-                (item.get('Slot') or '').title(),
-                item.get('Item', ''),
-                item.get('Type', ''),
-                item.get('Spell', ''),
-                item.get('Sigil', ''),
-                item.get('Level', ''),
-                item.get('Mob', ''),
-                item.get('Area', ''),
-                '████████',
-                '',
-            ) for item in matched_items]
-        finally:
-            self._bank_owned_keys = None
-
-        self.last_all_results = rows
-        for row in rows:
-            self.search_results_tv.insert('', 'end', values=row)
-        self._autosize_results_columns()
-
-        filter_note = f", {len(matched_items)} shown after Only Found In filter" if selected_realms else ""
-        self.bank_search_status.config(
-            text=f"Parsed {recognized} equippable item(s) from the paste - {matched_key_count} recognized in the "
-                 f"master database ({unmatched_count} not found/unmatched){filter_note}.")
-
-    def _on_bank_only_toggle(self):
-        """Only Items I own and Prioritize items I own are mutually
-        exclusive - checking one clears and disables the other."""
-        if self.bank_only_var.get():
-            self.bank_prioritize_var.set(False)
-            self.bank_prioritize_checkbox.config(state='disabled')
-        else:
-            self.bank_prioritize_checkbox.config(state='normal')
-
-    def _on_bank_prioritize_toggle(self):
-        """See _on_bank_only_toggle - same mutual exclusion, other direction."""
-        if self.bank_prioritize_var.get():
-            self.bank_only_var.set(False)
-            self.bank_only_checkbox.config(state='disabled')
-        else:
-            self.bank_only_checkbox.config(state='normal')
-
-    def _find_bank_build(self):
-        """Parse the pasted bank/inventory listing, then run Find Optimal
-        Build either restricted to just those items ("Prioritize" off) or
-        against the full master database with owned items favored
-        ("Prioritize" on) - see W_BANK_OWNED/_is_bank_owned in
-        _find_optimal_build for how the latter is scored."""
-        if not self.master_data:
-            messagebox.showwarning("No Data", "Please load a master database first")
-            return
-
-        self._reset_hard_search_state()
-
-        text = self.bank_paste_text.get('1.0', tk.END)
-        owned_keys, recognized, name_counts_by_type = _parse_bank_paste_text(text, self.master_data)
-        if not owned_keys:
-            messagebox.showwarning("No Items",
-                "No equippable items were recognized in the pasted text. Expected a Strongbox "
-                "listing (\"12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]\", "
-                "the \"12.)\" is optional), an Inventory listing (\"(w)\"/\"(h)\" lines, or any line matching a real item), or an "
-                "Items in use listing (\"On Head:  ...\").")
-            return
-
-        self._update_bank_saved_list(name_counts_by_type)
-
-        matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
-        matched_key_count = len({_bank_item_key(item) for item in matched_items})
-        unmatched_count = len(owned_keys) - matched_key_count
-
-        # Set for both modes, not just Prioritize - _is_bank_owned (and so
-        # the Results tab's Bank column icon) needs this regardless of
-        # which mode actually ran, including Only mode where every result
-        # is trivially owned by definition.
-        self._bank_owned_keys = owned_keys
-        try:
-            if self.bank_prioritize_var.get():
-                self._find_optimal_build()
-                mode_text = "searched everything, prioritizing owned items"
-            else:
-                if not matched_items:
-                    messagebox.showwarning("No Matches",
-                        "None of the pasted items were recognized against the loaded master database.")
-                    return
-                original_master_data = self.master_data
-                self.master_data = matched_items
-                try:
-                    self._find_optimal_build()
-                finally:
-                    self.master_data = original_master_data
-                mode_text = "restricted to owned items only"
-        finally:
-            self._bank_owned_keys = None
-
-        self.bank_status.config(
-            text=f"Parsed {recognized} equippable item(s) from the paste - {matched_key_count} recognized in the "
-                 f"master database ({unmatched_count} not found/unmatched) - {mode_text}.")
 
     def _is_bank_owned(self, item):
         """True if this item matches something from the currently active
-        Bank Build paste - self._bank_owned_keys is only set (non-None)
-        while a Bank Build "Prioritize"-style search is actually running
-        (see _find_bank_build/_find_saved_items_build/_rebuild_saved_items_first),
+        Bank Build search - self._bank_owned_keys is only set (non-None)
+        while a "Prioritize"-style search is actually running (see
+        _find_character_saved_items_build/_rebuild_saved_items_first),
         used for the W_BANK_OWNED scoring bonus during that search only."""
         return bool(self._bank_owned_keys) and _bank_owned_match(_bank_item_key(item), self._bank_owned_keys)
 
     def _is_saved_item(self, item):
-        """True if `item`'s name matches something in the persisted Saved
-        Items list (self.bank_saved_order) - checked unconditionally for
-        the Bank column's 📦 icon on every search's results, regardless of
-        which search mode produced them (unlike _is_bank_owned's scoring
-        bonus, which only applies during an explicit Prioritize-style
-        search). This is what makes the icon a plain "you already own
-        this" indicator everywhere, not just in Bank Build/Saved Items
-        flows."""
+        """True if `item`'s name matches something saved anywhere - the
+        legacy pool (self.bank_saved_order) or any character's own list
+        (self.bank_characters) - checked unconditionally for the Bank
+        column's 📦 icon on every search's results, regardless of which
+        search mode produced them (unlike _is_bank_owned's scoring bonus,
+        which only applies during an explicit Prioritize-style search).
+        This is what makes the icon a plain "you already own this"
+        indicator everywhere, not just in Bank Build/Saved Items flows.
+        Backed by self._all_saved_item_names, a cached union recomputed by
+        _recompute_all_saved_item_names whenever any saved list changes."""
         name = (item.get('Item') or '').strip().lower()
-        return name in self.bank_saved_order
+        names = getattr(self, '_all_saved_item_names', None)
+        if names is None:
+            names = set(self.bank_saved_order)
+        return name in names
 
-    def _on_bank_saved_prioritize_toggle(self):
-        """See _on_bank_saved_hard_toggle - same mutual exclusion, other direction."""
-        if self.bank_saved_prioritize_var.get():
-            self.bank_saved_hard_var.set(False)
-            self.bank_saved_hard_checkbox.config(state='disabled')
+    def _recompute_all_saved_item_names(self):
+        """Cached union of every saved item name - the legacy pool plus
+        every character's own list - backing _is_saved_item's universal 📦
+        icon check. Recomputed (not maintained incrementally) whenever any
+        saved list changes, since these lists are small and this is far
+        simpler than tracking adds/removes precisely."""
+        names = set(self.bank_saved_order)
+        for cdata in self.bank_characters.values():
+            names.update(cdata['order'])
+        self._all_saved_item_names = names
+
+    def _create_bank_character_tab(self, char_name):
+        """Create the per-character Saved Items tab for `char_name` under
+        self.bank_saved_sub_notebook, with its own Treeview, Only Found In
+        checkboxes (same shared self.realm_filters as Basic Constraints),
+        Prioritize/Hard Search checkboxes, "Search all characters"
+        checkbox, and Find Best Bank Build/Clear buttons. Called once per
+        character at startup (for every persisted name) and again the
+        first time a new name is used from the Import tab - see
+        _save_bank_import_to_character."""
+        tab = ttk.Frame(self.bank_saved_sub_notebook, padding=8)
+        self.bank_saved_sub_notebook.add(tab, text=char_name)
+
+        ttk.Label(tab, text=f"{char_name}'s saved items - kept up to date from the Import tab. A second copy "
+                 "of the same item is listed at the bottom, prefixed \"::extra::\".",
+                 foreground='#666', wraplength=760, justify='left').pack(anchor='w', pady=(0,6))
+
+        tree_frame = ttk.Frame(tab)
+        tree_frame.pack(fill='both', expand=True)
+        saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
+        saved_col_widths = {'Slot': 55, 'Drop': 60, 'Item': 220, 'Type': 60, 'Spell': 100, 'Sigil': 60,
+                           'Level': 45, 'Area': 140}
+        tv = ttk.Treeview(tree_frame, columns=saved_cols, show='headings', height=12)
+        for col in saved_cols:
+            heading_anchor = 'w' if col == 'Item' else 'center'
+            tv.heading(col, text=col, anchor=heading_anchor)
+            tv.column(col, width=saved_col_widths[col], stretch=False, anchor=('w' if col == 'Item' else 'center'))
+        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tv.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=tv.xview)
+        tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        tv.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+
+        realm_frame = ttk.LabelFrame(tab, text="Only Found In", padding=8)
+        realm_frame.pack(anchor='w', pady=(8,0))
+        realm_options = ['Evil', 'Glory Bea', 'Good', 'Event', 'Chaos', 'Crafted']
+        realm_cols = 2
+        for i, realm in enumerate(realm_options):
+            cb = ttk.Checkbutton(realm_frame, text=realm, variable=self.realm_filters[realm],
+                                 command=self._update_realm_all_exclusivity)
+            cb.grid(row=i // realm_cols, column=i % realm_cols, sticky='w', padx=4, pady=2)
+            self.realm_filter_checkbuttons.append(cb)
+        kaid_all_cb = ttk.Checkbutton(realm_frame, text="Kaid All", variable=self.realm_filters['Kaid'],
+                                      command=self._update_kaid_exclusivity)
+        kaid_all_cb.grid(row=0, column=2, sticky='w', padx=(16,4), pady=2)
+        self.realm_filter_checkbuttons.append(kaid_all_cb)
+        for i, color in enumerate(['Kaid White', 'Kaid Green', 'Kaid Red', 'Kaid Purple'], start=1):
+            cb = ttk.Checkbutton(realm_frame, text=color, variable=self.realm_filters[color],
+                                 command=self._update_kaid_exclusivity)
+            cb.grid(row=i, column=2, sticky='w', padx=(16,4), pady=2)
+            self.realm_filter_checkbuttons.append(cb)
+        all_cb = ttk.Checkbutton(realm_frame, text="All", variable=self.realm_filter_all_var,
+                                 command=self._update_realm_all_exclusivity)
+        all_cb.grid(row=4, column=0, sticky='w', padx=4, pady=2)
+        self.realm_filter_all_checkbuttons.append(all_cb)
+
+        checks_frame = ttk.Frame(tab)
+        checks_frame.pack(fill='x', pady=(8,0))
+
+        prioritize_var = tk.BooleanVar(value=False)
+        hard_var = tk.BooleanVar(value=True)
+        search_all_var = tk.BooleanVar(value=False)
+
+        prioritize_cb = ttk.Checkbutton(checks_frame,
+            text="Prioritize Saved Items (search everything, but favor them over items you don't have)",
+            variable=prioritize_var, command=lambda: self._on_character_prioritize_toggle(char_name))
+        prioritize_cb.pack(anchor='w')
+
+        hard_cb = ttk.Checkbutton(checks_frame,
+            text="Hard Search (build only from Saved Items; report exactly what's missing)",
+            variable=hard_var, command=lambda: self._on_character_hard_toggle(char_name))
+        hard_cb.pack(anchor='w', pady=(2,0))
+        # Hard Search starts checked, so Prioritize starts disabled to match.
+        prioritize_cb.config(state='disabled')
+
+        ttk.Checkbutton(checks_frame,
+            text="Search all characters (still only uses this character's own Kaid items)",
+            variable=search_all_var).pack(anchor='w', pady=(2,0))
+
+        controls_frame = ttk.Frame(tab)
+        controls_frame.pack(fill='x', pady=(8,0))
+        ttk.Button(controls_frame, text="🏦 Find Best Bank Build",
+                  command=lambda: self._find_character_saved_items_build(char_name)).pack(side='left', padx=(0,4))
+        ttk.Button(controls_frame, text="Clear Saved List",
+                  command=lambda: self._clear_bank_character_list(char_name)).pack(side='left', padx=4)
+
+        search_status_label = ttk.Label(tab, text=(
+            "\"Hard Search\": only this character's Saved Items are considered - any wanted spell/tier with "
+            "nothing available shows \"No available item\". \"Prioritize\": searches everything, just "
+            "favoring these Saved Items when otherwise close. \"Search all characters\": pools every "
+            "character's non-Kaid items together, but Kaid items still only come from this tab."),
+            foreground='#666', wraplength=760, justify='left')
+        search_status_label.pack(anchor='w', pady=(6,0))
+
+        count_label = ttk.Label(tab, text="", foreground='#666', wraplength=760, justify='left')
+        count_label.pack(anchor='w', pady=(6,0))
+
+        self.bank_character_widgets[char_name] = {
+            'tab': tab, 'tv': tv,
+            'prioritize_var': prioritize_var, 'hard_var': hard_var, 'search_all_var': search_all_var,
+            'prioritize_cb': prioritize_cb, 'hard_cb': hard_cb,
+            'search_status_label': search_status_label, 'count_label': count_label,
+        }
+        self._refresh_bank_character_tab(char_name)
+
+    def _on_character_prioritize_toggle(self, char_name):
+        """See _on_character_hard_toggle - same mutual exclusion, other direction."""
+        w = self.bank_character_widgets[char_name]
+        if w['prioritize_var'].get():
+            w['hard_var'].set(False)
+            w['hard_cb'].config(state='disabled')
         else:
-            self.bank_saved_hard_checkbox.config(state='normal')
+            w['hard_cb'].config(state='normal')
 
-    def _on_bank_saved_hard_toggle(self):
+    def _on_character_hard_toggle(self, char_name):
         """Hard Search and Prioritize Saved Items are mutually exclusive -
         checking one clears and disables the other."""
-        if self.bank_saved_hard_var.get():
-            self.bank_saved_prioritize_var.set(False)
-            self.bank_saved_prioritize_checkbox.config(state='disabled')
+        w = self.bank_character_widgets[char_name]
+        if w['hard_var'].get():
+            w['prioritize_var'].set(False)
+            w['prioritize_cb'].config(state='disabled')
         else:
-            self.bank_saved_prioritize_checkbox.config(state='normal')
+            w['prioritize_cb'].config(state='normal')
 
     def _reset_hard_search_state(self):
         """Clear Saved Items Hard Search state - called at the start of
-        every OTHER top-level search (Find Optimal Build, Show All Matches,
-        Best Build, Search) so a stale "No available item"/Search Missing
-        Slots button never lingers past the search that actually produced
-        it. _find_saved_items_build sets _no_item_text_override/
+        every OTHER top-level search (Find Optimal Build, Show All Matches)
+        so a stale "No available item"/Search Missing Slots button never
+        lingers past the search that actually produced it.
+        _find_character_saved_items_build sets _no_item_text_override/
         _hard_search_strict_tier back on itself right before running a Hard
         Search, and _saved_hard_search_missing_slots/_build_dict right
         after. Deliberately NOT called by _search_missing_slots itself -
@@ -5866,12 +5872,18 @@ class App(tk.Tk):
         build: Saved-Items-sourced slots keep the 📦 Bank icon, full-
         database fallback slots don't - so the Bank column alone doubles
         as "here's what you still need to go acquire." Always excludes
-        self.excluded_item_keys, same as Rebuild (Full Database)."""
-        if not self.bank_saved_order:
+        self.excluded_item_keys, same as Rebuild (Full Database).
+
+        Pooled from every saved item anywhere (the legacy pool plus every
+        character), same self._all_saved_item_names union _is_saved_item
+        uses for the Bank icon - this button has no "which character"
+        context of its own (it's triggered globally from the Results tab),
+        so it reaches into all of them rather than picking one."""
+        if not self._all_saved_item_names:
             messagebox.showwarning("No Saved Items",
-                "The Saved Items list is empty - run a Best Build or Search parse first.")
+                "The Saved Items list is empty - use the Import tab first.")
             return
-        owned_keys = {(name, None, None) for name in self.bank_saved_order}
+        owned_keys = {(name, None, None) for name in self._all_saved_item_names}
         matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
         if not matched_items:
             messagebox.showwarning("No Matches",
@@ -5968,41 +5980,63 @@ class App(tk.Tk):
         button - resets Saved Items Hard Search state (see
         _reset_hard_search_state) before running a normal, unrestricted
         search, since _find_optimal_build itself is also called
-        internally by _find_saved_items_build and must not reset that
-        state out from under it."""
+        internally by _find_character_saved_items_build and must not reset
+        that state out from under it."""
         self._reset_hard_search_state()
         self._find_optimal_build()
 
-    def _find_saved_items_build(self):
-        """Same idea as _find_bank_build, but sourced from the persisted
-        Saved Items list (self.bank_saved_order) instead of a freshly
-        pasted listing - matched by name only, same wildcard matching as
-        an Inventory/Items-in-use paste line (see _bank_owned_match).
-        "Prioritize" searches everything, favoring Saved Items when tied,
-        same as Best Build's own Prioritize. "Hard Search" restricts
-        candidates to Saved Items only (like Best Build's "Only"), holds
-        every wanted spell's explicit tier exactly - never substituting a
-        different tier the way every other search mode does - and leaves
-        _no_item_text_override set to "No available item" so any empty
-        attempted slot reads that (_build_dict_to_rows) instead of "No
-        suitable item found", then reveals the Results tab's Search Missing
-        Slots button for a full-database follow-up on just those gaps."""
+    def _find_character_saved_items_build(self, char_name):
+        """Character tab's own "Find Best Bank Build" - same idea as the
+        old Saved Items tab's search, sourced from just this character's
+        bucket (self.bank_characters[char_name]) unless "Search all
+        characters" is checked, in which case every character's items are
+        pooled together EXCEPT Kaid items, which still only come from this
+        character's own tab (Kaid gear doesn't drop when you die, so it's
+        meant to represent what THIS character is actually carrying, not
+        what's spread across the whole roster). Matched by name only, same
+        wildcard matching as an Inventory/Items-in-use paste line (see
+        _bank_owned_match). "Prioritize" searches everything, favoring
+        these items when tied. "Hard Search" restricts candidates to just
+        the effective pool, holds every wanted spell's explicit tier
+        exactly - never substituting a different tier the way every other
+        search mode does - and leaves _no_item_text_override set to "No
+        available item" so any empty attempted slot reads that
+        (_build_dict_to_rows) instead of "No suitable item found", then
+        reveals the Results tab's Search Missing Slots button for a
+        full-database follow-up on just those gaps."""
         if not self.master_data:
             messagebox.showwarning("No Data", "Please load a master database first")
             return
-        if not self.bank_saved_order:
+
+        w = self.bank_character_widgets[char_name]
+        own_names = set(self.bank_characters.get(char_name, {}).get('order', []))
+
+        if w['search_all_var'].get():
+            all_names = set()
+            for cdata in self.bank_characters.values():
+                all_names.update(cdata['order'])
+            kaid_names = {
+                (item.get('Item') or '').strip().lower()
+                for item in self.master_data
+                if 'kaid' in (item.get('Realm') or '').strip().lower()
+            }
+            effective_names = {n for n in all_names if n not in kaid_names or n in own_names}
+        else:
+            effective_names = own_names
+
+        if not effective_names:
             messagebox.showwarning("No Saved Items",
-                "The Saved Items list is empty - run a Best Build or Search parse first.")
+                f"{char_name}'s Saved Items list is empty - use the Import tab first.")
             return
 
         self._reset_hard_search_state()
 
-        owned_keys = {(name, None, None) for name in self.bank_saved_order}
+        owned_keys = {(name, None, None) for name in effective_names}
         matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
 
         self._bank_owned_keys = owned_keys
         try:
-            if self.bank_saved_prioritize_var.get():
+            if w['prioritize_var'].get():
                 self._find_optimal_build()
                 mode_text = "searched everything, prioritizing Saved Items"
             else:
@@ -6048,9 +6082,9 @@ class App(tk.Tk):
         finally:
             self._bank_owned_keys = None
 
-        self.bank_saved_search_status.config(
-            text=f"{len(self.bank_saved_order)} saved item(s), {len(matched_items)} recognized in the master "
-                 f"database - {mode_text}.")
+        w['search_status_label'].config(
+            text=f"{len(effective_names)} saved item(s) considered, {len(matched_items)} recognized in the "
+                 f"master database - {mode_text}.")
 
     def _find_best_item_for_slot(self, slot, chips, hold_tier):
         """Look up the single best candidate for exactly `slot` (a slot key
@@ -6111,7 +6145,7 @@ class App(tk.Tk):
     def _search_missing_slots(self):
         """Results tab button, only visible after a Saved Items Hard Search
         left one or more slots as "No available item" (see
-        _find_saved_items_build). Fills in just the missing slot(s) in
+        _find_character_saved_items_build). Fills in just the missing slot(s) in
         place, on top of self._saved_hard_search_build_dict (the build
         currently on screen) - it never replaces the whole displayed
         build, only the gaps.
@@ -6244,52 +6278,14 @@ class App(tk.Tk):
             status = "Re-searched missing slot(s) - all filled."
         self.search_status.config(text=status)
 
-    def _update_bank_saved_list(self, name_counts_by_type):
-        """Merge one parse into the persistent Saved Items list. Matched by
-        cleaned item name only - not slot/level - since the same physical
-        item can legitimately show up in a different paste format (e.g. it
-        was in the bank last time, now it's worn and shows up via an Items
-        in use paste instead), and this list is meant to track ownership,
-        not location.
-
-        Reconciled per CONTENT TYPE ('bank' vs 'inventory' - see
-        _parse_bank_paste_text), not per paste box: pasting an updated bank
-        listing (with no inventory lines in it at all) only reconciles the
-        'bank' bucket - removing names it no longer recognizes, adding ones
-        it newly does - and leaves the 'inventory' bucket exactly as it
-        was, and vice versa. A type with nothing recognized in THIS parse
-        is skipped entirely rather than treated as "now empty" - otherwise
-        pasting just your inventory would wipe out everything from your
-        bank, which defeats the point of tracking them separately."""
-        for content_type, name_counts in name_counts_by_type.items():
-            if not name_counts:
-                continue  # nothing of this type in this paste - leave that bucket alone
-            self.bank_saved_sources[content_type] = dict(name_counts)
-
-        all_names = set()
-        for counts in self.bank_saved_sources.values():
-            all_names.update(counts)
-        self.bank_saved_order = [n for n in self.bank_saved_order if n in all_names]
-        existing = set(self.bank_saved_order)
-        for name_counts in name_counts_by_type.values():
-            for n in name_counts:
-                if n not in existing:
-                    self.bank_saved_order.append(n)
-                    existing.add(n)
-        self._save_config()
-        if hasattr(self, 'bank_saved_tv'):
-            self._refresh_bank_saved_tab()
-
-    def _refresh_bank_saved_tab(self):
-        """Redraw the Saved Items tab from self.bank_saved_order/
-        bank_saved_sources. Each unique item gets one row (enriched with
-        Slot/Drop/Type/Spell/Sigil/Level/Area from master_data when a name
-        match is found); any copies beyond the first are appended at the
-        bottom, prefixed "::extra::" in the Item cell. Drop reads "No Drop"
-        for a Kaid-realm item (Kaid gear doesn't drop when you die), "Drop"
-        for everything else."""
-        self.bank_saved_tv.delete(*self.bank_saved_tv.get_children())
-
+    def _bank_saved_display_rows(self, order, sources):
+        """Row tuples (Slot, Drop, Item, Type, Spell, Sigil, Level, Area)
+        for a Saved Items treeview - shared by the Main aggregate tab and
+        every per-character tab. Each unique name gets one row (enriched
+        from master_data when a name match is found); any copies beyond
+        the first are appended at the bottom, prefixed "::extra::". Drop
+        reads "No Drop" for a Kaid-realm item (Kaid gear doesn't drop when
+        you die), "Drop" for everything else. Returns (rows, extra_count)."""
         master_by_name = {}
         for item in self.master_data:
             master_by_name.setdefault((item.get('Item') or '').strip().lower(), item)
@@ -6304,27 +6300,84 @@ class App(tk.Tk):
             )
 
         total_counts = {
-            name: self.bank_saved_sources['bank'].get(name, 0) + self.bank_saved_sources['inventory'].get(name, 0)
-            for name in self.bank_saved_order
+            name: sources['bank'].get(name, 0) + sources['inventory'].get(name, 0)
+            for name in order
         }
-        for name in self.bank_saved_order:
-            self.bank_saved_tv.insert('', 'end', values=row_for(name, extra=False))
-        for name in self.bank_saved_order:
-            for _ in range(total_counts.get(name, 0) - 1):
-                self.bank_saved_tv.insert('', 'end', values=row_for(name, extra=True))
-
+        rows = [row_for(name, extra=False) for name in order]
+        for name in order:
+            rows.extend(row_for(name, extra=True) for _ in range(total_counts.get(name, 0) - 1))
         extra_count = sum(max(0, c - 1) for c in total_counts.values())
+        return rows, extra_count
+
+    def _refresh_bank_saved_tab(self):
+        """Redraw the Saved Items Main tab - the deduplicated union of
+        every character's saved items (from the Import tab) plus the
+        legacy pool (items saved before character tracking existed, no
+        longer fed by anything new but kept visible for continuity).
+        Read-only: no Find Best Bank Build here anymore - use a Character
+        tab for that."""
+        combined_order = []
+        combined_seen = set()
+        combined_bank = {}
+        combined_inventory = {}
+
+        def merge_in(order, sources):
+            for name in order:
+                if name not in combined_seen:
+                    combined_seen.add(name)
+                    combined_order.append(name)
+            for name, count in sources.get('bank', {}).items():
+                combined_bank[name] = combined_bank.get(name, 0) + count
+            for name, count in sources.get('inventory', {}).items():
+                combined_inventory[name] = combined_inventory.get(name, 0) + count
+
+        merge_in(self.bank_saved_order, self.bank_saved_sources)
+        for cdata in self.bank_characters.values():
+            merge_in(cdata['order'], cdata['sources'])
+
+        rows, extra_count = self._bank_saved_display_rows(
+            combined_order, {'bank': combined_bank, 'inventory': combined_inventory})
+        self.bank_saved_tv.delete(*self.bank_saved_tv.get_children())
+        for row in rows:
+            self.bank_saved_tv.insert('', 'end', values=row)
         self.bank_saved_status.config(
-            text=f"{len(self.bank_saved_order)} unique item(s) saved"
+            text=f"{len(combined_order)} unique item(s) across every character"
+                 + (f", {extra_count} extra copy/copies" if extra_count else "") + ".")
+
+    def _refresh_bank_character_tab(self, char_name):
+        """Redraw one character's own Saved Items tab from
+        self.bank_characters[char_name]."""
+        w = self.bank_character_widgets.get(char_name)
+        if not w:
+            return
+        cdata = self.bank_characters.get(char_name, {'sources': {'bank': {}, 'inventory': {}}, 'order': []})
+        rows, extra_count = self._bank_saved_display_rows(cdata['order'], cdata['sources'])
+        w['tv'].delete(*w['tv'].get_children())
+        for row in rows:
+            w['tv'].insert('', 'end', values=row)
+        w['count_label'].config(
+            text=f"{len(cdata['order'])} unique item(s) saved"
                  + (f", {extra_count} extra copy/copies" if extra_count else "") + ".")
 
     def _clear_bank_saved_list(self):
         if not messagebox.askyesno("Clear Saved List",
-                "Clear the entire Saved Items list? This can't be undone."):
+                "Clear the legacy Saved Items list (items saved before character tracking existed, not tied "
+                "to any character)? Items saved under a Character tab are not affected. This can't be undone."):
             return
         self.bank_saved_sources = {'bank': {}, 'inventory': {}}
         self.bank_saved_order = []
+        self._recompute_all_saved_item_names()
         self._save_config()
+        self._refresh_bank_saved_tab()
+
+    def _clear_bank_character_list(self, char_name):
+        if not messagebox.askyesno("Clear Saved List",
+                f"Clear {char_name}'s entire Saved Items list? This can't be undone."):
+            return
+        self.bank_characters[char_name] = {'sources': {'bank': {}, 'inventory': {}}, 'order': []}
+        self._recompute_all_saved_item_names()
+        self._save_config()
+        self._refresh_bank_character_tab(char_name)
         self._refresh_bank_saved_tab()
 
     def _find_optimal_build(self):
@@ -6392,10 +6445,10 @@ class App(tk.Tk):
         # Wanted Sigils applies to (see ARMOR_SIGIL_SLOTS).
         wanted_sigils_lower = {s.strip().lower() for s in wanted_sigils}
 
-        # Bank Build's "Prioritize items I own" - self._bank_owned_keys is
-        # set by _find_bank_build right before calling this, cleared right
-        # after (see _is_bank_owned). None (the normal case, every other
-        # search) means owned_match is always 0 below.
+        # Bank Build's "Prioritize Saved Items" - self._bank_owned_keys is
+        # set by _find_character_saved_items_build right before calling
+        # this, cleared right after (see _is_bank_owned). None (the normal
+        # case, every other search) means owned_match is always 0 below.
 
         # Clear previous results - skipped when this call is only being
         # used as an internal subroutine (see self._suppress_results_redraw,

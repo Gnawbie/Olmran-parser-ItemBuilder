@@ -134,7 +134,15 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.2.0 (Current)
+### v5.3.0 (Current)
+- Bank Build reorganized around characters: a new "Import" tab pastes a bank/inventory listing plus a character name, then saves it to that character's own tab under Saved Items (created automatically the first time the name is used) - the old "Best Build" and "Search" tabs are gone, fully covered by Import + the character tabs now
+- Saved Items is now a notebook itself: "Main" is a read-only aggregate of every character's items (plus anything saved before character tracking existed), and each character gets its own tab with its own Only Found In checkboxes, Prioritize/Hard Search, "Find Best Bank Build", and Clear button
+- Each character tab has a new "Search all characters" checkbox - unchecked, it searches only that character's own items; checked, it pools every character's non-Kaid items together but still only uses Kaid items from that one tab (since Kaid gear doesn't drop when you die, it represents what that character is actually carrying)
+- Everything persists across closing and reopening the program, same as before
+- Fixed a layout bug where the Build tab's Basic/Armor/Weapon Constraints sub-tabs showed a large blank gap above the Min/Max/Specific Level controls once Bank Build's content grew taller than theirs - the sub-tab area now resizes to fit whichever sub-tab is actually selected
+- The whole window can now be scrolled (mouse wheel, or a scrollbar on the right) if it's resized smaller than its content - nothing gets permanently cut off at the bottom anymore
+
+### v5.2.0
 - Results tab: right-click any Build 1 item to remove it from the build - it stays excluded from every future search until a fresh search runs. Two new buttons appear once something's been removed: "Rebuild (Full Database)" (searches everywhere) and "Rebuild (Saved Items First)" (builds as much as possible from Saved Items, then automatically fills whatever it can't cover from the full database - a complete set every time, e.g. after removing a good item you don't want to risk losing in PvP). Right-clicking an empty slot offers the same two Rebuild actions
 - The 📦 Bank column icon now shows up on every search's results (Find Optimal Build, Show All Matches, everywhere) whenever an item matches your Saved Items list - not just Bank Build/Saved Items flows
 - Bank Build's Best Build and Search tabs each got a "💾 Save to Saved Items" button - parses the paste and updates Saved Items without running the full search/build
