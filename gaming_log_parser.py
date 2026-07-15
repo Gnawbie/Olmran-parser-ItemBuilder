@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.3.0"
+VERSION = "5.3.1"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -5630,8 +5630,17 @@ class App(tk.Tk):
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
 
-        realm_frame = ttk.LabelFrame(tab, text="Only Found In", padding=8)
-        realm_frame.pack(anchor='w', pady=(8,0))
+        # Only Found In sits to the left, with the checkboxes and buttons
+        # stacked to its right in the same row - keeps this whole section
+        # roughly half the vertical height of stacking everything, so a
+        # freshly-added character tab doesn't suddenly need much more room
+        # than self.build_sub_notebook was last sized for (see the
+        # after_idle call at the end of this method).
+        bottom_row = ttk.Frame(tab)
+        bottom_row.pack(fill='x', pady=(8,0))
+
+        realm_frame = ttk.LabelFrame(bottom_row, text="Only Found In", padding=8)
+        realm_frame.pack(side='left', anchor='n')
         realm_options = ['Evil', 'Glory Bea', 'Good', 'Event', 'Chaos', 'Crafted']
         realm_cols = 2
         for i, realm in enumerate(realm_options):
@@ -5653,8 +5662,11 @@ class App(tk.Tk):
         all_cb.grid(row=4, column=0, sticky='w', padx=4, pady=2)
         self.realm_filter_all_checkbuttons.append(all_cb)
 
-        checks_frame = ttk.Frame(tab)
-        checks_frame.pack(fill='x', pady=(8,0))
+        right_col = ttk.Frame(bottom_row)
+        right_col.pack(side='left', anchor='n', padx=(16,0), fill='both', expand=True)
+
+        checks_frame = ttk.Frame(right_col)
+        checks_frame.pack(fill='x')
 
         prioritize_var = tk.BooleanVar(value=False)
         hard_var = tk.BooleanVar(value=True)
@@ -5676,7 +5688,7 @@ class App(tk.Tk):
             text="Search all characters (still only uses this character's own Kaid items)",
             variable=search_all_var).pack(anchor='w', pady=(2,0))
 
-        controls_frame = ttk.Frame(tab)
+        controls_frame = ttk.Frame(right_col)
         controls_frame.pack(fill='x', pady=(8,0))
         ttk.Button(controls_frame, text="🏦 Find Best Bank Build",
                   command=lambda: self._find_character_saved_items_build(char_name)).pack(side='left', padx=(0,4))
@@ -5701,6 +5713,15 @@ class App(tk.Tk):
             'search_status_label': search_status_label, 'count_label': count_label,
         }
         self._refresh_bank_character_tab(char_name)
+
+        # A brand-new character tab can make Bank Build's own content
+        # noticeably taller than it was the last time _on_build_subtab_changed
+        # ran (which only fires on an outer-notebook tab CHANGE, not when a
+        # nested notebook like this one gains a new tab) - without this,
+        # self.build_sub_notebook stays frozen at the old, shorter height,
+        # clipping this tab's Only Found In box and buttons. Harmless no-op
+        # if some other outer sub-tab is currently selected instead.
+        self.after_idle(self._on_build_subtab_changed)
 
     def _on_character_prioritize_toggle(self, char_name):
         """See _on_character_hard_toggle - same mutual exclusion, other direction."""

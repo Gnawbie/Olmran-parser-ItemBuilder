@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.3.0 (Current)
+### v5.3.1 (Current)
+- Fixed a layout bug in a Bank Build character's Saved Items tab: creating a brand-new character while viewing Bank Build could leave the Only Found In box and the Find Best Bank Build/Clear Saved List buttons clipped off below the visible area (the Build tab's sub-tab area wasn't re-measuring itself when a nested tab like this one appeared, only when you switched sub-tabs directly)
+- Each character tab's Only Found In box now sits to the left of its Prioritize/Hard Search/Search all characters checkboxes and buttons instead of stacked above them, using noticeably less vertical space
+
+### v5.3.0
 - Bank Build reorganized around characters: a new "Import" tab pastes a bank/inventory listing plus a character name, then saves it to that character's own tab under Saved Items (created automatically the first time the name is used) - the old "Best Build" and "Search" tabs are gone, fully covered by Import + the character tabs now
 - Saved Items is now a notebook itself: "Main" is a read-only aggregate of every character's items (plus anything saved before character tracking existed), and each character gets its own tab with its own Only Found In checkboxes, Prioritize/Hard Search, "Find Best Bank Build", and Clear button
 - Each character tab has a new "Search all characters" checkbox - unchecked, it searches only that character's own items; checked, it pools every character's non-Kaid items together but still only uses Kaid items from that one tab (since Kaid gear doesn't drop when you die, it represents what that character is actually carrying)
