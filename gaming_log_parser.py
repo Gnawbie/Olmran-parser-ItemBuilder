@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.3.1"
+VERSION = "5.3.2"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -3695,14 +3695,24 @@ class App(tk.Tk):
         shared_button_frame = ttk.Frame(shared_controls_frame)
         shared_button_frame.pack(pady=8)
 
-        ttk.Button(shared_button_frame, text="🎯 Find Optimal Build",
+        # Wrapped in their own frame (rather than packed loose alongside the
+        # checkbox) so _on_build_subtab_changed can hide/show just these two
+        # as a unit - on Bank Build, they'd search using only Basic/Armor/
+        # Weapon Constraints with no bank context, which is redundant now
+        # that every character tab has its own dedicated Find Best Bank
+        # Build button.
+        self.shared_search_buttons_frame = ttk.Frame(shared_button_frame)
+        self.shared_search_buttons_frame.pack(side='left')
+
+        ttk.Button(self.shared_search_buttons_frame, text="🎯 Find Optimal Build",
                   command=self._on_find_optimal_build_clicked, width=20).pack(side='left', padx=4)
-        ttk.Button(shared_button_frame, text="📋 Show All Matches",
+        ttk.Button(self.shared_search_buttons_frame, text="📋 Show All Matches",
                   command=self._show_all_matches, width=20).pack(side='left', padx=4)
 
         self.generate_multi_builds_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(shared_button_frame, text="🎲 Generate multiple build options",
-                       variable=self.generate_multi_builds_var).pack(side='left', padx=(12,4))
+        self.generate_multi_builds_checkbox = ttk.Checkbutton(shared_button_frame,
+            text="🎲 Generate multiple build options", variable=self.generate_multi_builds_var)
+        self.generate_multi_builds_checkbox.pack(side='left', padx=(12,4))
 
         # Every sub-tab is fully built by now - set the notebook's initial
         # height to match whichever tab is selected first (Basic
@@ -3716,13 +3726,24 @@ class App(tk.Tk):
         default of sizing to the largest tab across all of them - see the
         comment above self.build_sub_notebook's creation for why that
         default left a large blank gap under any shorter tab (Basic/Armor/
-        Weapon Constraints) once Bank Build's Saved Items grew tall."""
+        Weapon Constraints) once Bank Build's Saved Items grew tall.
+
+        Also hides Find Optimal Build/Show All Matches while Bank Build is
+        selected - they'd run against only Basic/Armor/Weapon Constraints
+        with no bank context, redundant now that every character tab has
+        its own Find Best Bank Build. "Generate multiple build options"
+        stays visible either way since it's not Bank-Build-specific."""
         try:
             selected = self.build_sub_notebook.nametowidget(self.build_sub_notebook.select())
         except (tk.TclError, KeyError):
             return
         selected.update_idletasks()
         self.build_sub_notebook.configure(height=selected.winfo_reqheight())
+
+        if selected is self.build_bank_subtab:
+            self.shared_search_buttons_frame.pack_forget()
+        else:
+            self.shared_search_buttons_frame.pack(side='left', before=self.generate_multi_builds_checkbox)
 
     # ── RESULTS TAB ───────────────────────────────────────────────
     def _build_results_tab(self):

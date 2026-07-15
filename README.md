@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.3.1 (Current)
+### v5.3.2 (Current)
+- The shared "Find Optimal Build" / "Show All Matches" buttons now hide while the Bank Build sub-tab is selected - they'd otherwise run against only Basic/Armor/Weapon Constraints with no bank context, which is redundant now that every character tab has its own "Find Best Bank Build" button. "Generate multiple build options" stays visible either way
+
+### v5.3.1
 - Fixed a layout bug in a Bank Build character's Saved Items tab: creating a brand-new character while viewing Bank Build could leave the Only Found In box and the Find Best Bank Build/Clear Saved List buttons clipped off below the visible area (the Build tab's sub-tab area wasn't re-measuring itself when a nested tab like this one appeared, only when you switched sub-tabs directly)
 - Each character tab's Only Found In box now sits to the left of its Prioritize/Hard Search/Search all characters checkboxes and buttons instead of stacked above them, using noticeably less vertical space
 
