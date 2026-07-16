@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.3.2"
+VERSION = "5.4.0"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -901,6 +901,11 @@ _TIER_RANK = {'i': 1, 'ii': 2, 'iii': 3, 'iv': 4}
 # back in), not just a permanent blanket ban.
 BLOCKED_AREAS = {'class'}
 
+# Saved Items' "Gear Tag" column (see _open_gear_tag_editor) - one shared tag
+# per item NAME, not per character, so tagging "zebra hood" from any tab
+# shows the same tag everywhere else that name appears too.
+GEAR_TAG_OPTIONS = ['Good Gear', 'Invasion Gear', 'Blank']
+
 DEFENSE_LEVELS = ['much worse', 'worse', 'normal', 'better', 'much better']
 DEFENSE_RANK = {level: i for i, level in enumerate(DEFENSE_LEVELS)}
 
@@ -1548,6 +1553,9 @@ class App(tk.Tk):
                     # same deal, turned into self.bank_characters in
                     # _build_build_tab.
                     self._persisted_bank_characters = config.get('bank_characters', {})
+                    # Saved Items' Gear Tag column - one tag per item name,
+                    # shared across the Main tab and every character.
+                    self._persisted_bank_gear_tags = config.get('bank_gear_tags', {})
             else:
                 self.last_open_dir = os.path.expanduser("~")
                 self.last_save_dir = os.path.expanduser("~")
@@ -1558,6 +1566,7 @@ class App(tk.Tk):
                 self._persisted_bank_saved_sources = {}
                 self._persisted_bank_saved_order = []
                 self._persisted_bank_characters = {}
+                self._persisted_bank_gear_tags = {}
         except Exception:
             self.last_open_dir = os.path.expanduser("~")
             self.last_save_dir = os.path.expanduser("~")
@@ -1568,6 +1577,7 @@ class App(tk.Tk):
             self._persisted_bank_saved_sources = {}
             self._persisted_bank_saved_order = []
             self._persisted_bank_characters = {}
+            self._persisted_bank_gear_tags = {}
 
     def _save_config(self):
         """Save configuration to file"""
@@ -1591,9 +1601,11 @@ class App(tk.Tk):
                     char: {
                         'sources': {src: dict(counts) for src, counts in cdata['sources'].items()},
                         'order': list(cdata['order']),
+                        'is_locker': bool(cdata.get('is_locker', False)),
                     }
                     for char, cdata in getattr(self, 'bank_characters', {}).items()
                 },
+                'bank_gear_tags': dict(getattr(self, 'bank_gear_tags', {})),
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f)
@@ -3523,12 +3535,23 @@ class App(tk.Tk):
                     'inventory': dict((_cdata.get('sources') or {}).get('inventory', {})),
                 },
                 'order': list(_cdata.get('order', [])),
+                # A Locker character (see the Import tab's Locker checkbox)
+                # is just another character entry, flagged so its non-Kaid
+                # gear gets folded into every OTHER character's search pool
+                # automatically - see _find_character_saved_items_build.
+                'is_locker': bool(_cdata.get('is_locker', False)),
             }
         # Populated per character name by _create_bank_character_tab - widget
         # refs (treeview, checkboxes/vars, status labels) needed to read from
         # or redraw that character's own tab.
         self.bank_character_widgets = {}
         self._recompute_all_saved_item_names()
+
+        # Saved Items' "Gear Tag" column (see _open_gear_tag_editor) - one
+        # shared tag per item name (GEAR_TAG_OPTIONS, defaulting to "Blank"
+        # for anything not explicitly set), not stored at all for "Blank"
+        # itself so an untagged item doesn't bloat the config file.
+        self.bank_gear_tags = dict(getattr(self, '_persisted_bank_gear_tags', {}))
 
         # Bank Build - two inner tabs: "Import" parses a pasted bank/
         # inventory listing and saves it to a named character's own Saved
@@ -3575,6 +3598,17 @@ class App(tk.Tk):
         self.bank_import_char_var = tk.StringVar(value='')
         ttk.Entry(bank_import_char_frame, textvariable=self.bank_import_char_var, width=24).pack(side='left')
 
+        # A Locker isn't a character you play - it's extra bank space (many
+        # players make a spare character just to hold overflow gear). Its
+        # non-Kaid items automatically get folded into every other
+        # character's search pool - see _find_character_saved_items_build -
+        # rather than needing "Search all characters" checked.
+        self.bank_import_locker_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(bank_import_char_frame, text="Locker",
+                       variable=self.bank_import_locker_var).pack(side='left', padx=(16,0))
+        ttk.Label(bank_import_char_frame, text="(adds this gear to every character's Bank Build search)",
+                 foreground='#666', font=('Arial', 8, 'italic')).pack(side='left', padx=(6,0))
+
         bank_import_controls_frame = ttk.Frame(bank_import_tab)
         bank_import_controls_frame.pack(fill='x', pady=(8,0))
         ttk.Button(bank_import_controls_frame, text="💾 Save to Saved Items",
@@ -3601,15 +3635,18 @@ class App(tk.Tk):
         bank_saved_frame = ttk.Frame(bank_saved_main_tab)
         bank_saved_frame.pack(fill='both', expand=True)
 
-        saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
+        saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
         saved_col_widths = {'Slot': 55, 'Drop': 60, 'Item': 220, 'Type': 60, 'Spell': 100, 'Sigil': 60,
-                           'Level': 45, 'Area': 140}
+                           'Level': 45, 'Area': 140, 'Tag': 110}
+        saved_col_headings = {'Tag': 'Gear Tag'}
         self.bank_saved_tv = ttk.Treeview(bank_saved_frame, columns=saved_cols, show='headings', height=14)
         for col in saved_cols:
             heading_anchor = 'w' if col == 'Item' else 'center'
-            self.bank_saved_tv.heading(col, text=col, anchor=heading_anchor)
+            self.bank_saved_tv.heading(col, text=saved_col_headings.get(col, col), anchor=heading_anchor,
+                                       command=lambda c=col: self._sort_saved_treeview(self.bank_saved_tv, c, False))
             self.bank_saved_tv.column(col, width=saved_col_widths[col], stretch=False,
                                       anchor=('w' if col == 'Item' else 'center'))
+        self.bank_saved_tv.bind('<Button-1>', self._on_saved_tv_click)
 
         bank_saved_vsb = ttk.Scrollbar(bank_saved_frame, orient='vertical', command=self.bank_saved_tv.yview)
         bank_saved_hsb = ttk.Scrollbar(bank_saved_frame, orient='horizontal', command=self.bank_saved_tv.xview)
@@ -3809,9 +3846,9 @@ class App(tk.Tk):
         results_frame = ttk.LabelFrame(t, text="Suggested Build", padding=10)
         results_frame.pack(fill='both', expand=True)
         
-        cols = ('Bank', 'Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Mob', 'Area', 'Div', 'Alt Options')
+        cols = ('Bank', 'Locker', 'Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Mob', 'Area', 'Div', 'Alt Options')
         col_widths = {'Slot': 55, 'Item': 200, 'Type': 60, 'Spell': 100, 'Sigil': 60, 'Level': 45,
-                     'Mob': 120, 'Area': 120, 'Alt Options': 280}
+                     'Mob': 120, 'Area': 120, 'Alt Options': 280, 'Locker': 55}
         self.search_results_tv = ttk.Treeview(results_frame, columns=cols,
                                              show='headings', height=20)
         for col in cols:
@@ -3824,6 +3861,9 @@ class App(tk.Tk):
                 # than an image, same "icon-as-text" pattern already used
                 # throughout this app's buttons/labels. Fixed-width like
                 # Div, not autosized, since it only ever holds one glyph.
+                # Shows a bold "L" instead whenever the item is sourced
+                # from a Locker character (see _locker_source_for_item) -
+                # that takes priority over the plain 📦 icon.
                 self.search_results_tv.heading(col, text='📦', anchor='center')
                 self.search_results_tv.column(col, width=28, stretch=False, anchor='center')
             else:
@@ -4986,7 +5026,7 @@ class App(tk.Tk):
                     else:
                         no_item_text = no_item_override or 'No suitable item found'
                     rows.append((
-                        '', display_slot.title(), no_item_text,
+                        '', '', display_slot.title(), no_item_text,
                         '', '', '', '', '', '', '████████', '(none)'
                     ))
                     row_slots.append(slot)
@@ -5030,8 +5070,10 @@ class App(tk.Tk):
             alts.sort(key=lambda pair: pair[0], reverse=True)
             alt_text = ', '.join(text for _, text in alts) if alts else '(none)'
 
+            bank_cell, locker_cell = self._bank_and_locker_cells(item)
             rows.append((
-                '📦' if self._is_bank_owned(item) or self._is_saved_item(item) else '',
+                bank_cell,
+                locker_cell,
                 display_slot.title(),
                 item.get('Item', ''),
                 item.get('Type', ''),
@@ -5549,8 +5591,13 @@ class App(tk.Tk):
 
         is_new = char_name not in self.bank_characters
         if is_new:
-            self.bank_characters[char_name] = {'sources': {'bank': {}, 'inventory': {}}, 'order': []}
+            self.bank_characters[char_name] = {'sources': {'bank': {}, 'inventory': {}}, 'order': [],
+                                               'is_locker': False}
         cdata = self.bank_characters[char_name]
+        # Reconciled every save (not just when new) so toggling the
+        # checkbox on a later Import updates an existing character's
+        # Locker status too.
+        cdata['is_locker'] = self.bank_import_locker_var.get()
 
         for content_type, name_counts in name_counts_by_type.items():
             if not name_counts:
@@ -5605,6 +5652,37 @@ class App(tk.Tk):
             names = set(self.bank_saved_order)
         return name in names
 
+    def _locker_source_for_item(self, item):
+        """Name of the Locker character (see the Import tab's Locker
+        checkbox) whose saved list contains `item`, or None if it isn't in
+        any locker - checked unconditionally everywhere the Bank column
+        shows up, same as _is_saved_item, and takes priority over it (a
+        locker-sourced row shows a bold "L" there instead of 📦). Kaid-realm
+        items never count, even if a locker happens to have one saved -
+        lockers only ever contribute non-Kaid gear to the search pool (see
+        _find_character_saved_items_build)."""
+        if 'kaid' in (item.get('Realm') or '').strip().lower():
+            return None
+        name = (item.get('Item') or '').strip().lower()
+        for char_name, cdata in self.bank_characters.items():
+            if cdata.get('is_locker') and name in cdata['order']:
+                return char_name
+        return None
+
+    def _bank_and_locker_cells(self, item):
+        """(bank_cell, locker_cell) pair for one Results-table row - a
+        locker-sourced item shows a bold "L" (Unicode Mathematical Bold,
+        same trick _unicode_bold uses for the Class Items dropdown) in the
+        Bank column instead of the plain 📦 icon, plus the first 4 letters
+        of the locker's name in the Locker column; anything else falls
+        back to the normal _is_bank_owned/_is_saved_item check with an
+        empty Locker cell."""
+        locker_name = self._locker_source_for_item(item)
+        if locker_name:
+            return _unicode_bold('L'), locker_name[:4]
+        bank_cell = '📦' if self._is_bank_owned(item) or self._is_saved_item(item) else ''
+        return bank_cell, ''
+
     def _recompute_all_saved_item_names(self):
         """Cached union of every saved item name - the legacy pool plus
         every character's own list - backing _is_saved_item's universal 📦
@@ -5628,20 +5706,22 @@ class App(tk.Tk):
         tab = ttk.Frame(self.bank_saved_sub_notebook, padding=8)
         self.bank_saved_sub_notebook.add(tab, text=char_name)
 
-        ttk.Label(tab, text=f"{char_name}'s saved items - kept up to date from the Import tab. A second copy "
-                 "of the same item is listed at the bottom, prefixed \"::extra::\".",
-                 foreground='#666', wraplength=760, justify='left').pack(anchor='w', pady=(0,6))
+        desc_label = ttk.Label(tab, text="", foreground='#666', wraplength=760, justify='left')
+        desc_label.pack(anchor='w', pady=(0,6))
 
         tree_frame = ttk.Frame(tab)
         tree_frame.pack(fill='both', expand=True)
-        saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
+        saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
         saved_col_widths = {'Slot': 55, 'Drop': 60, 'Item': 220, 'Type': 60, 'Spell': 100, 'Sigil': 60,
-                           'Level': 45, 'Area': 140}
+                           'Level': 45, 'Area': 140, 'Tag': 110}
+        saved_col_headings = {'Tag': 'Gear Tag'}
         tv = ttk.Treeview(tree_frame, columns=saved_cols, show='headings', height=12)
         for col in saved_cols:
             heading_anchor = 'w' if col == 'Item' else 'center'
-            tv.heading(col, text=col, anchor=heading_anchor)
+            tv.heading(col, text=saved_col_headings.get(col, col), anchor=heading_anchor,
+                      command=lambda c=col, t=tv: self._sort_saved_treeview(t, c, False))
             tv.column(col, width=saved_col_widths[col], stretch=False, anchor=('w' if col == 'Item' else 'center'))
+        tv.bind('<Button-1>', self._on_saved_tv_click)
         vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tv.yview)
         hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=tv.xview)
         tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -5728,7 +5808,7 @@ class App(tk.Tk):
         count_label.pack(anchor='w', pady=(6,0))
 
         self.bank_character_widgets[char_name] = {
-            'tab': tab, 'tv': tv,
+            'tab': tab, 'tv': tv, 'desc_label': desc_label,
             'prioritize_var': prioritize_var, 'hard_var': hard_var, 'search_all_var': search_all_var,
             'prioritize_cb': prioritize_cb, 'hard_cb': hard_cb,
             'search_status_label': search_status_label, 'count_label': count_label,
@@ -6035,17 +6115,21 @@ class App(tk.Tk):
         pooled together EXCEPT Kaid items, which still only come from this
         character's own tab (Kaid gear doesn't drop when you die, so it's
         meant to represent what THIS character is actually carrying, not
-        what's spread across the whole roster). Matched by name only, same
-        wildcard matching as an Inventory/Items-in-use paste line (see
-        _bank_owned_match). "Prioritize" searches everything, favoring
-        these items when tied. "Hard Search" restricts candidates to just
-        the effective pool, holds every wanted spell's explicit tier
-        exactly - never substituting a different tier the way every other
-        search mode does - and leaves _no_item_text_override set to "No
-        available item" so any empty attempted slot reads that
-        (_build_dict_to_rows) instead of "No suitable item found", then
-        reveals the Results tab's Search Missing Slots button for a
-        full-database follow-up on just those gaps."""
+        what's spread across the whole roster). Every Locker character's
+        non-Kaid gear (see the Import tab's Locker checkbox) is ALWAYS
+        folded in on top of that, regardless of Search all characters - a
+        Locker isn't a roster member you opt into, it's just this player's
+        overflow bank space. Matched by name only, same wildcard matching
+        as an Inventory/Items-in-use paste line (see _bank_owned_match).
+        "Prioritize" searches everything, favoring these items when tied.
+        "Hard Search" restricts candidates to just the effective pool,
+        holds every wanted spell's explicit tier exactly - never
+        substituting a different tier the way every other search mode
+        does - and leaves _no_item_text_override set to "No available
+        item" so any empty attempted slot reads that (_build_dict_to_rows)
+        instead of "No suitable item found", then reveals the Results
+        tab's Search Missing Slots button for a full-database follow-up on
+        just those gaps."""
         if not self.master_data:
             messagebox.showwarning("No Data", "Please load a master database first")
             return
@@ -6053,18 +6137,23 @@ class App(tk.Tk):
         w = self.bank_character_widgets[char_name]
         own_names = set(self.bank_characters.get(char_name, {}).get('order', []))
 
+        kaid_names = {
+            (item.get('Item') or '').strip().lower()
+            for item in self.master_data
+            if 'kaid' in (item.get('Realm') or '').strip().lower()
+        }
+        locker_names = set()
+        for cname, cdata in self.bank_characters.items():
+            if cname != char_name and cdata.get('is_locker'):
+                locker_names.update(n for n in cdata['order'] if n not in kaid_names)
+
         if w['search_all_var'].get():
             all_names = set()
             for cdata in self.bank_characters.values():
                 all_names.update(cdata['order'])
-            kaid_names = {
-                (item.get('Item') or '').strip().lower()
-                for item in self.master_data
-                if 'kaid' in (item.get('Realm') or '').strip().lower()
-            }
-            effective_names = {n for n in all_names if n not in kaid_names or n in own_names}
+            effective_names = {n for n in all_names if n not in kaid_names or n in own_names} | locker_names
         else:
-            effective_names = own_names
+            effective_names = own_names | locker_names
 
         if not effective_names:
             messagebox.showwarning("No Saved Items",
@@ -6286,7 +6375,7 @@ class App(tk.Tk):
                 display_slot = ('jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw')
                                 else 'off-hand' if slot == 'weapon_off' else slot)
                 text = "No available item" if slot in declined_slots else "No Items found after re-search"
-                row = ('', display_slot.title(), text, '', '', '', '', '', '', '████████', '(none)')
+                row = ('', '', display_slot.title(), text, '', '', '', '', '', '', '████████', '(none)')
                 final_rows.append(row)
                 rows_by_slot[slot] = row
 
@@ -6320,14 +6409,119 @@ class App(tk.Tk):
             status = "Re-searched missing slot(s) - all filled."
         self.search_status.config(text=status)
 
+    def _sort_saved_treeview(self, tv, col, reverse):
+        """Click-to-sort for a Saved Items treeview's column headings (the
+        Main aggregate tab and every character tab share this). Level
+        sorts numerically (falling back to string sort for anything
+        non-numeric, e.g. a blank cell when no master_data match was
+        found); every other column sorts case-insensitively as text.
+        Re-clicking the same header flips direction; the sort is purely a
+        display order - it's reset back to the persisted order the next
+        time this treeview is refreshed (adding/importing/clearing items),
+        same as any other Treeview sort-by-column in this app."""
+        def sort_key(iid):
+            val = tv.set(iid, col)
+            if col == 'Level':
+                try:
+                    return (0, float(val))
+                except ValueError:
+                    return (1, val.lower())
+            return (0, val.lower())
+
+        rows = sorted(tv.get_children(''), key=sort_key, reverse=reverse)
+        for index, iid in enumerate(rows):
+            tv.move(iid, '', index)
+
+        tv.heading(col, command=lambda: self._sort_saved_treeview(tv, col, not reverse))
+
+    def _on_saved_tv_click(self, event):
+        """Click handler shared by every Saved Items treeview (Main and
+        every character) - opens the Gear Tag editor (see
+        _open_gear_tag_editor) only when the click actually landed in the
+        Tag column's cell area; everything else (other columns, the
+        heading row, empty space below the last row) falls through to the
+        Treeview's own normal handling (selection, the column-sort heading
+        command, etc.)."""
+        tv = event.widget
+        if tv.identify_region(event.x, event.y) != 'cell':
+            return
+        row_iid = tv.identify_row(event.y)
+        col_id = tv.identify_column(event.x)
+        if not row_iid or not col_id:
+            return
+        try:
+            col_index = int(col_id.replace('#', '')) - 1
+        except ValueError:
+            return
+        columns = tv['columns']
+        if col_index < 0 or col_index >= len(columns) or columns[col_index] != 'Tag':
+            return
+        self._open_gear_tag_editor(tv, row_iid, col_id)
+
+    def _open_gear_tag_editor(self, tv, row_iid, col_id):
+        """Floating, temporary Combobox placed exactly over one Tag cell -
+        ttk.Treeview has no real per-row widgets, so this is the standard
+        "editable cell" trick: place a real Combobox on top of the cell
+        for just as long as it takes to pick a value, then destroy it and
+        write the result back to self.bank_gear_tags (see _set_gear_tag).
+        Committing on either <<ComboboxSelected>> (picked a value) or
+        <FocusOut> (clicked away without picking) - the `committed` flag
+        stops both from double-firing into a destroyed widget."""
+        bbox = tv.bbox(row_iid, col_id)
+        if not bbox:
+            return
+        x, y, width, height = bbox
+        current = tv.set(row_iid, 'Tag')
+        if current not in GEAR_TAG_OPTIONS:
+            current = 'Blank'
+        display_name = tv.set(row_iid, 'Item')
+        item_name = display_name.removeprefix('::extra:: ')
+
+        var = tk.StringVar(value=current)
+        combo = ttk.Combobox(tv, textvariable=var, values=GEAR_TAG_OPTIONS, state='readonly')
+        combo.place(x=x, y=y, width=width, height=height)
+        combo.focus_set()
+
+        committed = {'done': False}
+        def commit(event=None):
+            if committed['done']:
+                return
+            committed['done'] = True
+            new_val = var.get()
+            try:
+                combo.destroy()
+            except tk.TclError:
+                pass
+            self._set_gear_tag(item_name, new_val)
+
+        combo.bind('<<ComboboxSelected>>', commit)
+        combo.bind('<FocusOut>', commit)
+
+    def _set_gear_tag(self, item_name, new_val):
+        """Write one item's Gear Tag - global per item name, so this
+        redraws every Saved Items treeview (Main and every character), not
+        just the one the edit happened in. "Blank" isn't stored at all
+        (it's just the default for anything absent from the dict), keeping
+        the persisted config from filling up with untagged entries."""
+        if new_val == 'Blank':
+            self.bank_gear_tags.pop(item_name, None)
+        else:
+            self.bank_gear_tags[item_name] = new_val
+        self._save_config()
+        self._refresh_bank_saved_tab()
+        for char_name in list(self.bank_character_widgets):
+            self._refresh_bank_character_tab(char_name)
+
     def _bank_saved_display_rows(self, order, sources):
-        """Row tuples (Slot, Drop, Item, Type, Spell, Sigil, Level, Area)
-        for a Saved Items treeview - shared by the Main aggregate tab and
-        every per-character tab. Each unique name gets one row (enriched
-        from master_data when a name match is found); any copies beyond
-        the first are appended at the bottom, prefixed "::extra::". Drop
-        reads "No Drop" for a Kaid-realm item (Kaid gear doesn't drop when
-        you die), "Drop" for everything else. Returns (rows, extra_count)."""
+        """Row tuples (Slot, Drop, Item, Type, Spell, Sigil, Level, Area,
+        Tag) for a Saved Items treeview - shared by the Main aggregate tab
+        and every per-character tab. Each unique name gets one row
+        (enriched from master_data when a name match is found); any copies
+        beyond the first are appended at the bottom, prefixed "::extra::".
+        Drop reads "No Drop" for a Kaid-realm item (Kaid gear doesn't drop
+        when you die), "Drop" for everything else. Tag is whatever's in
+        self.bank_gear_tags for that name, defaulting to "Blank" - see
+        _open_gear_tag_editor. Returns (rows, extra_count)."""
         master_by_name = {}
         for item in self.master_data:
             master_by_name.setdefault((item.get('Item') or '').strip().lower(), item)
@@ -6339,6 +6533,7 @@ class App(tk.Tk):
             return (
                 (m.get('Slot') or '').title(), 'No Drop' if is_kaid else 'Drop', display_name,
                 m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''), m.get('Level', ''), m.get('Area', ''),
+                self.bank_gear_tags.get(name, 'Blank'),
             )
 
         total_counts = {
@@ -6400,6 +6595,15 @@ class App(tk.Tk):
         w['count_label'].config(
             text=f"{len(cdata['order'])} unique item(s) saved"
                  + (f", {extra_count} extra copy/copies" if extra_count else "") + ".")
+
+        if cdata.get('is_locker'):
+            desc = (f"{char_name} is a Locker - not a character you play, just extra bank space. Its "
+                    "non-Kaid gear is automatically folded into every other character's search pool. A "
+                    "second copy of the same item is listed at the bottom, prefixed \"::extra::\".")
+        else:
+            desc = (f"{char_name}'s saved items - kept up to date from the Import tab. A second copy of "
+                    "the same item is listed at the bottom, prefixed \"::extra::\".")
+        w['desc_label'].config(text=desc)
 
     def _clear_bank_saved_list(self):
         if not messagebox.askyesno("Clear Saved List",
@@ -8067,8 +8271,10 @@ class App(tk.Tk):
                 if wanted in item_spell:
                     covered_spells.add(wanted)
             
+            bank_cell, locker_cell = self._bank_and_locker_cells(item)
             row = (
-                '📦' if self._is_bank_owned(item) or self._is_saved_item(item) else '',
+                bank_cell,
+                locker_cell,
                 slot.title(),
                 item.get('Item', ''),
                 item.get('Type', ''),

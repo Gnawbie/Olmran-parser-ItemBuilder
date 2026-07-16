@@ -134,7 +134,13 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.3.2 (Current)
+### v5.4.0 (Current)
+- Saved Items (Main and every character tab) columns are now sortable - click any header to sort by it, click again to reverse. Level sorts numerically; everything else sorts as text
+- Added a "Gear Tag" column to Saved Items: click a row's Tag cell for a dropdown of "Good Gear" / "Invasion Gear" / "Blank". One tag per item name, shared everywhere that item appears (Main and every character), and persists across closing and reopening the program
+- Added a "Locker" checkbox to the Import tab - a Locker isn't a character you play, it's extra bank space (a spare character made just to hold overflow gear). A Locker's non-Kaid gear is automatically folded into every other character's Bank Build search, regardless of that character's own "Search all characters" setting
+- Results tab has a new "Locker" column between the Bank icon and Slot - shows the first 4 letters of the Locker's name whenever a row's item came from one. The Bank column shows a bold "L" instead of the usual 📦 icon for those rows
+
+### v5.3.2
 - The shared "Find Optimal Build" / "Show All Matches" buttons now hide while the Bank Build sub-tab is selected - they'd otherwise run against only Basic/Armor/Weapon Constraints with no bank context, which is redundant now that every character tab has its own "Find Best Bank Build" button. "Generate multiple build options" stays visible either way
 
 ### v5.3.1
