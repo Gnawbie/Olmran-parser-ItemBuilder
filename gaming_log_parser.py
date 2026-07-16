@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.1"
+VERSION = "5.4.2"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1616,6 +1616,7 @@ class App(tk.Tk):
                         'sources': {src: dict(counts) for src, counts in cdata['sources'].items()},
                         'order': list(cdata['order']),
                         'is_locker': bool(cdata.get('is_locker', False)),
+                        'exclude_from_others': bool(cdata.get('exclude_from_others', False)),
                     }
                     for char, cdata in getattr(self, 'bank_characters', {}).items()
                 },
@@ -3597,6 +3598,12 @@ class App(tk.Tk):
                 # gear gets folded into every OTHER character's search pool
                 # automatically - see _find_character_saved_items_build.
                 'is_locker': bool(_cdata.get('is_locker', False)),
+                # Opt-out for a Locker specifically (see the "Exclude this
+                # Locker..." checkbox on its own tab) - unchecked/False by
+                # default, so existing behavior (folded into everyone
+                # else's search) doesn't change unless deliberately turned
+                # on. Meaningless for a non-Locker character.
+                'exclude_from_others': bool(_cdata.get('exclude_from_others', False)),
             }
         # Populated per character name by _create_bank_character_tab - widget
         # refs (treeview, checkboxes/vars, status labels) needed to read from
@@ -5656,7 +5663,7 @@ class App(tk.Tk):
         is_new = char_name not in self.bank_characters
         if is_new:
             self.bank_characters[char_name] = {'sources': {'bank': {}, 'inventory': {}}, 'order': [],
-                                               'is_locker': False}
+                                               'is_locker': False, 'exclude_from_others': False}
         cdata = self.bank_characters[char_name]
         # Reconciled every save (not just when new) so toggling the
         # checkbox on a later Import updates an existing character's
@@ -5773,6 +5780,19 @@ class App(tk.Tk):
         desc_label = ttk.Label(tab, text="", foreground='#666', wraplength=760, justify='left')
         desc_label.pack(anchor='w', pady=(0,6))
 
+        # Only shown/relevant for a Locker character (see _refresh_bank_
+        # character_tab, which packs/forgets this based on is_locker) -
+        # unchecked by default, so a Locker's non-Kaid gear keeps folding
+        # into every other character's search the way it always has;
+        # checking this opts just THIS locker out of that, for a character
+        # you want to keep as pure overflow storage without it silently
+        # feeding everyone else's builds.
+        exclude_var = tk.BooleanVar(value=False)
+        exclude_cb = ttk.Checkbutton(tab,
+            text="Exclude this Locker from other characters' Bank Build searches",
+            variable=exclude_var, command=lambda: self._on_locker_exclude_toggle(char_name))
+        exclude_cb.pack(anchor='w', pady=(0,6))
+
         tree_frame = ttk.Frame(tab)
         tree_frame.pack(fill='both', expand=True)
         saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
@@ -5873,6 +5893,7 @@ class App(tk.Tk):
 
         self.bank_character_widgets[char_name] = {
             'tab': tab, 'tv': tv, 'desc_label': desc_label,
+            'exclude_var': exclude_var, 'exclude_cb': exclude_cb,
             'prioritize_var': prioritize_var, 'hard_var': hard_var, 'search_all_var': search_all_var,
             'prioritize_cb': prioritize_cb, 'hard_cb': hard_cb,
             'search_status_label': search_status_label, 'count_label': count_label,
@@ -5906,6 +5927,18 @@ class App(tk.Tk):
             w['prioritize_cb'].config(state='disabled')
         else:
             w['prioritize_cb'].config(state='normal')
+
+    def _on_locker_exclude_toggle(self, char_name):
+        """"Exclude this Locker from other characters' Bank Build
+        searches" checkbox - only ever shown on a Locker's own tab (see
+        _refresh_bank_character_tab). Persists immediately, same as every
+        other Bank Build config change."""
+        cdata = self.bank_characters.get(char_name)
+        if cdata is None:
+            return
+        w = self.bank_character_widgets[char_name]
+        cdata['exclude_from_others'] = w['exclude_var'].get()
+        self._save_config()
 
     def _reset_hard_search_state(self):
         """Clear Saved Items Hard Search state - called at the start of
@@ -6155,11 +6188,19 @@ class App(tk.Tk):
         left out of that pool, same as every per-character search already
         does (see _find_character_saved_items_build) - a Locker only ever
         contributes non-Kaid gear. A non-Locker character's own Kaid items
-        still count fully; that's real gear they actually own."""
+        still count fully; that's real gear they actually own. A Locker
+        flagged "Exclude this Locker from other characters' Bank Build
+        searches" is left out of this pool entirely - there's no "this
+        search's own character" here to exempt it for, so an excluded
+        Locker just never contributes anything to a global rebuild."""
         non_locker_names = set(self.bank_saved_order)
         locker_names = set()
         for cdata in self.bank_characters.values():
-            (locker_names if cdata.get('is_locker') else non_locker_names).update(cdata['order'])
+            if cdata.get('is_locker'):
+                if not cdata.get('exclude_from_others'):
+                    locker_names.update(cdata['order'])
+            else:
+                non_locker_names.update(cdata['order'])
         kaid_names = {
             (item.get('Item') or '').strip().lower()
             for item in self.master_data
@@ -6295,7 +6336,10 @@ class App(tk.Tk):
         item" so any empty attempted slot reads that (_build_dict_to_rows)
         instead of "No suitable item found", then reveals the Results
         tab's Search Missing Slots button for a full-database follow-up on
-        just those gaps."""
+        just those gaps. A Locker flagged "Exclude this Locker from other
+        characters' Bank Build searches" (unchecked/off by default) is
+        skipped entirely here - its gear still shows up on its own tab,
+        just never folded into anyone else's."""
         if not self.master_data:
             messagebox.showwarning("No Data", "Please load a master database first")
             return
@@ -6310,7 +6354,7 @@ class App(tk.Tk):
         }
         locker_names = set()
         for cname, cdata in self.bank_characters.items():
-            if cname != char_name and cdata.get('is_locker'):
+            if cname != char_name and cdata.get('is_locker') and not cdata.get('exclude_from_others'):
                 locker_names.update(n for n in cdata['order'] if n not in kaid_names)
 
         if w['search_all_var'].get():
@@ -6770,6 +6814,14 @@ class App(tk.Tk):
             desc = (f"{char_name}'s saved items - kept up to date from the Import tab. A second copy of "
                     "the same item is listed at the bottom, prefixed \"::extra::\".")
         w['desc_label'].config(text=desc)
+
+        # The exclude-from-others checkbox only means anything for a
+        # Locker - hidden entirely for a normal character.
+        w['exclude_var'].set(bool(cdata.get('exclude_from_others', False)))
+        if cdata.get('is_locker'):
+            w['exclude_cb'].pack(anchor='w', pady=(0,6), after=w['desc_label'])
+        else:
+            w['exclude_cb'].pack_forget()
 
     def _clear_bank_saved_list(self):
         if not messagebox.askyesno("Clear Saved List",

@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.1 (Current)
+### v5.4.2 (Current)
+- A Locker character's tab now has an "Exclude this Locker from other characters' Bank Build searches" checkbox - unchecked by default (matching existing behavior: its non-Kaid gear folds into every other character's search automatically). Checking it opts that one Locker out, for gear you want to keep as pure storage without it silently feeding everyone else's builds. Also respected by "Rebuild (Saved Items First)"
+
+### v5.4.1
 - Right-clicking an empty slot in Results now offers "Search Full Database for This Slot" (replacing the old "Rebuild (Full Database)" there) - finds a single best-fit item for just that slot, honoring every active constraint, without touching or recomputing any other slot. Correctly avoids duplicating a wanted spell that's already covered by another slot in the current build, targeting a genuinely uncovered one instead. "Rebuild (Saved Items First)" is unchanged
 - Removing an item from the build (right-click → Remove) now always leaves that slot visible showing "No suitable item found" instead of sometimes disappearing entirely
 - "Rebuild (Saved Items First)" now correctly excludes a Locker's Kaid items from its trusted pool, matching the same rule every per-character search already follows (a non-Locker character's own saved Kaid items still count fully)
