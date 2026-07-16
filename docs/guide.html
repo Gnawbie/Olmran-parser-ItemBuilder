@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v5.4.0</p>
+    <p class="tagline">Full usage guide - v5.4.1</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -259,13 +259,13 @@
       <li><b>Display: Best Per Slot / All Matches</b> toggles between the two search modes above.</li>
       <li><b>Build Variant</b> dropdown - active when multiple build options were generated.</li>
       <li>Columns: Bank icon, <b>Locker</b>, Slot, Item, Type, Spell, Sigil, Level, Mob, Area, and <b>Alt Options</b> (other items that tied for that slot). The Locker column shows the first 4 letters of a Locker character's name whenever a row's item came from one - the Bank column shows a bold "L" instead of the usual 📦 for those rows.</li>
-      <li><b>Right-click a filled item</b> to remove it from the build - it stays excluded from every future search until a genuinely new search runs. Two buttons appear once something's been removed:
+      <li><b>Right-click a filled item</b> to remove it from the build - the slot stays visible showing "No suitable item found" rather than disappearing, and it stays excluded from every future search until a genuinely new search runs. Two buttons appear once something's been removed:
         <ul>
-          <li><b>Rebuild (Full Database)</b> - re-searches everywhere, excluding what's been removed.</li>
-          <li><b>Rebuild (Saved Items First)</b> - builds as much of the set as possible from Saved Items, then automatically searches the full database for whatever it can't cover - a complete gear set every time. Useful for PvP: remove a good item you don't want to risk losing on death, rebuild, and get a full set that reuses your bank wherever possible and clearly shows (via the missing Bank icon) exactly what you'd still need to go acquire for the rest.</li>
+          <li><b>Rebuild (Full Database)</b> - recomputes the whole build, re-searching everywhere, excluding what's been removed.</li>
+          <li><b>Rebuild (Saved Items First)</b> - builds as much of the whole set as possible from Saved Items (Lockers' non-Kaid gear included, their Kaid items excluded), then automatically searches the full database for whatever it can't cover - a complete gear set every time. Useful for PvP: remove a good item you don't want to risk losing on death, rebuild, and get a full set that reuses your bank wherever possible and clearly shows (via the missing Bank icon) exactly what you'd still need to go acquire for the rest.</li>
         </ul>
       </li>
-      <li><b>Right-click an empty slot</b> ("No suitable item found", etc.) offers the same two Rebuild actions.</li>
+      <li><b>Right-click an empty slot</b> ("No suitable item found", etc.) offers <b>Search Full Database for This Slot</b> (finds a single best-fit item for just that one slot, honoring every active constraint and correctly avoiding a wanted spell some other slot already covers, without touching or recomputing anything else in the build) and <b>Rebuild (Saved Items First)</b> (the same full-build rebuild described above).</li>
       <li><b>Search Missing Slots (Full Database)</b> button appears whenever a Saved Items Hard Search leaves gaps - fills them in place from the full database, asking about a lower tier if the exact one isn't found anywhere.</li>
       <li><b>Remove Area</b> - strip all items from a given area out of the current results.</li>
       <li><b>Export Results</b> / <b>Save Build</b> - save the current table to Excel, HTML, image, or text, or pin it as a permanent panel under Saved Builds.</li>

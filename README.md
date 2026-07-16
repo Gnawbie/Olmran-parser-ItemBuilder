@@ -134,7 +134,13 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.0 (Current)
+### v5.4.1 (Current)
+- Right-clicking an empty slot in Results now offers "Search Full Database for This Slot" (replacing the old "Rebuild (Full Database)" there) - finds a single best-fit item for just that slot, honoring every active constraint, without touching or recomputing any other slot. Correctly avoids duplicating a wanted spell that's already covered by another slot in the current build, targeting a genuinely uncovered one instead. "Rebuild (Saved Items First)" is unchanged
+- Removing an item from the build (right-click → Remove) now always leaves that slot visible showing "No suitable item found" instead of sometimes disappearing entirely
+- "Rebuild (Saved Items First)" now correctly excludes a Locker's Kaid items from its trusted pool, matching the same rule every per-character search already follows (a non-Locker character's own saved Kaid items still count fully)
+- Also strengthened `OlmranItemBuilder_TEST.exe`'s testing workflow (no user-facing change): its config no longer resets between launches, and Basic Constraints selections now persist alongside Saved Items/characters, so repeat testing starts from a known state instead of empty
+
+### v5.4.0
 - Saved Items (Main and every character tab) columns are now sortable - click any header to sort by it, click again to reverse. Level sorts numerically; everything else sorts as text
 - Added a "Gear Tag" column to Saved Items: click a row's Tag cell for a dropdown of "Good Gear" / "Invasion Gear" / "Blank". One tag per item name, shared everywhere that item appears (Main and every character), and persists across closing and reopening the program
 - Added a "Locker" checkbox to the Import tab - a Locker isn't a character you play, it's extra bank space (a spare character made just to hold overflow gear). A Locker's non-Kaid gear is automatically folded into every other character's Bank Build search, regardless of that character's own "Search all characters" setting

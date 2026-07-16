@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.0"
+VERSION = "5.4.1"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1468,7 +1468,8 @@ class App(tk.Tk):
         # without ever touching a real user's saved data. Unset for every
         # normal build/user, so this is a no-op outside that test flow.
         is_test_build = bool(os.environ.get('OLMRAN_TEST_CONFIG'))
-        title_suffix = " [TEST BUILD - clean slate]" if is_test_build else ""
+        self.is_test_build = is_test_build
+        title_suffix = " [TEST BUILD]" if is_test_build else ""
         self.title(f"🎮 Olmran Log Parser and Gear Set Creator v{VERSION}{title_suffix}")
         # Bank Build's Saved Items (per-character tabs, Only Found In,
         # Prioritize/Hard Search/Search-all-characters, etc.) needs more
@@ -1556,6 +1557,17 @@ class App(tk.Tk):
                     # Saved Items' Gear Tag column - one tag per item name,
                     # shared across the Main tab and every character.
                     self._persisted_bank_gear_tags = config.get('bank_gear_tags', {})
+                    # Basic Constraints' current selections (Wanted Spells,
+                    # Priority Spells/Tier, Wanted Sigils, Required Items,
+                    # Level filters) - TEST BUILD ONLY (see self.is_test_build).
+                    # The real app never writes or reads this key at all, so
+                    # a normal user's config file never gains it - see
+                    # test_launcher.py, which no longer wipes this file
+                    # between launches specifically so this (and Saved
+                    # Items/characters, already persisted either way) keeps
+                    # whatever was last set up as a fast-testing default.
+                    self._persisted_test_basic_constraints = (
+                        config.get('test_basic_constraints', {}) if self.is_test_build else {})
             else:
                 self.last_open_dir = os.path.expanduser("~")
                 self.last_save_dir = os.path.expanduser("~")
@@ -1567,6 +1579,7 @@ class App(tk.Tk):
                 self._persisted_bank_saved_order = []
                 self._persisted_bank_characters = {}
                 self._persisted_bank_gear_tags = {}
+                self._persisted_test_basic_constraints = {}
         except Exception:
             self.last_open_dir = os.path.expanduser("~")
             self.last_save_dir = os.path.expanduser("~")
@@ -1578,6 +1591,7 @@ class App(tk.Tk):
             self._persisted_bank_saved_order = []
             self._persisted_bank_characters = {}
             self._persisted_bank_gear_tags = {}
+            self._persisted_test_basic_constraints = {}
 
     def _save_config(self):
         """Save configuration to file"""
@@ -1607,11 +1621,54 @@ class App(tk.Tk):
                 },
                 'bank_gear_tags': dict(getattr(self, 'bank_gear_tags', {})),
             }
+            if getattr(self, 'is_test_build', False):
+                # Basic Constraints' current selections - TEST BUILD ONLY,
+                # never written to a real user's config file. Lets
+                # test_launcher.py (which no longer wipes this file between
+                # launches) keep whatever's currently set up as a fast-
+                # testing default instead of starting from scratch.
+                config['test_basic_constraints'] = {
+                    'wanted_spells_data': list(getattr(self, 'wanted_spells_data', [])),
+                    'priority_spells_data': list(getattr(self, 'priority_spells_data', [])),
+                    'priority_tiers_data': [list(pair) for pair in getattr(self, 'priority_tiers_data', [])],
+                    'wanted_sigils_data': list(getattr(self, 'wanted_sigils_data', [])),
+                    'required_items': [dict(item) for item in getattr(self, 'required_items', [])],
+                    'min_level': self.min_level_var.get() if hasattr(self, 'min_level_var') else '',
+                    'max_level': self.max_level_var.get() if hasattr(self, 'max_level_var') else '',
+                    'specific_level': self.specific_level_var.get() if hasattr(self, 'specific_level_var') else '',
+                    'specific_level_fallback': (self.specific_level_fallback_var.get()
+                                               if hasattr(self, 'specific_level_fallback_var') else 'none'),
+                }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f)
         except Exception:
             pass  # Silently fail if can't save config
-    
+
+    def _restore_test_basic_constraints(self):
+        """TEST BUILD ONLY - repopulates Basic Constraints (Wanted Spells,
+        Priority Spells/Tier, Wanted Sigils, Required Items, Level filters)
+        from whatever was last saved (see _save_config), so a fresh test
+        launch starts from a known, fast-to-reach state instead of empty.
+        Never runs outside a test build (see self.is_test_build) - a real
+        user's config file never has this data in the first place."""
+        data = getattr(self, '_persisted_test_basic_constraints', None) or {}
+        if not data:
+            return
+        self.wanted_spells_data = list(data.get('wanted_spells_data', []))
+        self.priority_spells_data = list(data.get('priority_spells_data', []))
+        self.priority_tiers_data = [tuple(pair) for pair in data.get('priority_tiers_data', [])]
+        self.wanted_sigils_data = list(data.get('wanted_sigils_data', []))
+        self.required_items = [dict(item) for item in data.get('required_items', [])]
+        self.min_level_var.set(data.get('min_level', ''))
+        self.max_level_var.set(data.get('max_level', ''))
+        self.specific_level_var.set(data.get('specific_level', ''))
+        self.specific_level_fallback_var.set(data.get('specific_level_fallback', 'none'))
+        self._render_spell_chips()
+        self._render_priority_spell_chips()
+        self._render_priority_tier_chips()
+        self._render_wanted_sigil_chips()
+        self._render_required_item_chips()
+
     def _on_closing(self):
         """Handle window closing"""
         self._save_config()
@@ -3728,6 +3785,13 @@ class App(tk.Tk):
                                  variable=self.specific_level_fallback_var)
             rb.pack(side='left', padx=4)
             self.specific_level_fallback_radios.append(rb)
+
+        # TEST BUILD ONLY - see self.is_test_build and _save_config's
+        # 'test_basic_constraints' block. Every widget referenced here
+        # (Wanted Spells/Sigils, Priority chips, Required Items, Level
+        # fields) already exists by this point in _build_build_tab.
+        if self.is_test_build:
+            self._restore_test_basic_constraints()
 
         shared_button_frame = ttk.Frame(shared_controls_frame)
         shared_button_frame.pack(pady=8)
@@ -5901,15 +5965,12 @@ class App(tk.Tk):
         position, rather than trying to parse the displayed Slot/Item text
         (which can't tell jewel_1 from jewel_2, among other ambiguities).
         A filled slot offers "Remove". An empty ("No suitable item
-        found"/etc.) slot offers the same two full Rebuild actions as the
-        header buttons (_rebuild_full_database/_rebuild_saved_items_only) -
-        earlier this instead searched for a replacement scoped to just that
-        one slot, but that meant every OTHER slot's item/Alt Options had to
-        be preserved by hand across an internal search call, which kept
-        turning up new edge cases; a full rebuild recomputes everything in
-        one consistent pass and still honors self.excluded_item_keys, so
-        anything already removed stays removed regardless of which slot
-        was clicked."""
+        found"/etc.) slot offers "Search Full Database for This Slot"
+        (_fill_empty_slot_from_full_database - fills just the clicked slot,
+        via _find_best_item_for_slot against self.items_by_slot, leaving
+        every other slot exactly as it is) and "Rebuild (Saved Items
+        First)" (_rebuild_saved_items_first - the same full-build rebuild
+        the header button uses, still honoring self.excluded_item_keys)."""
         if self.results_display_mode.get() != 'optimal' or not self.build_variants:
             return
         iid = self.search_results_tv.identify_row(event.y)
@@ -5931,21 +5992,111 @@ class App(tk.Tk):
             menu.add_command(label=f"Remove '{item.get('Item', '')}' from Build",
                              command=lambda: self._remove_item_from_build(slot))
         else:
-            menu.add_command(label="Rebuild (Full Database)", command=self._rebuild_full_database)
+            menu.add_command(label="Search Full Database for This Slot",
+                             command=lambda: self._fill_empty_slot_from_full_database(slot))
             menu.add_command(label="Rebuild (Saved Items First)", command=self._rebuild_saved_items_first)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
 
+    def _fill_empty_slot_from_full_database(self, slot):
+        """Right-click menu action for an empty slot ("Search Full
+        Database for This Slot") - searches the full master database for
+        a single best-fit item for just THIS slot, honoring every
+        currently active constraint (Wanted Spells, Armor/Weapon/Level/
+        Realm), and places it there without touching any other slot's
+        item or recomputing the rest of the build. Unlike the header's
+        "Rebuild (Full Database)" button (which recomputes the ENTIRE
+        build from scratch, used after removing a filled item elsewhere),
+        this only ever changes the one slot that was clicked.
+
+        Uses _find_best_item_for_slot (a per-slot lookup against
+        self.items_by_slot) rather than re-running the whole-build DP,
+        which optimizes coverage globally and could just as easily place
+        a matching item in some OTHER slot that also qualifies instead of
+        the one that was actually clicked - the exact pitfall
+        _search_missing_slots already had to work around."""
+        if not self.build_variants:
+            return
+
+        original_build_variants = [dict(v) for v in self.build_variants]
+        original_optimal_build = dict(self.optimal_build)
+        original_attempted_slots = set(self.attempted_slots)
+        original_last_results = list(self.last_optimal_results)
+
+        # A wanted spell already covered by some OTHER slot in the current
+        # build shouldn't be duplicated onto this one when a different,
+        # still-uncovered wanted spell could use it instead - same "each
+        # wanted spell only needs covering once" rule the whole-build DP
+        # itself follows. Computed from Build 1 as it stands right now
+        # (before the internal lookup below touches anything).
+        covered_bases = {
+            _spell_base(other_item.get('Spell') or '')
+            for other_slot, other_item in original_build_variants[0].items()
+            if other_slot != slot and other_item.get('Spell')
+        }
+
+        # Populate self.items_by_slot against the full, unrestricted
+        # database under every currently active constraint - suppressed so
+        # this internal call's own narrow build never flashes on screen
+        # (same pattern as _search_missing_slots).
+        self._suppress_results_redraw = True
+        try:
+            self._find_optimal_build()
+        finally:
+            self._suppress_results_redraw = False
+
+        # Weapon/Shield/Claw slots are "always-fill" regardless of spell
+        # match, same as the whole-build DP treats them - only Armor/Jewel
+        # slots are restricted to items providing a currently Wanted Spell,
+        # and only ones not already covered elsewhere (see covered_bases
+        # above) - a base with nothing left to cover (everything's already
+        # satisfied) falls back to no spell filter at all, same as an
+        # always-fill slot, since there's nothing left worth targeting.
+        always_fill = slot in ('weapon', 'weapon_off', 'shield') or slot.startswith('claw')
+        if always_fill:
+            chips = []
+        else:
+            chips = [chip for chip in self.wanted_spells_data if _spell_base(chip) not in covered_bases]
+        item = self._find_best_item_for_slot(slot, chips, hold_tier=False)
+
+        # Restore everything to exactly how it was before this internal
+        # lookup, regardless of outcome - only a successful find below
+        # changes anything.
+        self.build_variants = original_build_variants
+        self.optimal_build = original_optimal_build
+        self.attempted_slots = original_attempted_slots
+
+        if item is None:
+            self.last_optimal_results = original_last_results
+            messagebox.showinfo("No Item Found",
+                f"No suitable item was found in the full database for "
+                f"{slot.replace('_', ' ').title()}.")
+            return
+
+        self.build_variants[0][slot] = item
+        self.optimal_build = self.build_variants[0]
+
+        self.last_optimal_results = self._all_variants_rows()
+        self.search_results_tv.delete(*self.search_results_tv.get_children())
+        for row in self.last_optimal_results:
+            self.search_results_tv.insert('', 'end', values=row)
+        self._autosize_results_columns()
+        self._update_rebuild_buttons_visibility()
+
     def _remove_item_from_build(self, slot):
         """Drop the item currently in `slot` (Build 1 only) from the build
         and permanently exclude it from every future search (see the
         items_by_slot filter in _find_optimal_build/_show_all_matches),
         until a genuinely new top-level search runs (_reset_hard_search_state)
-        or the app restarts. Redraws immediately (the slot shows "No
-        suitable item found" if it's still attempted, or just vanishes if
-        it wasn't a required slot) and reveals the two Rebuild buttons."""
+        or the app restarts. Redraws immediately - the slot always stays
+        visible showing "No suitable item found" rather than disappearing,
+        even if the original search never flagged it as "attempted" (that
+        flag only covers the initial search's own coverage-gap logic; once
+        a user has explicitly emptied a slot by hand, it should keep
+        showing up as empty, not vanish) - and reveals the two Rebuild
+        buttons."""
         if not self.build_variants:
             return
         build1 = self.build_variants[0]
@@ -5955,6 +6106,7 @@ class App(tk.Tk):
         self.excluded_item_keys.add(_bank_item_key(item))
         del build1[slot]
         self.optimal_build = build1
+        self.attempted_slots = set(self.attempted_slots) | {slot}
 
         self.last_optimal_results = self._all_variants_rows()
         self.search_results_tv.delete(*self.search_results_tv.get_children())
@@ -5997,15 +6149,29 @@ class App(tk.Tk):
         self.excluded_item_keys, same as Rebuild (Full Database).
 
         Pooled from every saved item anywhere (the legacy pool plus every
-        character), same self._all_saved_item_names union _is_saved_item
-        uses for the Bank icon - this button has no "which character"
-        context of its own (it's triggered globally from the Results tab),
-        so it reaches into all of them rather than picking one."""
-        if not self._all_saved_item_names:
+        character) - this button has no "which character" context of its
+        own (it's triggered globally from the Results tab), so it reaches
+        into all of them rather than picking one. A Locker's Kaid items are
+        left out of that pool, same as every per-character search already
+        does (see _find_character_saved_items_build) - a Locker only ever
+        contributes non-Kaid gear. A non-Locker character's own Kaid items
+        still count fully; that's real gear they actually own."""
+        non_locker_names = set(self.bank_saved_order)
+        locker_names = set()
+        for cdata in self.bank_characters.values():
+            (locker_names if cdata.get('is_locker') else non_locker_names).update(cdata['order'])
+        kaid_names = {
+            (item.get('Item') or '').strip().lower()
+            for item in self.master_data
+            if 'kaid' in (item.get('Realm') or '').strip().lower()
+        }
+        effective_names = non_locker_names | (locker_names - kaid_names)
+
+        if not effective_names:
             messagebox.showwarning("No Saved Items",
                 "The Saved Items list is empty - use the Import tab first.")
             return
-        owned_keys = {(name, None, None) for name in self._all_saved_item_names}
+        owned_keys = {(name, None, None) for name in effective_names}
         matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
         if not matched_items:
             messagebox.showwarning("No Matches",
