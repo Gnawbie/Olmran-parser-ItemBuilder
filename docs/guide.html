@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v5.4.3</p>
+    <p class="tagline">Full usage guide - v5.4.4</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -265,7 +265,13 @@
           <li><b>Rebuild (Saved Items First)</b> - builds as much of the whole set as possible from Saved Items (Lockers' non-Kaid gear included, their Kaid items excluded), then automatically searches the full database for whatever it can't cover - a complete gear set every time. Useful for PvP: remove a good item you don't want to risk losing on death, rebuild, and get a full set that reuses your bank wherever possible and clearly shows (via the missing Bank icon) exactly what you'd still need to go acquire for the rest.</li>
         </ul>
       </li>
-      <li><b>Right-click an empty slot</b> ("No suitable item found", etc.) offers <b>Search Full Database for This Slot</b> (finds a single best-fit item for just that one slot, honoring every active constraint and correctly avoiding a wanted spell some other slot already covers, without touching or recomputing anything else in the build) and <b>Rebuild (Saved Items First)</b> (the same full-build rebuild described above).</li>
+      <li><b>Right-click an empty slot</b> ("No suitable item found", etc.) offers three options:
+        <ul>
+          <li><b>Search Full Database for This Slot</b> - finds a single best-fit item for just that one slot, honoring every active constraint and correctly avoiding a wanted spell some other slot already covers, without touching or recomputing anything else in the build.</li>
+          <li><b>Rebuild (Saved Items First)</b> - the same full-build rebuild described above.</li>
+          <li><b>Rebuild (Full Database, Prefer Owned)</b> - a single unrestricted search of the whole database that still favors items you already own, generating a stack of build options in the <b>Build Variant</b> dropdown: "0 new items", "1 new item", "2 new items", etc. - the fewest new items needed to reach each successively better result, so you can weigh a smaller shopping list against a stronger build. If a looser cap has spare budget left over that coverage alone doesn't need, it also adds "N new items (alt)" options - equally-good unowned alternatives swapped into an owned slot one at a time, just for extra choices to compare.</li>
+        </ul>
+      </li>
       <li><b>Search Missing Slots (Full Database)</b> button appears whenever a Saved Items Hard Search leaves gaps - fills them in place from the full database, asking about a lower tier if the exact one isn't found anywhere.</li>
       <li><b>Remove Area</b> - strip all items from a given area out of the current results.</li>
       <li><b>Export Results</b> / <b>Save Build</b> - save the current table to Excel, HTML, image, or text, or pin it as a permanent panel under Saved Builds.</li>
