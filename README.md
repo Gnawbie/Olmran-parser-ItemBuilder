@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.2 (Current)
+### v5.4.3 (Current)
+- The build search now prefers an item whose Sigil isn't already used elsewhere in the build, as a pure last-resort tie-break - it only ever decides between candidates already tied on everything else (coverage, Priority Spells/Tier, Sigil match, Melee stats, Defense, item Tier, and Level), so it can never override a genuinely better item. Applies to the main search, Max Lvl priority slots, and Claw slots. Also fixed a related bug where two otherwise-identical items differing only by Sigil could get silently collapsed into one candidate before the search even ran
+
+### v5.4.2
 - A Locker character's tab now has an "Exclude this Locker from other characters' Bank Build searches" checkbox - unchecked by default (matching existing behavior: its non-Kaid gear folds into every other character's search automatically). Checking it opts that one Locker out, for gear you want to keep as pure storage without it silently feeding everyone else's builds. Also respected by "Rebuild (Saved Items First)"
 
 ### v5.4.1

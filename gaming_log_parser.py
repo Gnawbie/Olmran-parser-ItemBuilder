@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.2"
+VERSION = "5.4.3"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -910,6 +910,19 @@ DEFENSE_LEVELS = ['much worse', 'worse', 'normal', 'better', 'much better']
 DEFENSE_RANK = {level: i for i, level in enumerate(DEFENSE_LEVELS)}
 
 SIGIL_TYPES = ['Cold', 'Earth', 'Fire', 'Lightning', 'Pain', 'Shock', 'Water']
+
+# One bit per Sigil type - used by _find_optimal_build's "prefer a Sigil not
+# already used elsewhere in the build" tie-break (see _sigil_bit_for_item).
+SIGIL_BIT = {name.lower(): (1 << i) for i, name in enumerate(SIGIL_TYPES)}
+
+
+def _sigil_bit_for_item(item):
+    """This item's Sigil as a single SIGIL_BIT flag, or 0 if it has none or
+    an unrecognized value. Used to track which Sigils a build has already
+    used, purely as a last-resort tie-break (see _find_optimal_build) -
+    never a hard requirement and never able to override any real
+    scoring factor above it."""
+    return SIGIL_BIT.get((item.get('Sigil') or '').strip().lower(), 0)
 
 # The 6 armor body slots that have their own per-slot Sigil dropdown in Armor
 # Constraints (weapon/shield/jewel have their own separate Sigil concepts -
@@ -7536,7 +7549,13 @@ class App(tk.Tk):
         # already-eligible items wins, never what's eligible in the first
         # place. Ties (same highest level) are broken the same way the exact
         # search would: Priority Spell match, then Priority Tier match, then
-        # Sigil match/level, then Defense preference, then spell tier.
+        # Sigil match/level, then Defense preference, then spell tier, then
+        # (last resort - see used_sigils_bitmask below) a Sigil not already
+        # used elsewhere in the build.
+        used_sigils_bitmask = 0
+        for existing_item in build.values():
+            used_sigils_bitmask |= _sigil_bit_for_item(existing_item)
+
         for slot, var in self.armor_maxlvl_vars.items():
             if not var.get() or slot in build:
                 continue
@@ -7558,13 +7577,16 @@ class App(tk.Tk):
                 tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
                 sigil_match, sigil_level = _sigil_priority_score(item, slot)
                 defense_priority_match = _defense_priority_score(item, slot)
+                item_sigil_bit = _sigil_bit_for_item(item)
+                is_new_sigil = 1 if item_sigil_bit and not (item_sigil_bit & used_sigils_bitmask) else 0
                 key = (item_level_num, priority_matches, tier_priority_match,
-                       sigil_match, sigil_level, defense_priority_match, item_tier)
+                       sigil_match, sigil_level, defense_priority_match, item_tier, is_new_sigil)
                 if best_key is None or key > best_key:
                     best_key = key
                     best_item = item
 
             if best_item is not None:
+                used_sigils_bitmask |= _sigil_bit_for_item(best_item)
                 build[slot] = best_item
                 matched_bases = [base for base in wanted_bases if base in (best_item.get('Spell') or '').lower()]
                 covered_bases.update(matched_bases)
@@ -7741,9 +7763,15 @@ class App(tk.Tk):
                 melee_priority_match, melee_match = (
                     _melee_constraint_score(item, item_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
 
+                # item's own raw Sigil (not the per-slot Sigil PREFERENCE
+                # dropdown captured in sigil_match/sigil_level above) is
+                # appended purely so two items that are otherwise identical
+                # but carry different Sigils don't get collapsed into one
+                # candidate here - solve() needs to see both to apply its
+                # own Sigil-diversity tie-break (see _sigil_bit_for_item).
                 sig = (item_bitmask, priority_matches, tier_priority_match, sigil_match,
                        sigil_level, wanted_sigil_match, owned_match, melee_priority_match, melee_match,
-                       defense_priority_match, item_tier, is_crafted)
+                       defense_priority_match, item_tier, is_crafted, _sigil_bit_for_item(item))
                 prev = seen.get(sig)
                 if prev is None or item_level_num > prev[1]:
                     seen[sig] = (item, item_level_num)
@@ -7756,10 +7784,20 @@ class App(tk.Tk):
 
         memo = {}
 
-        def solve(idx, covered, crafted_n):
+        # Rescale factor for the whole step_score sum below, opening up a
+        # new lowest tier (weight 1, added outside the multiplication) for
+        # "this item's Sigil isn't used anywhere else in the build yet" -
+        # a pure last-resort tie-break, never able to override anything
+        # above it. len(exact_slots) is at most ~11, so a rescale of 16
+        # guarantees the total Sigil-diversity bonus summed across every
+        # remaining slot (at most 11, one point each) can never equal or
+        # exceed one rescaled unit of any real scoring difference above it.
+        SIGIL_DIVERSITY_RESCALE = 16
+
+        def solve(idx, covered, crafted_n, used_sigils):
             if idx == len(exact_slots):
                 return (0, [])
-            key = (idx, covered, crafted_n)
+            key = (idx, covered, crafted_n, used_sigils)
             cached = memo.get(key)
             if cached is not None:
                 return cached
@@ -7767,7 +7805,7 @@ class App(tk.Tk):
             slot = exact_slots[idx]
             lookup_slot = 'jewel' if slot.startswith('jewel') else slot
 
-            best_score, best_rest = solve(idx + 1, covered, crafted_n)
+            best_score, best_rest = solve(idx + 1, covered, crafted_n, used_sigils)
             best_choice = None
 
             for (item, item_bitmask, priority_matches, tier_priority_match, sigil_match, sigil_level,
@@ -7806,7 +7844,14 @@ class App(tk.Tk):
                 # in two slots when a spell-unrelated alternative is just as good.
                 is_redundant_spell = 1 if (not new_bases and item_bitmask) else 0
 
-                step_score = (bin(new_bases).count('1') * W_COVERAGE
+                # Sigil-diversity tie-break - see SIGIL_DIVERSITY_RESCALE
+                # above. Only ever decides between candidates already tied
+                # on everything else, including Level.
+                item_sigil_bit = _sigil_bit_for_item(item)
+                is_new_sigil = 1 if item_sigil_bit and not (item_sigil_bit & used_sigils) else 0
+
+                step_score = SIGIL_DIVERSITY_RESCALE * (
+                              bin(new_bases).count('1') * W_COVERAGE
                               + effective_priority_matches * W_PRIORITY
                               + effective_tier_priority_match * W_TIER_PRIORITY
                               + wanted_sigil_match * W_WANTED_SIGIL
@@ -7819,10 +7864,12 @@ class App(tk.Tk):
                               + effective_item_tier * W_TIER
                               + (W_JEWEL_PREFERENCE if lookup_slot == 'jewel' else 0)
                               + item_level_num * (W_LEVEL * 2)
-                              + (0 if is_redundant_spell else W_LEVEL))
+                              + (0 if is_redundant_spell else W_LEVEL)
+                              ) + is_new_sigil
 
                 rest_score, rest_path = solve(idx + 1, covered | new_bases,
-                                               crafted_n + (1 if is_crafted else 0))
+                                               crafted_n + (1 if is_crafted else 0),
+                                               used_sigils | item_sigil_bit)
                 total = step_score + rest_score
                 if total > best_score:
                     best_score = total
@@ -7835,13 +7882,14 @@ class App(tk.Tk):
             memo[key] = result
             return result
 
-        _, assignment = solve(0, initial_covered_bitmask, crafted_count)
+        _, assignment = solve(0, initial_covered_bitmask, crafted_count, used_sigils_bitmask)
 
         base_covered_by_slot = {}
         for slot, item in assignment:
             if item is None:
                 continue
             build[slot] = item
+            used_sigils_bitmask |= _sigil_bit_for_item(item)
             item_spell = (item.get('Spell') or '').lower()
             for base in base_list:
                 if base in item_spell and base not in covered_bases:
@@ -7971,7 +8019,7 @@ class App(tk.Tk):
 
             best_item = None
             best_matched_bases = []
-            best_key = (-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1)
+            best_key = (-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1)
             tied_items = []
 
             for item in items_by_slot[lookup_slot]:
@@ -8016,10 +8064,13 @@ class App(tk.Tk):
 
                 owned_match = 1 if self._is_bank_owned(item) else 0
 
+                item_sigil_bit = _sigil_bit_for_item(item)
+                is_new_sigil = 1 if item_sigil_bit and not (item_sigil_bit & used_sigils_bitmask) else 0
+
                 key = (priority_matches, len(matched_bases), tier_priority_match,
                       claw_sigil_match, claw_sigil_level, owned_match,
                       melee_priority_match, melee_match, defense_priority_match,
-                      item_tier, item_level_num)
+                      item_tier, item_level_num, is_new_sigil)
                 if key > best_key:
                     best_key = key
                     best_item = item
@@ -8030,6 +8081,7 @@ class App(tk.Tk):
 
             if best_item:
                 build[slot] = best_item
+                used_sigils_bitmask |= _sigil_bit_for_item(best_item)
                 covered_bases.update(best_matched_bases)
                 if 'crafted' in (best_item.get('Realm') or '').strip().lower():
                     crafted_count += 1

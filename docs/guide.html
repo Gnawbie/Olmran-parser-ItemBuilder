@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v5.4.2</p>
+    <p class="tagline">Full usage guide - v5.4.3</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -199,7 +199,7 @@
       <li><b>Protects</b> - the 8 elemental/mental protects (Cold/Earth/Elemental/Fire/Lightning/Mental/Shock/Water), with their own minor/normal/improved tier labels instead of i/ii/iii</li>
     </ul>
     <p>Some spells restrict which tiers are selectable (Agility/Bless cap at ii; Class Specific spells cap at ii; Disease.resist alone goes up to tier iv) - the tier dropdown greys out anything that spell can't reach. Click <b>Add to List</b> to add the current dropdown selection as a removable chip under <b>Wanted Spells</b>. Requesting the same spell at two different tiers (e.g. Dexterity i and Dexterity iii) is treated as one requirement, not two.</p>
-    <p><b>Wanted Sigils</b> - pick one or more Sigil types (Cold/Earth/Fire/Lightning/Pain/Shock/Water) and the search actively favors armor carrying them, the same way it does for Wanted Spells - useful since many armor pieces carry a Sigil but no Spell at all. Unlike spells, sigils don't need to be exclusive to one slot - multiple slots can each independently carry a wanted Sigil, and a Wanted Spell always outranks a Wanted Sigil for the same slot.</p>
+    <p><b>Wanted Sigils</b> - pick one or more Sigil types (Cold/Earth/Fire/Lightning/Pain/Shock/Water) and the search actively favors armor carrying them, the same way it does for Wanted Spells - useful since many armor pieces carry a Sigil but no Spell at all. Unlike spells, sigils don't need to be exclusive to one slot - multiple slots can each independently carry a wanted Sigil, and a Wanted Spell always outranks a Wanted Sigil for the same slot. Separately, whenever two candidates for a slot are otherwise exactly tied, the search prefers whichever one's Sigil isn't already used elsewhere in the build - a last-resort tie-break only, never able to override a genuinely better item.</p>
     <p><b>Priority Spells</b> and <b>Priority Tier</b> - Priority Spells are always actively searched for (not just preferred among items that already matched something else). Priority Tier pairs one specific spell with one specific tier, so the search targets exactly that tier for it, even over a higher tier that's available elsewhere.</p>
     <p><b>Required Items</b> - type a specific item's name under <b>Require Item:</b> and click <b>Add to Build</b>. It's looked up by exact match first, falling back to a spelling-tolerant fuzzy search that asks you to confirm the closest match if there's no exact hit. Once added it's forced into its slot on every future search, with the rest of the build calculated around it.</p>
     <p><b>Class Items</b> dropdown - lists every item excluded for being in the "Class" area, formatted as <i>Item-MOB-Spell</i> and sorted by Mob (Mob shown in bold caps). Selecting one and clicking <b>Add to Build</b> forces it into Required Items - the one deliberate way an otherwise-excluded item can still end up in a build.</p>
