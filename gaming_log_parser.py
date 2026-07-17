@@ -5,7 +5,7 @@ Parses Chat, Combat, and Loot from action and chat .log files
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from tkinter import font as tkfont
 import re, os, json, difflib
 from pathlib import Path
@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.4"
+VERSION = "5.4.5"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1570,6 +1570,11 @@ class App(tk.Tk):
                     # Saved Items' Gear Tag column - one tag per item name,
                     # shared across the Main tab and every character.
                     self._persisted_bank_gear_tags = config.get('bank_gear_tags', {})
+                    # Named, full snapshots of every Basic/Armor/Weapon
+                    # Constraints selection (Basic Constraints tab's "Save
+                    # Constraints" button) - real app, persists for every
+                    # user, not just test builds.
+                    self._persisted_constraint_sets = config.get('constraint_sets', [])
                     # Basic Constraints' current selections (Wanted Spells,
                     # Priority Spells/Tier, Wanted Sigils, Required Items,
                     # Level filters) - TEST BUILD ONLY (see self.is_test_build).
@@ -1592,6 +1597,7 @@ class App(tk.Tk):
                 self._persisted_bank_saved_order = []
                 self._persisted_bank_characters = {}
                 self._persisted_bank_gear_tags = {}
+                self._persisted_constraint_sets = []
                 self._persisted_test_basic_constraints = {}
         except Exception:
             self.last_open_dir = os.path.expanduser("~")
@@ -1604,6 +1610,7 @@ class App(tk.Tk):
             self._persisted_bank_saved_order = []
             self._persisted_bank_characters = {}
             self._persisted_bank_gear_tags = {}
+            self._persisted_constraint_sets = []
             self._persisted_test_basic_constraints = {}
 
     def _save_config(self):
@@ -1634,6 +1641,10 @@ class App(tk.Tk):
                     for char, cdata in getattr(self, 'bank_characters', {}).items()
                 },
                 'bank_gear_tags': dict(getattr(self, 'bank_gear_tags', {})),
+                'constraint_sets': [
+                    {'name': cs['name'], 'data': cs['data']}
+                    for cs in getattr(self, 'saved_constraint_sets', [])
+                ],
             }
             if getattr(self, 'is_test_build', False):
                 # Basic Constraints' current selections - TEST BUILD ONLY,
@@ -3519,6 +3530,47 @@ class App(tk.Tk):
         all_cb.grid(row=4, column=0, sticky='w', padx=4, pady=2)
         self.realm_filter_all_checkbuttons.append(all_cb)
 
+        # Saved Constraints - a named, full snapshot of every Basic/Armor/
+        # Weapon Constraints selection (not just Armor's own "Set as
+        # Default"/Weapon Types' own single default - this covers all
+        # three sub-tabs at once, and supports any number of named saves
+        # instead of just one). Sits to the right of Only Found In, in the
+        # same row (so it's also above Required Items, which is in the
+        # frame below this one) and at the far right of the screen since
+        # nothing else follows it in this row.
+        saved_constraints_block = ttk.LabelFrame(spell_and_realm_frame, text="Saved Constraints", padding=8)
+        saved_constraints_block.pack(side='left', anchor='n', padx=(20, 0))
+
+        ttk.Button(saved_constraints_block, text="\U0001F4BE Save Constraints",
+                  command=self._save_constraint_set_prompt).pack(anchor='w', pady=(0,6))
+
+        constraint_list_frame = ttk.Frame(saved_constraints_block)
+        constraint_list_frame.pack(fill='both', expand=True)
+        self.constraint_sets_listbox = tk.Listbox(constraint_list_frame, height=5, width=20,
+                                                   exportselection=False)
+        constraint_list_scroll = ttk.Scrollbar(constraint_list_frame, orient='vertical',
+                                               command=self.constraint_sets_listbox.yview)
+        self.constraint_sets_listbox.configure(yscrollcommand=constraint_list_scroll.set)
+        self.constraint_sets_listbox.pack(side='left', fill='both', expand=True)
+        constraint_list_scroll.pack(side='right', fill='y')
+
+        constraint_btn_row = ttk.Frame(saved_constraints_block)
+        constraint_btn_row.pack(fill='x', pady=(6,0))
+        ttk.Button(constraint_btn_row, text="Load", width=7,
+                  command=self._load_selected_constraint_set).pack(side='left', padx=(0,3))
+        ttk.Button(constraint_btn_row, text="Rename", width=7,
+                  command=self._rename_selected_constraint_set).pack(side='left', padx=3)
+        ttk.Button(constraint_btn_row, text="Delete", width=7,
+                  command=self._delete_selected_constraint_set).pack(side='left', padx=3)
+
+        # Materialized from config here (widgets above must exist first) -
+        # same pattern as bank_characters/bank_gear_tags further below.
+        self.saved_constraint_sets = [
+            {'name': cs.get('name', ''), 'data': dict(cs.get('data', {}))}
+            for cs in getattr(self, '_persisted_constraint_sets', [])
+        ]
+        self._refresh_constraint_sets_listbox()
+
         # Find Optimal Build/Show All Matches/Generate multiple build options
         # moved out to shared_controls_frame below (see the comment at the
         # top of this method).
@@ -5391,6 +5443,266 @@ class App(tk.Tk):
         # .set() doesn't fire the checkboxes' own command callback, so sync
         # the grey-out state explicitly after a bulk load.
         self._update_melee_priority_cap()
+
+    def _capture_all_constraints(self):
+        """Snapshots every Basic/Armor/Weapon Constraints selection into a
+        plain JSON-safe dict - see _apply_all_constraints for the reverse.
+        Deliberately broader than armor_defaults/weapon_combo_defaults
+        (Armor Constraints' own "Set as Default" and Weapon Constraints'
+        single implicit default) - this covers Only Found In and the
+        per-slot/global Defense and Sigil preferences too, and supports any
+        number of named saves (self.saved_constraint_sets) rather than one
+        slot. Used by the Basic Constraints tab's "Save Constraints" button."""
+        return {
+            # Basic Constraints
+            'wanted_spells_data': list(self.wanted_spells_data),
+            'priority_spells_data': list(self.priority_spells_data),
+            'priority_tiers_data': [list(pair) for pair in self.priority_tiers_data],
+            'wanted_sigils_data': list(self.wanted_sigils_data),
+            'required_items': [dict(item) for item in self.required_items],
+            'min_level': self.min_level_var.get(),
+            'max_level': self.max_level_var.get(),
+            'specific_level': self.specific_level_var.get(),
+            'specific_level_fallback': self.specific_level_fallback_var.get(),
+            'realm_filters': {realm: var.get() for realm, var in self.realm_filters.items()},
+            'realm_filter_all': self.realm_filter_all_var.get(),
+            # Armor Constraints
+            'armor_all_checks': {t: v.get() for t, v in self.armor_all_checks.items()},
+            'armor_checks': {
+                slot: {t: v.get() for t, v in types.items()}
+                for slot, types in self.armor_checks.items()
+            },
+            'armor_maxlvl': {slot: v.get() for slot, v in self.armor_maxlvl_vars.items()},
+            'use_defense_filter': self.use_defense_filter_var.get(),
+            'min_defense': self.min_defense_var.get(),
+            'max_defense': self.max_defense_var.get(),
+            'slot_defense': {
+                slot: {'use': ctrl['use'].get(), 'min': ctrl['min'].get(), 'max': ctrl['max'].get()}
+                for slot, ctrl in self.slot_defense_controls.items()
+            },
+            'slot_sigil': {slot: var.get() for slot, var in self.slot_sigil_vars.items()},
+            # Weapon Constraints
+            'two_handed': self.two_handed_var.get(),
+            'two_handed_style': self.two_handed_style_var.get(),
+            'two_handed_damage': self.two_handed_damage_var.get(),
+            'claw_1': self.claw_1_var.get(),
+            'claw_2': self.claw_2_var.get(),
+            'claw_1_sigil': self.claw_1_sigil_var.get(),
+            'claw_2_sigil': self.claw_2_sigil_var.get(),
+            'dual_wield_1h': self.dual_wield_1h_var.get(),
+            'dual_wield_1h_main': self.dual_wield_1h_main_var.get(),
+            'dual_wield_1h_off': self.dual_wield_1h_off_var.get(),
+            'combo_1h_shield': self.combo_1h_shield_var.get(),
+            'combo_1h_shield_style': self.combo_1h_shield_style_var.get(),
+            'combo_1h_shield_damage': self.combo_1h_shield_damage_var.get(),
+            'combo_2h_shield': self.combo_2h_shield_var.get(),
+            'combo_2h_shield_damage': self.combo_2h_shield_damage_var.get(),
+            'combo_fired_1h_shield': self.combo_fired_1h_shield_var.get(),
+            'melee_damage': self.melee_damage_var.get(),
+            'melee_timer': self.melee_timer_var.get(),
+            'melee_fumble': self.melee_fumble_var.get(),
+            'melee_accuracy': self.melee_accuracy_var.get(),
+            'melee_sigil': self.melee_sigil_var.get(),
+            'melee_damage_priority': self.melee_damage_priority_var.get(),
+            'melee_timer_priority': self.melee_timer_priority_var.get(),
+            'melee_fumble_priority': self.melee_fumble_priority_var.get(),
+            'melee_accuracy_priority': self.melee_accuracy_priority_var.get(),
+            'melee_sigil_priority': self.melee_sigil_priority_var.get(),
+            'weapon_weight_min': self.weapon_weight_min_var.get(),
+            'weapon_weight_max': self.weapon_weight_max_var.get(),
+            'weapon_weight_hard': self.weapon_weight_hard_var.get(),
+            'shield_defense': self.shield_defense_var.get(),
+            'shield_sigil': self.shield_sigil_var.get(),
+            'shield_armor_types': [t for t in ('cloth', 'leather', 'studded', 'plate')
+                                   if self.shield_armor_checks[t].get()],
+        }
+
+    def _apply_all_constraints(self, data):
+        """Reverse of _capture_all_constraints - repopulates every Basic/
+        Armor/Weapon Constraints widget from a saved snapshot. Missing keys
+        (an older save from before some field existed) fall back to that
+        field's own normal default rather than raising."""
+        # Basic Constraints
+        self.wanted_spells_data = list(data.get('wanted_spells_data', []))
+        self.priority_spells_data = list(data.get('priority_spells_data', []))
+        self.priority_tiers_data = [tuple(pair) for pair in data.get('priority_tiers_data', [])]
+        self.wanted_sigils_data = list(data.get('wanted_sigils_data', []))
+        self.required_items = [dict(item) for item in data.get('required_items', [])]
+        self.min_level_var.set(data.get('min_level', ''))
+        self.max_level_var.set(data.get('max_level', ''))
+        self.specific_level_var.set(data.get('specific_level', ''))
+        self.specific_level_fallback_var.set(data.get('specific_level_fallback', 'none'))
+        for realm, val in data.get('realm_filters', {}).items():
+            if realm in self.realm_filters:
+                self.realm_filters[realm].set(val)
+        self.realm_filter_all_var.set(data.get('realm_filter_all', False))
+        self._update_kaid_exclusivity()
+        self._update_realm_all_exclusivity()
+
+        # Armor Constraints
+        for t, val in data.get('armor_all_checks', {}).items():
+            if t in self.armor_all_checks:
+                self.armor_all_checks[t].set(val)
+        for slot, types in data.get('armor_checks', {}).items():
+            if slot in self.armor_checks:
+                for t, val in types.items():
+                    if t in self.armor_checks[slot]:
+                        self.armor_checks[slot][t].set(val)
+        for slot, val in data.get('armor_maxlvl', {}).items():
+            if slot in self.armor_maxlvl_vars:
+                self.armor_maxlvl_vars[slot].set(val)
+        self._update_armor_maxlvl_cap()
+        self.use_defense_filter_var.set(data.get('use_defense_filter', False))
+        self.min_defense_var.set(data.get('min_defense', 'normal'))
+        self.max_defense_var.set(data.get('max_defense', DEFENSE_LEVELS[-1]))
+        for slot, ctrl_data in data.get('slot_defense', {}).items():
+            if slot in self.slot_defense_controls:
+                self.slot_defense_controls[slot]['use'].set(ctrl_data.get('use', False))
+                self.slot_defense_controls[slot]['min'].set(ctrl_data.get('min', 'normal'))
+                self.slot_defense_controls[slot]['max'].set(ctrl_data.get('max', DEFENSE_LEVELS[-1]))
+        for slot, val in data.get('slot_sigil', {}).items():
+            if slot in self.slot_sigil_vars:
+                self.slot_sigil_vars[slot].set(val)
+
+        # Weapon Constraints
+        self.two_handed_var.set(data.get('two_handed', False))
+        self.two_handed_style_var.set(data.get('two_handed_style', 'Melee'))
+        self.two_handed_damage_var.set(data.get('two_handed_damage', 'Any'))
+        self.claw_1_var.set(data.get('claw_1', False))
+        self.claw_2_var.set(data.get('claw_2', False))
+        self.claw_1_sigil_var.set(data.get('claw_1_sigil', 'Any'))
+        self.claw_2_sigil_var.set(data.get('claw_2_sigil', 'Any'))
+        self.dual_wield_1h_var.set(data.get('dual_wield_1h', False))
+        self.dual_wield_1h_main_var.set(data.get('dual_wield_1h_main', 'Any'))
+        self.dual_wield_1h_off_var.set(data.get('dual_wield_1h_off', 'Any'))
+        self.combo_1h_shield_var.set(data.get('combo_1h_shield', False))
+        self.combo_1h_shield_style_var.set(data.get('combo_1h_shield_style', 'Melee'))
+        self.combo_1h_shield_damage_var.set(data.get('combo_1h_shield_damage', 'Any'))
+        self.combo_2h_shield_var.set(data.get('combo_2h_shield', False))
+        self.combo_2h_shield_damage_var.set(data.get('combo_2h_shield_damage', 'Any'))
+        self.combo_fired_1h_shield_var.set(data.get('combo_fired_1h_shield', False))
+        self.melee_damage_var.set(data.get('melee_damage', 'Any'))
+        self.melee_timer_var.set(data.get('melee_timer', 'Any'))
+        self.melee_fumble_var.set(data.get('melee_fumble', 'Any'))
+        self.melee_accuracy_var.set(data.get('melee_accuracy', 'Any'))
+        self.melee_sigil_var.set(data.get('melee_sigil', 'Any'))
+        self.melee_damage_priority_var.set(data.get('melee_damage_priority', False))
+        self.melee_timer_priority_var.set(data.get('melee_timer_priority', False))
+        self.melee_fumble_priority_var.set(data.get('melee_fumble_priority', False))
+        self.melee_accuracy_priority_var.set(data.get('melee_accuracy_priority', False))
+        self.melee_sigil_priority_var.set(data.get('melee_sigil_priority', False))
+        self.weapon_weight_min_var.set(data.get('weapon_weight_min', ''))
+        self.weapon_weight_max_var.set(data.get('weapon_weight_max', ''))
+        self.weapon_weight_hard_var.set(data.get('weapon_weight_hard', False))
+        self.shield_defense_var.set(data.get('shield_defense', 'Any'))
+        self.shield_sigil_var.set(data.get('shield_sigil', 'Any'))
+        shield_armor_types = data.get('shield_armor_types', [])
+        for armor_type in ('cloth', 'leather', 'studded', 'plate'):
+            self.shield_armor_checks[armor_type].set(armor_type in shield_armor_types)
+        self._update_two_handed_damage_state()
+        self._update_melee_priority_cap()
+
+        # .set() doesn't touch the chip-rendering Text widgets - redraw
+        # every chip area explicitly, same as _restore_test_basic_constraints.
+        self._render_spell_chips()
+        self._render_priority_spell_chips()
+        self._render_priority_tier_chips()
+        self._render_wanted_sigil_chips()
+        self._render_required_item_chips()
+
+    def _refresh_constraint_sets_listbox(self):
+        """Repopulates the Saved Constraints listbox from self.
+        saved_constraint_sets, preserving the current selection by name
+        where possible (e.g. right after a rename)."""
+        selected_name = None
+        sel = self.constraint_sets_listbox.curselection()
+        if sel:
+            selected_name = self.constraint_sets_listbox.get(sel[0])
+        self.constraint_sets_listbox.delete(0, tk.END)
+        for cs in self.saved_constraint_sets:
+            self.constraint_sets_listbox.insert(tk.END, cs['name'])
+        if selected_name is not None:
+            for i, cs in enumerate(self.saved_constraint_sets):
+                if cs['name'] == selected_name:
+                    self.constraint_sets_listbox.selection_set(i)
+                    break
+
+    def _get_selected_constraint_set(self):
+        """Returns (index, dict) for the Saved Constraints listbox's current
+        selection, or (None, None) if nothing's selected."""
+        sel = self.constraint_sets_listbox.curselection()
+        if not sel:
+            messagebox.showinfo("No Selection", "Select a saved constraint set from the list first.")
+            return None, None
+        index = sel[0]
+        return index, self.saved_constraint_sets[index]
+
+    def _save_constraint_set_prompt(self):
+        """Basic Constraints tab's "Save Constraints" button - asks for a
+        name, then snapshots every Basic/Armor/Weapon Constraints selection
+        under it (see _capture_all_constraints). Saving under a name that
+        already exists overwrites that entry in place instead of adding a
+        duplicate, after confirming with the user."""
+        name = simpledialog.askstring("Save Constraints", "Save Name:", parent=self)
+        if name is None:
+            return
+        name = name.strip()
+        if not name:
+            return
+        data = self._capture_all_constraints()
+        for i, cs in enumerate(self.saved_constraint_sets):
+            if cs['name'] == name:
+                if not messagebox.askyesno("Overwrite?",
+                        f'A saved constraint set named "{name}" already exists. Overwrite it?'):
+                    return
+                self.saved_constraint_sets[i] = {'name': name, 'data': data}
+                break
+        else:
+            self.saved_constraint_sets.append({'name': name, 'data': data})
+        self._refresh_constraint_sets_listbox()
+        self._save_config()
+
+    def _load_selected_constraint_set(self):
+        """Loads the selected Saved Constraints entry, replacing every
+        current Basic/Armor/Weapon Constraints selection with the saved
+        snapshot. Requires an explicit Load click (not just selecting the
+        entry) since this overwrites whatever's currently set up with no
+        undo."""
+        _, cs = self._get_selected_constraint_set()
+        if cs is None:
+            return
+        self._apply_all_constraints(cs['data'])
+
+    def _rename_selected_constraint_set(self):
+        """Renames the selected Saved Constraints entry in place."""
+        index, cs = self._get_selected_constraint_set()
+        if cs is None:
+            return
+        new_name = simpledialog.askstring("Rename", "New name:", initialvalue=cs['name'], parent=self)
+        if new_name is None:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == cs['name']:
+            return
+        for i, other in enumerate(self.saved_constraint_sets):
+            if i != index and other['name'] == new_name:
+                messagebox.showwarning("Name Taken",
+                    f'A saved constraint set named "{new_name}" already exists.')
+                return
+        self.saved_constraint_sets[index]['name'] = new_name
+        self._refresh_constraint_sets_listbox()
+        self._save_config()
+
+    def _delete_selected_constraint_set(self):
+        """Deletes the selected Saved Constraints entry after confirming."""
+        index, cs = self._get_selected_constraint_set()
+        if cs is None:
+            return
+        if not messagebox.askyesno("Delete Constraint Set", f'Delete "{cs["name"]}"?'):
+            return
+        del self.saved_constraint_sets[index]
+        self._refresh_constraint_sets_listbox()
+        self._save_config()
 
     def _get_export_data(self):
         """Collect the currently displayed results as (headers, rows), with

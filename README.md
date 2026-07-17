@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.4 (Current)
+### v5.4.5 (Current)
+- Basic Constraints has a new "Save Constraints" button (to the right of Only Found In, above Required Items) - names and saves a full snapshot of every current Basic, Armor, and Weapon Constraints selection at once, listed below it with Load/Rename/Delete buttons. Selecting an entry only highlights it; Load applies it explicitly so a stray click can't overwrite what you're still working on. Persists across closing and reopening the program
+
+### v5.4.4
 - Empty-slot right-click → "Rebuild (Full Database, Prefer Owned)" now actually fills gaps like Body when doing so needs a new item but doesn't gain any new Wanted Spell coverage - previously an armor/jewel slot could only ever be filled by an item that contributed genuinely new coverage, so a slot only fillable via a "redundant" pick stayed empty no matter how many new items the cap allowed. Also fixed a bug this exposed where the two Jewel slots could get assigned the exact same physical item
 - When a cap (1/2/3 new items) has spare budget left over after coverage is already maxed out, it's no longer wasted - extra variants labeled "N new items (alt)" now show otherwise-equally-good unowned items swapped into owned slots one at a time, so there's still something new to compare even once nothing is objectively better to find
 
