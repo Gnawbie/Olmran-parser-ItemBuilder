@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.3"
+VERSION = "5.4.4"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -5191,11 +5191,17 @@ class App(tk.Tk):
         return rows
 
     def _switch_build_variant(self, event=None):
-        """Move the selected build variant to the top of the stacked list"""
+        """Move the selected build variant to the top of the stacked list.
+        Resolves the selection by its position in the combobox's own
+        values list rather than parsing the label text - robust to any
+        label format, not just "Build N" (see self.build_variant_labels /
+        _generate_capped_unowned_variants, which uses descriptive labels
+        like "0 new items" instead)."""
         label = self.build_variant_var.get()
+        current_values = list(self.build_variant_combo['values'])
         try:
-            idx = int(label.split()[-1]) - 1
-        except (ValueError, IndexError):
+            idx = current_values.index(label)
+        except ValueError:
             idx = 0
         if not (0 <= idx < len(self.build_variants)):
             return
@@ -5203,7 +5209,16 @@ class App(tk.Tk):
         selected = self.build_variants.pop(idx)
         self.build_variants.insert(0, selected)
 
-        variant_labels = [f"Build {i + 1}" for i in range(len(self.build_variants))]
+        custom_labels = getattr(self, 'build_variant_labels', None)
+        if custom_labels is not None and len(custom_labels) == len(current_values):
+            reordered_labels = list(custom_labels)
+            selected_label = reordered_labels.pop(idx)
+            reordered_labels.insert(0, selected_label)
+            self.build_variant_labels = reordered_labels
+            variant_labels = reordered_labels
+        else:
+            variant_labels = [f"Build {i + 1}" for i in range(len(self.build_variants))]
+
         self.build_variant_combo['values'] = variant_labels
         self.build_variant_var.set(variant_labels[0])
 
@@ -6011,12 +6026,18 @@ class App(tk.Tk):
         position, rather than trying to parse the displayed Slot/Item text
         (which can't tell jewel_1 from jewel_2, among other ambiguities).
         A filled slot offers "Remove". An empty ("No suitable item
-        found"/etc.) slot offers "Search Full Database for This Slot"
-        (_fill_empty_slot_from_full_database - fills just the clicked slot,
-        via _find_best_item_for_slot against self.items_by_slot, leaving
-        every other slot exactly as it is) and "Rebuild (Saved Items
-        First)" (_rebuild_saved_items_first - the same full-build rebuild
-        the header button uses, still honoring self.excluded_item_keys)."""
+        found"/etc.) slot offers three actions: "Search Full Database for
+        This Slot" (_fill_empty_slot_from_full_database - fills just the
+        clicked slot, via _find_best_item_for_slot against
+        self.items_by_slot, leaving every other slot exactly as it is),
+        "Rebuild (Saved Items First)" (_rebuild_saved_items_first - the
+        same full-build rebuild the header button uses, still honoring
+        self.excluded_item_keys), and "Rebuild (Full Database, Prefer
+        Owned)" (_rebuild_full_database_prefer_owned - a single unrestricted
+        search of the whole database that still favors owned items
+        wherever it can without sacrificing coverage, for when Saved Items
+        alone leaves too many gaps and Saved Items First's fixed two-pass
+        split isn't finding the fewest possible "need to acquire" slots)."""
         if self.results_display_mode.get() != 'optimal' or not self.build_variants:
             return
         iid = self.search_results_tv.identify_row(event.y)
@@ -6041,6 +6062,8 @@ class App(tk.Tk):
             menu.add_command(label="Search Full Database for This Slot",
                              command=lambda: self._fill_empty_slot_from_full_database(slot))
             menu.add_command(label="Rebuild (Saved Items First)", command=self._rebuild_saved_items_first)
+            menu.add_command(label="Rebuild (Full Database, Prefer Owned)",
+                             command=self._rebuild_full_database_prefer_owned)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -6171,6 +6194,186 @@ class App(tk.Tk):
         button exists to apply, and a removed item needs to stay excluded
         across as many Remove/Rebuild cycles as the user wants."""
         self._find_optimal_build()
+
+    def _rebuild_full_database_prefer_owned(self):
+        """Empty-slot right-click action "Rebuild (Full Database, Prefer
+        Owned)" - unlike Rebuild (Saved Items First)'s fixed two passes
+        (maximize coverage from Saved Items alone, THEN fill whatever's
+        left from the full database with no regard for tier/quality), this
+        runs a single unrestricted search of the whole database with owned
+        items scored favorably (the same W_BANK_OWNED bonus "Prioritize
+        Saved Items"/"Prioritize items I own" already use elsewhere) - so
+        the search can weigh coverage, tier, and ownership together in one
+        pass instead of two independent ones. In practice this tends to
+        naturally end up needing to acquire fewer new items than the
+        two-pass approach, since it isn't locked into whatever the
+        Saved-Items-only pass happened to pick before ever looking at the
+        full database - but it can never sacrifice actual Wanted Spell
+        coverage just to reuse more owned items, since W_BANK_OWNED sits
+        below Coverage/Priority/Priority Tier/Wanted Sigil in the scoring
+        order (see _find_optimal_build).
+
+        Pooled from every saved item anywhere (the legacy pool plus every
+        character, Lockers' Kaid items excluded, an excluded Locker's gear
+        left out entirely) - same pool _rebuild_saved_items_first uses,
+        since this action has no "which character" context of its own
+        either. Still honors self.excluded_item_keys, same as the other
+        two Rebuild actions.
+
+        Rather than a single search, generates one build variant per
+        unowned-item cap (0 through 3 - see _generate_capped_unowned_variants)
+        so "Generate multiple build options" stacks meaningfully different
+        choices (fewer items to acquire vs. a possibly better build) instead
+        of near-identical tied-alternate swaps."""
+        non_locker_names = set(self.bank_saved_order)
+        locker_names = set()
+        for cdata in self.bank_characters.values():
+            if cdata.get('is_locker'):
+                if not cdata.get('exclude_from_others'):
+                    locker_names.update(cdata['order'])
+            else:
+                non_locker_names.update(cdata['order'])
+        kaid_names = {
+            (item.get('Item') or '').strip().lower()
+            for item in self.master_data
+            if 'kaid' in (item.get('Realm') or '').strip().lower()
+        }
+        effective_names = non_locker_names | (locker_names - kaid_names)
+
+        if not effective_names:
+            messagebox.showwarning("No Saved Items",
+                "The Saved Items list is empty - use the Import tab first.")
+            return
+
+        owned_keys = {(name, None, None) for name in effective_names}
+        self._bank_owned_keys = owned_keys
+        try:
+            self._generate_capped_unowned_variants()
+        finally:
+            self._bank_owned_keys = None
+
+    def _generate_capped_unowned_variants(self):
+        """Runs the search once per unowned-item cap (0, 1, 2, 3), always
+        all four, never stopping early just because a tighter cap already
+        reached full Wanted Spell coverage - a looser cap can still help
+        in ways coverage alone doesn't capture (an extra Wanted Sigil, a
+        Priority Spell/Tier match, simply filling a slot nothing owned can
+        reach at all, or freeing up a spell an owned item elsewhere already
+        claimed so a new item can put it to use instead), so it's still
+        worth trying every cap and letting the results speak for
+        themselves. Note this can't ever "upgrade" a slot's plain quality
+        (Level/Tier) once something already covers it, owned or not -
+        W_BANK_OWNED always outranks Level/Tier for otherwise-equal
+        coverage, by design - but an empty slot with nothing owned to fill
+        it can still take a no-new-coverage item once the cap allows it
+        (see fallback_eligible_slots in _find_optimal_build), so a looser
+        cap keeps being worth checking even when coverage alone looks
+        maxed out. When a cap has spare unowned-item budget left over after
+        coverage (e.g. cap=2 only needed 1 new item to max out coverage),
+        that spare budget isn't wasted either - see the "Variety alternates"
+        block below, which swaps in an otherwise-equally-good unowned item
+        for one owned slot at a time (labeled "N new items (alt)"), purely
+        so there's something to look at even when nothing is objectively
+        better to find.
+
+        Collects each distinct resulting build as its own entry in
+        self.build_variants with a descriptive label ("0 new items",
+        "1 new item", ...) instead of the usual "Build N"
+        (self.build_variant_labels - see _switch_build_variant) - lets
+        the user directly compare "use nothing new," "use at most 1 new
+        item," etc. side by side. Identical results (a looser cap that
+        didn't end up changing anything) are skipped rather than shown
+        twice - keyed by (slot, item) pairs, not just the item set, so
+        two builds using the same items in different slots still count
+        as distinct.
+
+        Only ever called by _rebuild_full_database_prefer_owned, with
+        self._bank_owned_keys already set for the duration - self.
+        _max_unowned_items is cleared again in a finally block so every
+        other search stays uncapped, exactly as before this existed."""
+        variants = []
+        labels = []
+        seen_signatures = set()
+        all_attempted_slots = set()
+
+        self._suppress_results_redraw = True
+        try:
+            for cap in (0, 1, 2, 3):
+                self._max_unowned_items = cap
+                self._find_optimal_build()
+
+                build_copy = dict(self.optimal_build)
+                signature = frozenset(
+                    (slot, _bank_item_key(item)) for slot, item in build_copy.items())
+                actual_unowned = sum(1 for item in build_copy.values() if not self._is_bank_owned(item))
+                all_attempted_slots |= getattr(self, 'attempted_slots', set())
+
+                if signature not in seen_signatures:
+                    seen_signatures.add(signature)
+                    variants.append(build_copy)
+                    item_word = "item" if actual_unowned == 1 else "items"
+                    labels.append(f"{actual_unowned} new {item_word}")
+
+                # Variety alternates: spare unowned-item budget this cap
+                # didn't need for coverage isn't just wasted - swap in an
+                # otherwise-equally-good unowned item (self.
+                # slot_unowned_alternates, freshly populated by the
+                # _find_optimal_build call just above - see there for how
+                # "equally good" is defined) for one owned slot at a time,
+                # so "up to N new items" still offers something to look at
+                # even once coverage alone stops improving with a looser
+                # cap. One slot swapped per extra variant (matching how
+                # _find_optimal_build's own "Generate multiple build
+                # options" does it), never spending more than this cap's
+                # own spare budget.
+                spare_budget = cap - actual_unowned
+                if spare_budget > 0:
+                    for slot, alts in self.slot_unowned_alternates.items():
+                        if len(variants) >= MAX_BUILD_VARIANTS:
+                            break
+                        current_item = build_copy.get(slot)
+                        if current_item is None or not self._is_bank_owned(current_item):
+                            continue
+                        for alt in alts:
+                            if len(variants) >= MAX_BUILD_VARIANTS:
+                                break
+                            variant = dict(build_copy)
+                            variant[slot] = alt
+                            variant_signature = frozenset(
+                                (s, _bank_item_key(it)) for s, it in variant.items())
+                            if variant_signature in seen_signatures:
+                                continue
+                            seen_signatures.add(variant_signature)
+                            variants.append(variant)
+                            new_unowned = actual_unowned + 1
+                            item_word = "item" if new_unowned == 1 else "items"
+                            labels.append(f"{new_unowned} new {item_word} (alt)")
+                if len(variants) >= MAX_BUILD_VARIANTS:
+                    break
+        finally:
+            self._max_unowned_items = None
+            self._suppress_results_redraw = False
+
+        if not variants:
+            return
+
+        self.build_variants = variants
+        self.build_variant_labels = labels
+        self.optimal_build = variants[0]
+        self.attempted_slots = all_attempted_slots
+
+        self.build_variant_combo['values'] = labels
+        self.build_variant_var.set(labels[0])
+        self.build_variant_combo.config(state='readonly' if len(labels) > 1 else 'disabled')
+
+        self.results_display_mode.set('optimal')
+        self.notebook.select(self.tab_results)
+        self.last_optimal_results = self._all_variants_rows()
+        self.search_results_tv.delete(*self.search_results_tv.get_children())
+        for row in self.last_optimal_results:
+            self.search_results_tv.insert('', 'end', values=row)
+        self._autosize_results_columns()
+        self._update_rebuild_buttons_visibility()
 
     def _rebuild_saved_items_first(self):
         """Results tab "Rebuild (Saved Items First)" button - the PvP-gear
@@ -7530,6 +7733,16 @@ class App(tk.Tk):
         build = {}
         covered_bases = set()
         self.slot_alternates = {}
+        # Same idea as slot_alternates but ignoring ownership - populated
+        # alongside it in the post-hoc alternates pass below. slot_alternates
+        # requires the exact same owned_match (needed so "Generate multiple
+        # build options" never swaps an owned item for an unowned one by
+        # accident); this instead answers "what unowned items are otherwise
+        # just as good as whatever's in this slot", regardless of what's
+        # currently there - used by _generate_capped_unowned_variants to
+        # offer purely-cosmetic swaps for variety once a cap has spare
+        # unowned-item budget left over that coverage alone didn't need.
+        self.slot_unowned_alternates = {}
 
         # Force any Required Items directly into the build first - they aren't
         # subject to the other filters (armor/weapon/level/realm), since the
@@ -7685,6 +7898,32 @@ class App(tk.Tk):
         W_PRIORITY = 10**48
         W_COVERAGE = 10**54
 
+        # Optional hard cap on how many non-owned ("need to acquire") items
+        # the whole build may use, set only by _generate_capped_unowned_
+        # variants (via self._max_unowned_items) when generating its own
+        # build-variant set for Rebuild (Full Database, Prefer Owned) - None
+        # (the default, every other search) means no cap at all, identical
+        # to prior behavior. owned_match already reflects self._bank_owned_keys
+        # (see _is_bank_owned), so this only ever does something meaningful
+        # during a Bank Build search where that's actually set. Computed here
+        # (rather than just below, where it's used again) because it also
+        # gates the zero-coverage fallback immediately below.
+        max_unowned_items = getattr(self, '_max_unowned_items', None)
+
+        # Zero-coverage fallback normally only applies to weapon/weapon_off/
+        # shield (see below) - an armor slot with nothing left to contribute
+        # is simply left empty. But when a cap search is running, the whole
+        # point is "how few new items can fill in the gaps", so an armor slot
+        # whose only reachable spell is already claimed by another owned slot
+        # should still be fillable (scored on level/sigil/defense alone, no
+        # spell/tier credit - same as the existing weapon/shield fallback)
+        # rather than staying empty forever regardless of how many new items
+        # are allowed.
+        fallback_eligible_slots = {'weapon', 'weapon_off', 'shield'}
+        if max_unowned_items is not None:
+            fallback_eligible_slots |= {
+                ('jewel' if s.startswith('jewel') else s) for s in exact_slots}
+
         # Pre-score every item once per lookup slot, collapsing items that are
         # identical in everything the search cares about (bases matched,
         # priority/tier-priority/defense-priority hits, tier, crafted-ness)
@@ -7741,7 +7980,7 @@ class App(tk.Tk):
                 # or an armor item that at least carries a Wanted Sigil -
                 # those still need a fallback candidate so the slot doesn't
                 # end up empty just because nothing on it grants a spell.
-                if not item_bitmask and not wanted_sigil_match and lookup_slot not in ('weapon', 'weapon_off', 'shield'):
+                if not item_bitmask and not wanted_sigil_match and lookup_slot not in fallback_eligible_slots:
                     continue
 
                 priority_matches = sum(1 for p in priority_spells if p in item_spell)
@@ -7794,32 +8033,55 @@ class App(tk.Tk):
         # exceed one rescaled unit of any real scoring difference above it.
         SIGIL_DIVERSITY_RESCALE = 16
 
-        def solve(idx, covered, crafted_n, used_sigils):
+        def solve(idx, covered, crafted_n, used_sigils, unowned_used, prev_jewel_item=None):
             if idx == len(exact_slots):
                 return (0, [])
-            key = (idx, covered, crafted_n, used_sigils)
+            slot = exact_slots[idx]
+            lookup_slot = 'jewel' if slot.startswith('jewel') else slot
+
+            # jewel_1 and jewel_2 are the only two slots in exact_slots that
+            # share one candidate pool (both lookup_slot == 'jewel') - every
+            # other slot's own candidates come from its own item Slot, so the
+            # same physical item can never be a candidate for two different
+            # slots there. Normally that made jewel_1/jewel_2 safe too (each
+            # slot could only take an item that contributed genuinely NEW
+            # coverage, and one item can't newly cover the same base twice),
+            # but the fallback-fill above (enabled for every slot during a
+            # capped-unowned-item search) can now let BOTH jewel slots pick
+            # a no-new-coverage item - with nothing else stopping it, that
+            # could be the exact same item in both slots. prev_jewel_item
+            # carries jewel_1's pick forward one step so jewel_2 can exclude
+            # it; every other slot just passes None through unchanged, so
+            # this adds one cheap extra memo dimension only at that single
+            # transition instead of tracking full item history everywhere.
+            memo_jewel_key = id(prev_jewel_item) if slot == 'jewel_2' else None
+            key = (idx, covered, crafted_n, used_sigils, unowned_used, memo_jewel_key)
             cached = memo.get(key)
             if cached is not None:
                 return cached
 
-            slot = exact_slots[idx]
-            lookup_slot = 'jewel' if slot.startswith('jewel') else slot
-
-            best_score, best_rest = solve(idx + 1, covered, crafted_n, used_sigils)
+            best_score, best_rest = solve(idx + 1, covered, crafted_n, used_sigils, unowned_used)
             best_choice = None
 
             for (item, item_bitmask, priority_matches, tier_priority_match, sigil_match, sigil_level,
                  wanted_sigil_match, owned_match, melee_priority_match, melee_match, defense_priority_match,
                  item_tier, item_level_num, is_crafted) in candidates_by_slot.get(lookup_slot, []):
+                if slot == 'jewel_2' and prev_jewel_item is not None and item is prev_jewel_item:
+                    continue
                 new_bases = item_bitmask & ~covered
                 # Same fallback as above: a combo-mandated weapon/shield slot
                 # can still take a zero-new-coverage item (any positive score
                 # from level/tier/etc. beats leaving the slot empty), and so
-                # can an armor item carrying a Wanted Sigil - every other
+                # can an armor item carrying a Wanted Sigil, or (during a
+                # capped-unowned-item search) any slot at all - every other
                 # slot still requires contributing something new.
-                if not new_bases and not wanted_sigil_match and lookup_slot not in ('weapon', 'weapon_off', 'shield'):
+                if not new_bases and not wanted_sigil_match and lookup_slot not in fallback_eligible_slots:
                     continue
                 if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
+                    continue
+
+                new_unowned_used = unowned_used + (0 if owned_match else 1)
+                if max_unowned_items is not None and new_unowned_used > max_unowned_items:
                     continue
 
                 # An item whose spell is already fully covered elsewhere (new_bases
@@ -7869,7 +8131,8 @@ class App(tk.Tk):
 
                 rest_score, rest_path = solve(idx + 1, covered | new_bases,
                                                crafted_n + (1 if is_crafted else 0),
-                                               used_sigils | item_sigil_bit)
+                                               used_sigils | item_sigil_bit, new_unowned_used,
+                                               item if slot == 'jewel_1' else None)
                 total = step_score + rest_score
                 if total > best_score:
                     best_score = total
@@ -7882,7 +8145,7 @@ class App(tk.Tk):
             memo[key] = result
             return result
 
-        _, assignment = solve(0, initial_covered_bitmask, crafted_count, used_sigils_bitmask)
+        _, assignment = solve(0, initial_covered_bitmask, crafted_count, used_sigils_bitmask, 0)
 
         base_covered_by_slot = {}
         for slot, item in assignment:
@@ -7940,8 +8203,13 @@ class App(tk.Tk):
             chosen_key = (priority_matches, tier_priority_match, item_sigil_match, item_sigil_level,
                           item_wanted_sigil_match, item_owned_match, item_melee_priority_match, item_melee_match,
                           item_defense_priority_match, item_tier, item_level_num)
+            # Same fields, ownership dropped - see slot_unowned_alternates above.
+            chosen_key_any_owner = (priority_matches, tier_priority_match, item_sigil_match, item_sigil_level,
+                                     item_wanted_sigil_match, item_melee_priority_match, item_melee_match,
+                                     item_defense_priority_match, item_tier, item_level_num)
 
             alternates = []
+            unowned_alternates = []
             for other in items_by_slot.get(lookup_slot, []):
                 if other is item:
                     continue
@@ -7984,13 +8252,22 @@ class App(tk.Tk):
                 other_key = (other_priority_matches, other_tier_priority_match, other_sigil_match, other_sigil_level,
                             other_wanted_sigil_match, other_owned_match, other_melee_priority_match, other_melee_match,
                             other_defense_priority_match, other_tier, other_level_num)
-                if other_key != chosen_key:
+                if other_key == chosen_key:
+                    alternates.append(other)
                     continue
 
-                alternates.append(other)
+                if other_owned_match:
+                    continue
+                other_key_any_owner = (other_priority_matches, other_tier_priority_match, other_sigil_match,
+                                        other_sigil_level, other_wanted_sigil_match, other_melee_priority_match,
+                                        other_melee_match, other_defense_priority_match, other_tier, other_level_num)
+                if other_key_any_owner == chosen_key_any_owner:
+                    unowned_alternates.append(other)
 
             if alternates:
                 self.slot_alternates[slot] = alternates
+            if unowned_alternates:
+                self.slot_unowned_alternates[slot] = unowned_alternates
 
         # Claw slots: unchanged greedy fill (see comment above exact_slots) -
         # duplicate spell coverage across both hands is fine here, so they're
@@ -8095,6 +8372,10 @@ class App(tk.Tk):
         # testers compare a few equally-good builds instead of just one.
         self.optimal_build = dict(build)
         self.build_variants = [dict(build)]
+        # Cleared here (not just where it's set) so a stale custom label set
+        # from a previous _generate_capped_unowned_variants run never
+        # survives into an unrelated later search - see _switch_build_variant.
+        self.build_variant_labels = None
         if self.generate_multi_builds_var.get():
             for slot, alternates in self.slot_alternates.items():
                 for alt in alternates:

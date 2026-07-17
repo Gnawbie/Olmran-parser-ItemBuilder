@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.3 (Current)
+### v5.4.4 (Current)
+- Empty-slot right-click → "Rebuild (Full Database, Prefer Owned)" now actually fills gaps like Body when doing so needs a new item but doesn't gain any new Wanted Spell coverage - previously an armor/jewel slot could only ever be filled by an item that contributed genuinely new coverage, so a slot only fillable via a "redundant" pick stayed empty no matter how many new items the cap allowed. Also fixed a bug this exposed where the two Jewel slots could get assigned the exact same physical item
+- When a cap (1/2/3 new items) has spare budget left over after coverage is already maxed out, it's no longer wasted - extra variants labeled "N new items (alt)" now show otherwise-equally-good unowned items swapped into owned slots one at a time, so there's still something new to compare even once nothing is objectively better to find
+
+### v5.4.3
 - The build search now prefers an item whose Sigil isn't already used elsewhere in the build, as a pure last-resort tie-break - it only ever decides between candidates already tied on everything else (coverage, Priority Spells/Tier, Sigil match, Melee stats, Defense, item Tier, and Level), so it can never override a genuinely better item. Applies to the main search, Max Lvl priority slots, and Claw slots. Also fixed a related bug where two otherwise-identical items differing only by Sigil could get silently collapsed into one candidate before the search even ran
 
 ### v5.4.2
