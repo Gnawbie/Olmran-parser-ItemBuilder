@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.5 (Current)
+### v5.4.6 (Current)
+- Fixed a bug in "Rebuild (Full Database, Prefer Owned)" (v5.4.4's fallback-fill for empty armor/jewel slots) where a slot could get filled with an item whose spell duplicated a base another slot already covered (e.g. Evade.Enhance i on one slot and Evade.Enhance ii on another) - the two tiers don't stack and shouldn't both appear in the same build. That fallback now only fills a slot with an item carrying no wanted spell at all (or only a Wanted Sigil); it can no longer pick one whose spell is merely redundant with something else already in the build
+
+### v5.4.5
 - Basic Constraints has a new "Save Constraints" button (to the right of Only Found In, above Required Items) - names and saves a full snapshot of every current Basic, Armor, and Weapon Constraints selection at once, listed below it with Load/Rename/Delete buttons. Selecting an entry only highlights it; Load applies it explicitly so a stray click can't overwrite what you're still working on. Persists across closing and reopening the program
 
 ### v5.4.4

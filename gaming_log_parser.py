@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.5"
+VERSION = "5.4.6"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -8388,6 +8388,21 @@ class App(tk.Tk):
                 # capped-unowned-item search) any slot at all - every other
                 # slot still requires contributing something new.
                 if not new_bases and not wanted_sigil_match and lookup_slot not in fallback_eligible_slots:
+                    continue
+                # The capped-search armor/jewel fallback above is only meant
+                # to fill a slot nothing else can reach at all (item_bitmask
+                # == 0 - no wanted spell present whatsoever), never to let a
+                # slot carry a spell whose base is already covered elsewhere
+                # (new_bases == 0 but item_bitmask != 0 - "redundant", see
+                # is_redundant_spell below). Requesting the same spell at two
+                # tiers is one requirement, not two, and the two tiers don't
+                # stack in-game either - so two slots both carrying evade.
+                # enhance (say, .i and .ii) is a real duplicate, not a minor
+                # cosmetic one, even though weapon/shield/weapon_off keep the
+                # older, looser exemption (a combo mandates one of those be
+                # filled regardless of what it carries).
+                if (not new_bases and not wanted_sigil_match and item_bitmask
+                        and lookup_slot not in ('weapon', 'weapon_off', 'shield')):
                     continue
                 if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
                     continue
