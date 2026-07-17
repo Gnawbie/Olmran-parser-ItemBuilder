@@ -1762,10 +1762,13 @@ class App(tk.Tk):
         style.theme_use('clam')
         style.configure('TNotebook.Tab', font=('Arial', 10, 'bold'), padding=[12, 6])
         style.configure('Accent.TButton', font=('Arial', 10, 'bold'))
-        # Thin black border around each Weapon Types/Combo's row (Weapon
+        # Thin border around each Weapon Types/Combo's row (Weapon
         # Constraints tab) - purely visual, groups each combo's checkbox and
-        # its own dropdowns together at a glance.
-        style.configure('WeaponRow.TFrame', borderwidth=1, relief='solid', bordercolor='#999999')
+        # its own dropdowns together at a glance. Two shades, alternated row
+        # by row (see each row's style= below) so adjacent rows are easier
+        # to tell apart even though every row is otherwise the same height.
+        style.configure('WeaponRow.TFrame', borderwidth=1, relief='solid', bordercolor='#888888')
+        style.configure('WeaponRowAlt.TFrame', borderwidth=1, relief='solid', bordercolor='#bbbbbb')
 
         self._build_scrollable_root()
 
@@ -3003,7 +3006,7 @@ class App(tk.Tk):
         ttk.Combobox(dual_wield_frame, textvariable=self.dual_wield_1h_off_var,
                     values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
 
-        combo_1h_shield_frame = ttk.Frame(weapon_box, style='WeaponRow.TFrame', padding=(6,4))
+        combo_1h_shield_frame = ttk.Frame(weapon_box, style='WeaponRowAlt.TFrame', padding=(6,4))
         combo_1h_shield_frame.pack(fill='x', pady=2)
         self.combo_1h_shield_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(combo_1h_shield_frame, text="1h/Shield",
@@ -3035,7 +3038,7 @@ class App(tk.Tk):
         # more combos get their own Style dropdown like this one. Fired
         # ("fired 2h" in the item list) has no damage-type sub-variant, so
         # its Damage Type dropdown greys out when Fired is selected.
-        two_handed_frame = ttk.Frame(weapon_box, style='WeaponRow.TFrame', padding=(6,4))
+        two_handed_frame = ttk.Frame(weapon_box, style='WeaponRowAlt.TFrame', padding=(6,4))
         two_handed_frame.pack(fill='x', pady=2)
         self.two_handed_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(two_handed_frame, text="Two-Handed",
@@ -3080,7 +3083,7 @@ class App(tk.Tk):
         # list (ranged/thrown), with no slash/thrust/crush sub-variant, so
         # unlike the combos above it needs no damage-type dropdown. Placed
         # last in the list - the least commonly used combo.
-        combo_fired_1h_shield_frame = ttk.Frame(weapon_box, style='WeaponRow.TFrame', padding=(6,4))
+        combo_fired_1h_shield_frame = ttk.Frame(weapon_box, style='WeaponRowAlt.TFrame', padding=(6,4))
         combo_fired_1h_shield_frame.pack(fill='x', pady=2)
         self.combo_fired_1h_shield_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(combo_fired_1h_shield_frame, text="Fired 1h/Shield",
