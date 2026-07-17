@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.6 (Current)
+### v5.4.7 (Current)
+- Weapon Constraints' Weapon Types/Combo's rows each now sit in their own thin bordered box, and Fired 1h/Shield moved to the bottom of the list (least commonly used combo)
+- Shield Constraints no longer offers a Cloth checkbox - shields are never made of cloth in-game. Leather/Studded/Plate are unaffected
+
+### v5.4.6
 - Fixed a bug in "Rebuild (Full Database, Prefer Owned)" (v5.4.4's fallback-fill for empty armor/jewel slots) where a slot could get filled with an item whose spell duplicated a base another slot already covered (e.g. Evade.Enhance i on one slot and Evade.Enhance ii on another) - the two tiers don't stack and shouldn't both appear in the same build. That fallback now only fills a slot with an item carrying no wanted spell at all (or only a Wanted Sigil); it can no longer pick one whose spell is merely redundant with something else already in the build
 
 ### v5.4.5

@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.6"
+VERSION = "5.4.7"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1762,6 +1762,10 @@ class App(tk.Tk):
         style.theme_use('clam')
         style.configure('TNotebook.Tab', font=('Arial', 10, 'bold'), padding=[12, 6])
         style.configure('Accent.TButton', font=('Arial', 10, 'bold'))
+        # Thin black border around each Weapon Types/Combo's row (Weapon
+        # Constraints tab) - purely visual, groups each combo's checkbox and
+        # its own dropdowns together at a glance.
+        style.configure('WeaponRow.TFrame', borderwidth=1, relief='solid', bordercolor='#999999')
 
         self._build_scrollable_root()
 
@@ -2985,7 +2989,7 @@ class App(tk.Tk):
         combo_header = ttk.Label(weapon_box, text="Weapon Types/Combo's", font=('Arial', 9, 'bold'))
         combo_header.pack(anchor='w', pady=(6,2))
 
-        dual_wield_frame = ttk.Frame(weapon_box)
+        dual_wield_frame = ttk.Frame(weapon_box, style='WeaponRow.TFrame', padding=(6,4))
         dual_wield_frame.pack(fill='x', pady=2)
         self.dual_wield_1h_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(dual_wield_frame, text="Dual-Wield 1h",
@@ -2999,7 +3003,7 @@ class App(tk.Tk):
         ttk.Combobox(dual_wield_frame, textvariable=self.dual_wield_1h_off_var,
                     values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
 
-        combo_1h_shield_frame = ttk.Frame(weapon_box)
+        combo_1h_shield_frame = ttk.Frame(weapon_box, style='WeaponRow.TFrame', padding=(6,4))
         combo_1h_shield_frame.pack(fill='x', pady=2)
         self.combo_1h_shield_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(combo_1h_shield_frame, text="1h/Shield",
@@ -3013,7 +3017,7 @@ class App(tk.Tk):
         ttk.Combobox(combo_1h_shield_frame, textvariable=self.combo_1h_shield_damage_var,
                     values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
 
-        combo_2h_shield_frame = ttk.Frame(weapon_box)
+        combo_2h_shield_frame = ttk.Frame(weapon_box, style='WeaponRow.TFrame', padding=(6,4))
         combo_2h_shield_frame.pack(fill='x', pady=2)
         self.combo_2h_shield_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(combo_2h_shield_frame, text="2h/Shield",
@@ -3023,15 +3027,6 @@ class App(tk.Tk):
         ttk.Combobox(combo_2h_shield_frame, textvariable=self.combo_2h_shield_damage_var,
                     values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
 
-        # Fired 1h and Shield - "Fired" is its own weapon shape in the item
-        # list (ranged/thrown), with no slash/thrust/crush sub-variant, so
-        # unlike the combos above it needs no damage-type dropdown.
-        combo_fired_1h_shield_frame = ttk.Frame(weapon_box)
-        combo_fired_1h_shield_frame.pack(fill='x', pady=2)
-        self.combo_fired_1h_shield_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(combo_fired_1h_shield_frame, text="Fired 1h/Shield",
-                       variable=self.combo_fired_1h_shield_var).pack(side='left')
-
         # Two-Handed - moved in from the old Build Config row, now with its
         # own damage-type dropdown like the combos above, plus a Style
         # dropdown (Melee/Direct/Parry/Fired) - a first step toward per-combo
@@ -3040,7 +3035,7 @@ class App(tk.Tk):
         # more combos get their own Style dropdown like this one. Fired
         # ("fired 2h" in the item list) has no damage-type sub-variant, so
         # its Damage Type dropdown greys out when Fired is selected.
-        two_handed_frame = ttk.Frame(weapon_box)
+        two_handed_frame = ttk.Frame(weapon_box, style='WeaponRow.TFrame', padding=(6,4))
         two_handed_frame.pack(fill='x', pady=2)
         self.two_handed_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(two_handed_frame, text="Two-Handed",
@@ -3064,7 +3059,7 @@ class App(tk.Tk):
         # meaningful when 2 Claw is checked). Same soft-preference mechanism
         # as every other Sigil dropdown - never excludes an item, just
         # favors one carrying it at the highest SigilLvl when tied otherwise.
-        claw_frame = ttk.Frame(weapon_box)
+        claw_frame = ttk.Frame(weapon_box, style='WeaponRow.TFrame', padding=(6,4))
         claw_frame.pack(fill='x', pady=2)
         self.claw_1_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(claw_frame, text="1 Claw", variable=self.claw_1_var).pack(side='left', padx=(0,4))
@@ -3080,6 +3075,16 @@ class App(tk.Tk):
         self.claw_2_sigil_var = tk.StringVar(value='Any')
         ttk.Combobox(claw_frame, textvariable=self.claw_2_sigil_var, values=['Any'] + SIGIL_TYPES,
                     state='readonly', width=10).pack(side='left')
+
+        # Fired 1h and Shield - "Fired" is its own weapon shape in the item
+        # list (ranged/thrown), with no slash/thrust/crush sub-variant, so
+        # unlike the combos above it needs no damage-type dropdown. Placed
+        # last in the list - the least commonly used combo.
+        combo_fired_1h_shield_frame = ttk.Frame(weapon_box, style='WeaponRow.TFrame', padding=(6,4))
+        combo_fired_1h_shield_frame.pack(fill='x', pady=2)
+        self.combo_fired_1h_shield_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(combo_fired_1h_shield_frame, text="Fired 1h/Shield",
+                       variable=self.combo_fired_1h_shield_var).pack(side='left')
 
         # The old global Damage Type checkboxes (Slashing/Thrusting/Crushing)
         # have been removed - each combo above now has its own Damage Type
@@ -3189,17 +3194,15 @@ class App(tk.Tk):
         ttk.Label(sigil_row, text="Sigil:", width=10).pack(side='left')
         ttk.Combobox(sigil_row, textvariable=self.shield_sigil_var, values=SHIELD_SIGIL_VALUES,
                     state='readonly', width=14).pack(side='left')
-        # First checkbox in each row (Cloth/Studded) gets a fixed width so
-        # the second one (Leather/Plate) starts at the same x position in
-        # both rows, regardless of "Cloth" vs "Studded" being different
-        # lengths - otherwise Leather and Plate wouldn't line up vertically.
+        # Cloth isn't a real shield material in-game, so Leather is the only
+        # checkbox on this row - given a fixed width matching Studded below
+        # so both rows stay indented the same amount even though this row
+        # otherwise has nothing to its right to align with Plate.
         first_col_width = 9
-        for armor_type in ('cloth', 'leather'):
-            var = tk.BooleanVar(value=False)
-            self.shield_armor_checks[armor_type] = var
-            kwargs = {'width': first_col_width} if armor_type == 'cloth' else {}
-            ttk.Checkbutton(sigil_row, text=armor_type.title(), variable=var, **kwargs).pack(
-                side='left', padx=(12,0))
+        leather_var = tk.BooleanVar(value=False)
+        self.shield_armor_checks['leather'] = leather_var
+        ttk.Checkbutton(sigil_row, text="Leather", variable=leather_var, width=first_col_width).pack(
+            side='left', padx=(12,0))
 
         defense_row = ttk.Frame(shield_box)
         defense_row.pack(fill='x', pady=1)
@@ -5022,7 +5025,7 @@ class App(tk.Tk):
         # Clear Shield Constraints
         self.shield_defense_var.set('Any')
         self.shield_sigil_var.set('Any')
-        for armor_type in ('cloth', 'leather', 'studded', 'plate'):
+        for armor_type in ('leather', 'studded', 'plate'):
             self.shield_armor_checks[armor_type].set(False)
 
         # Clear all level filters
@@ -5381,7 +5384,7 @@ class App(tk.Tk):
             'weapon_weight_hard': self.weapon_weight_hard_var.get(),
             'shield_defense': self.shield_defense_var.get(),
             'shield_sigil': self.shield_sigil_var.get(),
-            'shield_armor_types': [t for t in ('cloth', 'leather', 'studded', 'plate')
+            'shield_armor_types': [t for t in ('leather', 'studded', 'plate')
                                    if self.shield_armor_checks[t].get()],
         }
 
@@ -5437,7 +5440,7 @@ class App(tk.Tk):
             self.shield_defense_var.set(combos.get('shield_defense', 'Any'))
             self.shield_sigil_var.set(combos.get('shield_sigil', 'Any'))
             shield_armor_types = combos.get('shield_armor_types', [])
-            for armor_type in ('cloth', 'leather', 'studded', 'plate'):
+            for armor_type in ('leather', 'studded', 'plate'):
                 self.shield_armor_checks[armor_type].set(armor_type in shield_armor_types)
 
         # .set() doesn't fire the checkboxes' own command callback, so sync
@@ -5513,7 +5516,7 @@ class App(tk.Tk):
             'weapon_weight_hard': self.weapon_weight_hard_var.get(),
             'shield_defense': self.shield_defense_var.get(),
             'shield_sigil': self.shield_sigil_var.get(),
-            'shield_armor_types': [t for t in ('cloth', 'leather', 'studded', 'plate')
+            'shield_armor_types': [t for t in ('leather', 'studded', 'plate')
                                    if self.shield_armor_checks[t].get()],
         }
 
@@ -5597,7 +5600,7 @@ class App(tk.Tk):
         self.shield_defense_var.set(data.get('shield_defense', 'Any'))
         self.shield_sigil_var.set(data.get('shield_sigil', 'Any'))
         shield_armor_types = data.get('shield_armor_types', [])
-        for armor_type in ('cloth', 'leather', 'studded', 'plate'):
+        for armor_type in ('leather', 'studded', 'plate'):
             self.shield_armor_checks[armor_type].set(armor_type in shield_armor_types)
         self._update_two_handed_damage_state()
         self._update_melee_priority_cap()
@@ -7701,7 +7704,7 @@ class App(tk.Tk):
         # armor, so this reuses the exact same hard-filter mechanism as the
         # Armor Constraints tab's per-slot checkboxes, just sourced from
         # Weapon Constraints' own Shield Constraints checkboxes instead.
-        armor_constraints['shield'] = [t for t in ('cloth', 'leather', 'studded', 'plate')
+        armor_constraints['shield'] = [t for t in ('leather', 'studded', 'plate')
                                        if self.shield_armor_checks[t].get()]
 
         # Weapon Types/Combo's - each has its own Style and/or Damage Type
@@ -8908,7 +8911,7 @@ class App(tk.Tk):
         # armor, so this reuses the exact same hard-filter mechanism as the
         # Armor Constraints tab's per-slot checkboxes, just sourced from
         # Weapon Constraints' own Shield Constraints checkboxes instead.
-        armor_constraints['shield'] = [t for t in ('cloth', 'leather', 'studded', 'plate')
+        armor_constraints['shield'] = [t for t in ('leather', 'studded', 'plate')
                                        if self.shield_armor_checks[t].get()]
 
         # Weapon Types/Combo's - each has its own Style and/or Damage Type
