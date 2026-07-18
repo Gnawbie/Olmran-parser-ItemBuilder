@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.12"
+VERSION = "5.4.13"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -2109,13 +2109,8 @@ class App(tk.Tk):
 
         pvp_kill_row = ttk.Frame(pvp_kill_col)
         pvp_kill_row.pack(fill='x')
-        ttk.Label(pvp_kill_row, text="Player Name:", width=12).pack(side='left')
-        self.pvp_kill_player_var = tk.StringVar(value='')
-        pvp_kill_entry = ttk.Entry(pvp_kill_row, textvariable=self.pvp_kill_player_var, width=30)
-        pvp_kill_entry.pack(side='left', padx=4)
-        pvp_kill_entry.bind('<Return>', lambda e: self._search_pvp_kills())
         ttk.Button(pvp_kill_row, text="⚔ Search",
-                  command=self._search_pvp_kills).pack(side='left', padx=4)
+                  command=self._search_pvp_kills).pack(side='left')
 
         pvp_death_col = ttk.Frame(pvp_frame)
         pvp_death_col.pack(side='left', anchor='n', fill='both', expand=True, padx=(20,0))
@@ -2124,13 +2119,8 @@ class App(tk.Tk):
 
         pvp_death_row = ttk.Frame(pvp_death_col)
         pvp_death_row.pack(fill='x')
-        ttk.Label(pvp_death_row, text="Player Name:", width=12).pack(side='left')
-        self.pvp_death_player_var = tk.StringVar(value='')
-        pvp_death_entry = ttk.Entry(pvp_death_row, textvariable=self.pvp_death_player_var, width=30)
-        pvp_death_entry.pack(side='left', padx=4)
-        pvp_death_entry.bind('<Return>', lambda e: self._search_pvp_deaths())
         ttk.Button(pvp_death_row, text="💀 Search",
-                  command=self._search_pvp_deaths).pack(side='left', padx=4)
+                  command=self._search_pvp_deaths).pack(side='left')
 
         pvp_participated_col = ttk.Frame(pvp_frame)
         pvp_participated_col.pack(side='left', anchor='n', fill='both', expand=True, padx=(20,0))
@@ -2669,45 +2659,38 @@ class App(tk.Tk):
                 f"{len(errors)} file(s) could not be read:\n" + "\n".join(errors))
 
     def _search_pvp_kills(self):
-        """PvP tab's "PvP Kill" search - finds every time you killed
-        `player_name` (see _find_pvp_kills), shown in a PvpResultViewer,
-        each labeled "You Killed <player_name>"."""
-        player_name = self.pvp_kill_player_var.get().strip()
-        if not player_name:
-            messagebox.showwarning("No Player Name", "Enter a player name first.")
-            return
+        """PvP tab's "Your Kills" search - no player name needed, just a
+        button. Finds every kill you got (see _find_pvp_kills), each
+        labeled "You Killed <name>" with the name pulled straight out of
+        the matched line itself."""
         if not self.files:
             messagebox.showwarning("No Files", "Load some log files first.")
             return
 
-        results, errors = self._find_pvp_kills(player_name)
+        results, errors = self._find_pvp_kills()
         if not results:
-            msg = f"No PvP kills of '{player_name}' were found in {len(self.files)} file(s)."
+            msg = f"No PvP kills were found in {len(self.files)} file(s)."
             if errors:
                 msg += f"\n\n{len(errors)} file(s) could not be read: " + "; ".join(errors)
             messagebox.showinfo("No Matches", msg)
             return
-        PvpResultViewer(self, "PvP Kills", player_name, results, "Kill Line", "PvP kill(s)")
+        PvpResultViewer(self, "PvP Kills", "", results, "Kill Line", "PvP kill(s)")
 
         if errors:
             messagebox.showwarning("Some Files Skipped",
                 f"{len(errors)} file(s) could not be read:\n" + "\n".join(errors))
 
-    def _find_pvp_kills(self, player_name):
-        """Finds every "You just killed <player_name>!" line immediately
-        followed by "You earn N realm points!" (N is 1-3 digits and is
-        intentionally excluded from the match, per explicit instruction -
-        only "realm points!" itself needs to be present). Checked within
-        the next few lines rather than strictly the very next one, in case
-        of minor log variations, though the only example seen so far has
-        no gap at all between the two lines."""
-        player_name = player_name.strip()
-        if not player_name:
-            return [], []
-
-        kill_re = re.compile(
-            r'^You just killed ' + re.escape(player_name) + r'!\s*$',
-            re.IGNORECASE)
+    def _find_pvp_kills(self):
+        """Finds every "You just killed <name>!" line immediately followed
+        by "You earn N realm points!" (N is 1-3 digits and is intentionally
+        excluded from the match, per explicit instruction - only "realm
+        points!" itself needs to be present). The killed player's name is
+        captured straight out of the line - no name needs to be typed in
+        ahead of time. Checked within the next few lines rather than
+        strictly the very next one, in case of minor log variations, though
+        the only example seen so far has no gap at all between the two
+        lines."""
+        kill_re = re.compile(r'^You just killed (.+?)!\s*$', re.IGNORECASE)
         realm_points_re = re.compile(r'You earn \d{1,3} realm points!', re.IGNORECASE)
 
         results = []
@@ -2724,17 +2707,19 @@ class App(tk.Tk):
                 ts_match = re.match(r'^<(\d{2}:\d{2}:\d{2})>\s*', raw_line)
                 timestamp = ts_match.group(1) if ts_match else ''
                 kill_text = raw_line[ts_match.end():].strip() if ts_match else raw_line.strip()
-                if not kill_re.match(kill_text):
+                m = kill_re.match(kill_text)
+                if not m:
                     continue
                 window = ''.join(lines[idx + 1:idx + 4])
                 if not realm_points_re.search(window):
                     continue
+                killed_name = m.group(1).strip()
                 results.append({
                     'file': f['name'],
                     'path': f['path'],
                     'line_num': idx + 1,
                     'timestamp': timestamp,
-                    'label': f'You Killed {player_name}',
+                    'label': f'You Killed {killed_name}',
                     'match_line': kill_text,
                 })
 
@@ -2814,50 +2799,43 @@ class App(tk.Tk):
         return results, errors
 
     def _search_pvp_deaths(self):
-        """PvP tab's "PvP Death" search - finds every time `player_name`'s
-        killing blow was immediately followed by your own death message
-        (see _find_pvp_deaths), shown in a PvpResultViewer, each labeled
-        "<player_name> Killed you"."""
-        player_name = self.pvp_death_player_var.get().strip()
-        if not player_name:
-            messagebox.showwarning("No Player Name", "Enter a player name first.")
-            return
+        """PvP tab's "Your Deaths" search - no player name needed, just a
+        button. Finds every time a player killed you (see
+        _find_pvp_deaths), each labeled "<name> Killed you" with the name
+        pulled straight out of the matched line itself."""
         if not self.files:
             messagebox.showwarning("No Files", "Load some log files first.")
             return
 
-        results, errors = self._find_pvp_deaths(player_name)
+        results, errors = self._find_pvp_deaths()
         if not results:
-            msg = f"No PvP deaths from '{player_name}' were found in {len(self.files)} file(s)."
+            msg = f"No PvP deaths were found in {len(self.files)} file(s)."
             if errors:
                 msg += f"\n\n{len(errors)} file(s) could not be read: " + "; ".join(errors)
             messagebox.showinfo("No Matches", msg)
             return
-        PvpResultViewer(self, "PvP Deaths", player_name, results, "Killing Blow", "PvP death(s)")
+        PvpResultViewer(self, "PvP Deaths", "", results, "Killing Blow", "PvP death(s)")
 
         if errors:
             messagebox.showwarning("Some Files Skipped",
                 f"{len(errors)} file(s) could not be read:\n" + "\n".join(errors))
 
-    def _find_pvp_deaths(self, player_name):
-        """Finds every "<player_name> ... at you for N damage!" killing
-        blow immediately followed by a blank line and then the standard
-        death message block. Only one killing-blow wording has been seen
-        so far ("fires a lustrous wingclip shortbow at you for 105
-        damage!"), so the match is deliberately loose in the middle (any
-        text between the player's name and "at you for N damage!") to cover
-        other weapon/spell wordings that end the same way - tighten this if
-        that turns out to catch false positives. The death message's
-        "N minutes" is unique per occurrence and intentionally excluded
-        from the match, per explicit instruction - only the fixed
-        surrounding text is checked."""
-        player_name = player_name.strip()
-        if not player_name:
-            return [], []
-
-        attack_re = re.compile(
-            r'^' + re.escape(player_name) + r'\b.*\bat you for \d+ damage!\s*$',
-            re.IGNORECASE)
+    def _find_pvp_deaths(self):
+        """Finds every "<name> ... at you for N damage!" killing blow
+        immediately followed by a blank line and then the standard death
+        message block. Only one killing-blow wording has been seen so far
+        ("fires a lustrous wingclip shortbow at you for 105 damage!"), so
+        the match is deliberately loose in the middle (any text between
+        the attacker's name and "at you for N damage!") to cover other
+        weapon/spell wordings that end the same way - tighten this if that
+        turns out to catch false positives. The attacker's name is
+        captured straight out of the line (assumed to be one whitespace-
+        free token, true of every example seen so far) - no name needs to
+        be typed in ahead of time. The death message's "N minutes" is
+        unique per occurrence and intentionally excluded from the match,
+        per explicit instruction - only the fixed surrounding text is
+        checked."""
+        attack_re = re.compile(r'^(\S+)\b.*\bat you for \d+ damage!\s*$', re.IGNORECASE)
         death_block_re = re.compile(
             r'You were just killed!\s+You now float as a ghost\s+'
             r'above your dead corpse\.\s+Type RELEASE to complete the\s+'
@@ -2879,7 +2857,8 @@ class App(tk.Tk):
                 ts_match = re.match(r'^<(\d{2}:\d{2}:\d{2})>\s*', raw_line)
                 timestamp = ts_match.group(1) if ts_match else ''
                 attack_text = raw_line[ts_match.end():].strip() if ts_match else raw_line.strip()
-                if not attack_re.match(attack_text):
+                m = attack_re.match(attack_text)
+                if not m:
                     continue
                 # Expect exactly one blank line, then the death message
                 # block within the next handful of lines.
@@ -2888,12 +2867,13 @@ class App(tk.Tk):
                 window = ''.join(lines[idx + 2:idx + 8])
                 if not death_block_re.search(window):
                     continue
+                attacker_name = m.group(1).strip()
                 results.append({
                     'file': f['name'],
                     'path': f['path'],
                     'line_num': idx + 1,
                     'timestamp': timestamp,
-                    'label': f'{player_name} Killed you',
+                    'label': f'{attacker_name} Killed you',
                     'match_line': attack_text,
                 })
 

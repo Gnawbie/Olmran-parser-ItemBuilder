@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.12 (Current)
+### v5.4.13 (Current)
+- "Your Kills" and "Your Deaths" (Parse tab → PvP) no longer need a player name typed in - both are now plain buttons, like "Participated" already was. Each finds every match across the loaded logs and pulls the player's name straight out of the matched line for the label
+
+### v5.4.12
 - Search Logs results (both "Drops only" and plain raw-text search) can now be right-clicked → "Open Log at This Line" - opens the original log file in a new window, scrolled to and highlighting that exact line, with its own Find box (▲/▼ or Enter/Shift+Enter) to search around the rest of the file
 - New "PvP" section on the Parse tab, with three searches: **Your Kills** (finds every time you killed a named player), **Your Deaths** (finds every time a named player killed you), and **Participated** (a plain button - finds every realm-points award you got without landing the kill yourself). Right-click any result row here too for "Open Log at This Line"
 
