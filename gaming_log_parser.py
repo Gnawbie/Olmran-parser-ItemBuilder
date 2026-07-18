@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.8"
+VERSION = "5.4.9"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -904,7 +904,7 @@ BLOCKED_AREAS = {'class'}
 # Saved Items' "Gear Tag" column (see _open_gear_tag_editor) - one shared tag
 # per item NAME, not per character, so tagging "zebra hood" from any tab
 # shows the same tag everywhere else that name appears too.
-GEAR_TAG_OPTIONS = ['Good Gear', 'Invasion Gear', 'Blank']
+GEAR_TAG_OPTIONS = ['Good Gear', 'Invasion Gear', 'Both', 'Blank']
 
 DEFENSE_LEVELS = ['much worse', 'worse', 'normal', 'better', 'much better']
 DEFENSE_RANK = {level: i for i, level in enumerate(DEFENSE_LEVELS)}
@@ -3685,7 +3685,13 @@ class App(tk.Tk):
         # Saved Items' "Gear Tag" column (see _open_gear_tag_editor) - one
         # shared tag per item name (GEAR_TAG_OPTIONS, defaulting to "Blank"
         # for anything not explicitly set), not stored at all for "Blank"
-        # itself so an untagged item doesn't bloat the config file.
+        # itself so an untagged item doesn't bloat the config file. For the
+        # Good Gear only/Invasion Gear only search filters (see
+        # _find_character_saved_items_build), "Both" always qualifies under
+        # either checkbox (it counts as both categories at once), but
+        # "Blank" qualifies under neither - a user who never tags anything
+        # (everything stays Blank) will find both checkboxes filter down to
+        # nothing, same as not having used the Gear Tag feature at all.
         self.bank_gear_tags = dict(getattr(self, '_persisted_bank_gear_tags', {}))
 
         # Bank Build - two inner tabs: "Import" parses a pasted bank/
@@ -6245,6 +6251,21 @@ class App(tk.Tk):
             text="Search all characters (still only uses this character's own Kaid items)",
             variable=search_all_var).pack(anchor='w', pady=(2,0))
 
+        # Gear Tag filter - restricts Find Best Bank Build to just the
+        # Saved Items tagged one of the checked tags (see the Gear Tag
+        # column/_set_gear_tag). Both can be checked at once (either tag
+        # qualifies); neither checked runs the search as normal, with no
+        # tag restriction at all - matches every other Gear Tag-agnostic
+        # search in the app.
+        good_gear_var = tk.BooleanVar(value=False)
+        invasion_gear_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(checks_frame,
+            text="Good Gear only (limit Find Best Bank Build to items tagged Good Gear)",
+            variable=good_gear_var).pack(anchor='w', pady=(2,0))
+        ttk.Checkbutton(checks_frame,
+            text="Invasion Gear only (limit Find Best Bank Build to items tagged Invasion Gear)",
+            variable=invasion_gear_var).pack(anchor='w', pady=(2,0))
+
         controls_frame = ttk.Frame(right_col)
         controls_frame.pack(fill='x', pady=(8,0))
         ttk.Button(controls_frame, text="🏦 Find Best Bank Build",
@@ -6267,6 +6288,7 @@ class App(tk.Tk):
             'tab': tab, 'tv': tv, 'desc_label': desc_label,
             'exclude_var': exclude_var, 'exclude_cb': exclude_cb,
             'prioritize_var': prioritize_var, 'hard_var': hard_var, 'search_all_var': search_all_var,
+            'good_gear_var': good_gear_var, 'invasion_gear_var': invasion_gear_var,
             'prioritize_cb': prioritize_cb, 'hard_cb': hard_cb,
             'search_status_label': search_status_label, 'count_label': count_label,
         }
@@ -6899,7 +6921,10 @@ class App(tk.Tk):
         just those gaps. A Locker flagged "Exclude this Locker from other
         characters' Bank Build searches" (unchecked/off by default) is
         skipped entirely here - its gear still shows up on its own tab,
-        just never folded into anyone else's."""
+        just never folded into anyone else's. "Good Gear only"/"Invasion
+        Gear only" further restrict the effective pool to just items
+        carrying one of the checked Gear Tags (both checked means either
+        tag qualifies) - neither checked runs unrestricted, as normal."""
         if not self.master_data:
             messagebox.showwarning("No Data", "Please load a master database first")
             return
@@ -6925,9 +6950,32 @@ class App(tk.Tk):
         else:
             effective_names = own_names | locker_names
 
+        # Gear Tag filter (Good Gear only / Invasion Gear only checkboxes) -
+        # restricts the pool to just items tagged one of the checked tags;
+        # both checked means either tag qualifies. An item tagged "Both"
+        # always qualifies too, under either checkbox - it counts as both
+        # categories at once. An untagged ("Blank", the default every item
+        # starts as) item qualifies under neither - a user who never uses
+        # the Gear Tag feature will find both checkboxes just filter down
+        # to nothing. Neither checkbox checked leaves effective_names
+        # untouched - runs as normal, no restriction at all.
+        tag_filter = set()
+        if w['good_gear_var'].get():
+            tag_filter.add('Good Gear')
+        if w['invasion_gear_var'].get():
+            tag_filter.add('Invasion Gear')
+        if tag_filter:
+            effective_names = {n for n in effective_names
+                               if self.bank_gear_tags.get(n, 'Blank') in tag_filter
+                               or self.bank_gear_tags.get(n, 'Blank') == 'Both'}
+
         if not effective_names:
-            messagebox.showwarning("No Saved Items",
-                f"{char_name}'s Saved Items list is empty - use the Import tab first.")
+            if tag_filter:
+                messagebox.showwarning("No Matching Items",
+                    f"None of {char_name}'s Saved Items are tagged {' or '.join(sorted(tag_filter))}.")
+            else:
+                messagebox.showwarning("No Saved Items",
+                    f"{char_name}'s Saved Items list is empty - use the Import tab first.")
             return
 
         self._reset_hard_search_state()
@@ -7251,6 +7299,14 @@ class App(tk.Tk):
         combo = ttk.Combobox(tv, textvariable=var, values=GEAR_TAG_OPTIONS, state='readonly')
         combo.place(x=x, y=y, width=width, height=height)
         combo.focus_set()
+        # focus_set() alone doesn't open the dropdown list - the click that
+        # revealed this combobox (the one that landed on the Tag cell
+        # before it existed) never reaches it, so without this the list
+        # only opens on a SECOND, separate click, inconsistently depending
+        # on timing. Posting it explicitly (deferred one tick so the widget
+        # is fully placed/mapped first) makes the very first click that
+        # reveals the combobox also pop its list open, every time.
+        combo.after(1, lambda: combo.tk.call('ttk::combobox::Post', combo))
 
         committed = {'done': False}
         def commit(event=None):

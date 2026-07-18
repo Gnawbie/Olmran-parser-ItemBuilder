@@ -134,7 +134,12 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.8 (Current)
+### v5.4.9 (Current)
+- Fixed the Gear Tag dropdown sometimes not opening on the first click - it previously only got focused, not popped open, so the same click that revealed it didn't expand the list
+- Each Character Items tab (and Locker tab) has two new checkboxes: "Good Gear only" and "Invasion Gear only", which limit Find Best Bank Build to just items carrying that Gear Tag. Both can be checked together (either tag qualifies); neither checked runs as normal, with no restriction
+- Gear Tag's "Blank" option is back (now alongside "Both") - every item starts out Blank by default. "Both" always qualifies under either of the new checkboxes; "Blank" qualifies under neither, so a user who never uses Gear Tag will find both checkboxes just filter down to nothing until they start tagging
+
+### v5.4.8
 - Bank Build's "Saved Items" tab is renamed to "Character Items"
 - Added a new "Lockers" tab in Bank Build, alongside Import/Character Items (always the rightmost of the three) - every Locker character now gets its own sub-tab there (with its full existing controls: Only Found In, Prioritize/Hard Search, Find Best Bank Build, Clear, exclude-from-others checkbox) instead of being mixed in among regular character tabs. A character automatically moves to/from Lockers if its Locker checkbox is toggled on a later Import
 
