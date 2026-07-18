@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.7"
+VERSION = "5.4.8"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -3698,14 +3698,19 @@ class App(tk.Tk):
         # Spells, Armor/Weapon Constraints, Min/Max Level, etc.) still
         # applies exactly as normal; this only adds ownership as an extra
         # dimension on top.
-        bank_sub_notebook = ttk.Notebook(self.build_bank_subtab)
+        # Kept on self (not just a local) so _create_bank_character_tab can
+        # keep the Lockers tab (added below, as this notebook's own sibling
+        # to Import/Saved Items - see self.bank_lockers_sub_notebook) pinned
+        # as its rightmost tab even as character tabs come and go.
+        self.bank_sub_notebook = ttk.Notebook(self.build_bank_subtab)
+        bank_sub_notebook = self.bank_sub_notebook
         bank_sub_notebook.pack(fill='both', expand=True)
 
         bank_import_tab = ttk.Frame(bank_sub_notebook, padding=8)
         bank_sub_notebook.add(bank_import_tab, text='Import')
 
         bank_saved_tab = ttk.Frame(bank_sub_notebook, padding=4)
-        bank_sub_notebook.add(bank_saved_tab, text='Saved Items')
+        bank_sub_notebook.add(bank_saved_tab, text='Character Items')
 
         # ── Import ──
         ttk.Label(bank_import_tab, text="Paste a bank/inventory listing below, enter a character name, then "
@@ -3801,8 +3806,19 @@ class App(tk.Tk):
                                            wraplength=760, justify='left')
         self.bank_saved_status.pack(anchor='w', pady=(6,0))
 
+        # Lockers get their own notebook, one sub-tab per Locker character
+        # (see _create_bank_character_tab) - keeps pure overflow-storage
+        # characters visually separate from characters you actually play.
+        # Sits as bank_sub_notebook's own tab, alongside Import/Saved Items
+        # (not nested inside Saved Items), kept pinned as bank_sub_notebook's
+        # rightmost tab as character tabs come and go - see
+        # _create_bank_character_tab.
+        self.bank_lockers_sub_notebook = ttk.Notebook(self.bank_sub_notebook)
+        self.bank_sub_notebook.add(self.bank_lockers_sub_notebook, text='Lockers')
+
         # One tab per character already used from Import, restored in the
-        # order they were saved.
+        # order they were saved - each lands under Saved Items or Lockers
+        # depending on its own is_locker flag (see _create_bank_character_tab).
         for _char in self.bank_characters:
             self._create_bank_character_tab(_char)
         self._refresh_bank_saved_tab()
@@ -6034,6 +6050,7 @@ class App(tk.Tk):
         if is_new:
             self._create_bank_character_tab(char_name)
         else:
+            self._relocate_bank_character_tab_if_needed(char_name)
             self._refresh_bank_character_tab(char_name)
         self._refresh_bank_saved_tab()
         self._recompute_all_saved_item_names()
@@ -6112,16 +6129,25 @@ class App(tk.Tk):
         self._all_saved_item_names = names
 
     def _create_bank_character_tab(self, char_name):
-        """Create the per-character Saved Items tab for `char_name` under
-        self.bank_saved_sub_notebook, with its own Treeview, Only Found In
-        checkboxes (same shared self.realm_filters as Basic Constraints),
-        Prioritize/Hard Search checkboxes, "Search all characters"
-        checkbox, and Find Best Bank Build/Clear buttons. Called once per
-        character at startup (for every persisted name) and again the
-        first time a new name is used from the Import tab - see
+        """Create the per-character Saved Items tab for `char_name`, with
+        its own Treeview, Only Found In checkboxes (same shared self.
+        realm_filters as Basic Constraints), Prioritize/Hard Search
+        checkboxes, "Search all characters" checkbox, and Find Best Bank
+        Build/Clear buttons. Lands under self.bank_lockers_sub_notebook
+        (the "Lockers" tab, a sibling of Import/Saved Items on self.
+        bank_sub_notebook) if this character is currently flagged as a
+        Locker, otherwise under self.bank_saved_sub_notebook (the "Saved
+        Items" tab's own Main/character notebook) - see
+        _relocate_bank_character_tab_if_needed for what happens if that flag
+        changes later on an existing character. Called once per character
+        at startup (for every persisted name) and again the first time a
+        new name is used from the Import tab - see
         _save_bank_import_to_character."""
-        tab = ttk.Frame(self.bank_saved_sub_notebook, padding=8)
-        self.bank_saved_sub_notebook.add(tab, text=char_name)
+        cdata = self.bank_characters.get(char_name, {})
+        parent_notebook = (self.bank_lockers_sub_notebook if cdata.get('is_locker')
+                            else self.bank_saved_sub_notebook)
+        tab = ttk.Frame(parent_notebook, padding=8)
+        parent_notebook.add(tab, text=char_name)
 
         desc_label = ttk.Label(tab, text="", foreground='#666', wraplength=760, justify='left')
         desc_label.pack(anchor='w', pady=(0,6))
@@ -7324,6 +7350,29 @@ class App(tk.Tk):
         self.bank_saved_status.config(
             text=f"{len(combined_order)} unique item(s) across every character"
                  + (f", {extra_count} extra copy/copies" if extra_count else "") + ".")
+
+    def _relocate_bank_character_tab_if_needed(self, char_name):
+        """A character's is_locker flag can change on any Import save (not
+        just the first one - see _save_bank_import_to_character), which
+        means its tab may now belong under a different parent notebook
+        (self.bank_lockers_sub_notebook vs. self.bank_saved_sub_notebook
+        directly) than the one it was originally built under. Tkinter has
+        no "move to a new parent" - the tab is destroyed and rebuilt fresh
+        via _create_bank_character_tab (which re-reads is_locker itself and
+        picks the correct parent), only when the flag actually changed
+        since the tab was last (re)built."""
+        w = self.bank_character_widgets.get(char_name)
+        if not w:
+            return
+        cdata = self.bank_characters.get(char_name, {})
+        desired_parent = (self.bank_lockers_sub_notebook if cdata.get('is_locker')
+                          else self.bank_saved_sub_notebook)
+        current_parent = w['tab'].nametowidget(w['tab'].winfo_parent())
+        if current_parent is desired_parent:
+            return
+        w['tab'].destroy()
+        del self.bank_character_widgets[char_name]
+        self._create_bank_character_tab(char_name)
 
     def _refresh_bank_character_tab(self, char_name):
         """Redraw one character's own Saved Items tab from

@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.7 (Current)
+### v5.4.8 (Current)
+- Bank Build's "Saved Items" tab is renamed to "Character Items"
+- Added a new "Lockers" tab in Bank Build, alongside Import/Character Items (always the rightmost of the three) - every Locker character now gets its own sub-tab there (with its full existing controls: Only Found In, Prioritize/Hard Search, Find Best Bank Build, Clear, exclude-from-others checkbox) instead of being mixed in among regular character tabs. A character automatically moves to/from Lockers if its Locker checkbox is toggled on a later Import
+
+### v5.4.7
 - Weapon Constraints' Weapon Types/Combo's rows each now sit in their own thin bordered box, alternating between two shades of grey row by row, and Fired 1h/Shield moved to the bottom of the list (least commonly used combo)
 - Shield Constraints no longer offers a Cloth checkbox - shields are never made of cloth in-game. Leather/Studded/Plate are unaffected
 
