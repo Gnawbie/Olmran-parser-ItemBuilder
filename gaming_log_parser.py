@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.11"
+VERSION = "5.4.12"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1374,11 +1374,17 @@ class SnapshotViewer(tk.Toplevel):
 
 
 class LogSearchViewer(tk.Toplevel):
-    """Shows every raw log line matching a search term, across all loaded files."""
+    """Shows every raw log line matching a search term, across all loaded
+    files. Right-click a row for "Open Log at This Line" - opens the
+    original file in a LogFileViewer, scrolled to and highlighting that
+    exact line."""
     def __init__(self, parent, query: str, results: list):
         super().__init__(parent)
         self.title(f"Search Results — '{query}'  ({len(results)} matches)")
         self.geometry("1150x540")
+        # iid -> (file_name, path, line_num), for the right-click handler -
+        # path isn't a displayed column, so it isn't visible in `values`.
+        self._row_source = {}
 
         cols = ('File', 'Line #', 'Timestamp', 'Text')
         frame = ttk.Frame(self)
@@ -1400,17 +1406,41 @@ class LogSearchViewer(tk.Toplevel):
         frame.rowconfigure(0, weight=1)
         frame.columnconfigure(0, weight=1)
 
-        for file_name, line_num, timestamp, text in results[:5000]:
-            tv.insert('', 'end', values=(file_name, line_num, timestamp, text))
+        for i, (file_name, line_num, timestamp, text, path) in enumerate(results[:5000]):
+            iid = str(i)
+            tv.insert('', 'end', iid=iid, values=(file_name, line_num, timestamp, text))
+            self._row_source[iid] = (file_name, path, line_num)
 
         shown = min(len(results), 5000)
         ttk.Label(self, text=f"Showing {shown} of {len(results)} matching lines",
                   foreground='gray').pack(pady=4)
 
+        self.tv = tv
+        self._menu = tk.Menu(self, tearoff=0)
+        self._menu.add_command(label="Open Log at This Line", command=self._open_selected_log)
+        tv.bind('<Button-3>', self._on_right_click)
+
+    def _on_right_click(self, event):
+        row_iid = self.tv.identify_row(event.y)
+        if not row_iid:
+            return
+        self.tv.selection_set(row_iid)
+        self._menu.tk_popup(event.x_root, event.y_root)
+
+    def _open_selected_log(self):
+        sel = self.tv.selection()
+        if not sel:
+            return
+        file_name, path, line_num = self._row_source[sel[0]]
+        LogFileViewer(self, file_name, path, line_num)
+
 
 class DropSnapshotViewer(tk.Toplevel):
-    """Lists every drop event found for an item; selecting one shows a snapshot
-    of the raw log from the last timestamp through that drop line."""
+    """Lists every drop event found for an item; selecting one shows a
+    snapshot of the raw log from the last timestamp through that drop
+    line. Right-click a row for "Open Log at This Line" - opens the
+    original file in a LogFileViewer, scrolled to and highlighting the
+    exact drop line, for more surrounding context than the snapshot pane."""
     def __init__(self, parent, query: str, drops: list):
         super().__init__(parent)
         self.title(f"Drop Search — '{query}'  ({len(drops)} drops)")
@@ -1439,6 +1469,10 @@ class DropSnapshotViewer(tk.Toplevel):
             self.tv.insert('', 'end', iid=str(i),
                            values=(d['file'], d['timestamp'], d['item'], d['mob']))
         self.tv.bind('<<TreeviewSelect>>', self._on_select)
+
+        self._menu = tk.Menu(self, tearoff=0)
+        self._menu.add_command(label="Open Log at This Line", command=self._open_selected_log)
+        self.tv.bind('<Button-3>', self._on_right_click)
 
         snapshot_frame = ttk.LabelFrame(paned, text="Snapshot (last timestamp → drop)", padding=6)
         paned.add(snapshot_frame, weight=1)
@@ -1469,6 +1503,197 @@ class DropSnapshotViewer(tk.Toplevel):
         self.snapshot_text.delete('1.0', tk.END)
         self.snapshot_text.insert('1.0', drop['snapshot'])
         self.snapshot_text.config(state='disabled')
+
+    def _on_right_click(self, event):
+        row_iid = self.tv.identify_row(event.y)
+        if not row_iid:
+            return
+        self.tv.selection_set(row_iid)
+        self._menu.tk_popup(event.x_root, event.y_root)
+
+    def _open_selected_log(self):
+        sel = self.tv.selection()
+        if not sel:
+            return
+        drop = self.drops[int(sel[0])]
+        LogFileViewer(self, drop['file'], drop['path'], drop['line_num'])
+
+
+class LogFileViewer(tk.Toplevel):
+    """Opens one log file's full raw content in a scrollable, read-only
+    view, highlighting and scrolling to one specific line - the "Open Log
+    at This Line" right-click action on a search/drop result row, so a
+    match can be seen in its complete original context (not just the short
+    snapshot/single line already shown in the results table itself). A
+    search box at the top (with Next/Previous arrows, or plain Enter/
+    Shift+Enter) lets you then look around the rest of the file."""
+    def __init__(self, parent, file_name, file_path, line_num):
+        super().__init__(parent)
+        self.title(f"Log — {file_name} (line {line_num})")
+        self.geometry("1000x650")
+        self._last_match_start = None
+        self._last_match_end = None
+
+        search_row = ttk.Frame(self)
+        search_row.pack(fill='x', padx=6, pady=6)
+        ttk.Label(search_row, text="Find:").pack(side='left')
+        self.search_var = tk.StringVar(value='')
+        search_entry = ttk.Entry(search_row, textvariable=self.search_var, width=40)
+        search_entry.pack(side='left', padx=4)
+        search_entry.bind('<Return>', lambda e: self._find_next())
+        search_entry.bind('<Shift-Return>', lambda e: self._find_previous())
+        ttk.Button(search_row, text="▲", width=3,
+                  command=self._find_previous).pack(side='left', padx=(4,0))
+        ttk.Button(search_row, text="▼", width=3,
+                  command=self._find_next).pack(side='left', padx=(2,0))
+        self.search_status = ttk.Label(search_row, text="", foreground='gray')
+        self.search_status.pack(side='left', padx=8)
+
+        frame = ttk.Frame(self)
+        frame.pack(fill='both', expand=True)
+
+        text = tk.Text(frame, wrap='none', font=('Consolas', 10))
+        self.text = text
+        vsb = ttk.Scrollbar(frame, orient='vertical', command=text.yview)
+        hsb = ttk.Scrollbar(frame, orient='horizontal', command=text.xview)
+        text.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        text.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as fh:
+                content = fh.read()
+        except Exception as e:
+            text.insert('1.0', f"Could not open file:\n{file_path}\n\n{e}")
+            text.config(state='disabled')
+            return
+
+        text.insert('1.0', content)
+        text.tag_configure('highlight', background='#fff59d')
+        # A different color from 'highlight' above (the originally-opened
+        # target line) so a search match is never confused with it.
+        text.tag_configure('search_match', background='#ffb74d')
+        line_start = f"{line_num}.0"
+        text.tag_add('highlight', line_start, f"{line_num}.end")
+        text.config(state='disabled')
+
+        # see() only guarantees the line is somewhere on screen (often right
+        # at the bottom edge) - scrolling back up a bit after roughly
+        # centers it instead, so there's context visible above it too.
+        text.see(line_start)
+        text.update_idletasks()
+        text.yview_scroll(-15, 'units')
+
+        ttk.Label(self, text=file_path, foreground='gray').pack(anchor='w', padx=6, pady=(0,4))
+        search_entry.focus_set()
+
+    def _find_next(self):
+        self._search(forward=True)
+
+    def _find_previous(self):
+        self._search(forward=False)
+
+    def _search(self, forward):
+        """Finds the next/previous case-insensitive match of the search
+        box's text, starting just past the last match (or from the very
+        start/end of the file if there's no match yet), wrapping around
+        if it runs off the corresponding end without finding anything."""
+        term = self.search_var.get()
+        text = self.text
+        text.tag_remove('search_match', '1.0', 'end')
+        if not term:
+            self.search_status.config(text="")
+            return
+
+        if forward:
+            start = self._last_match_end or '1.0'
+            idx = text.search(term, start, stopindex='end', nocase=True)
+            if not idx:
+                idx = text.search(term, '1.0', stopindex='end', nocase=True)
+        else:
+            start = self._last_match_start or 'end'
+            idx = text.search(term, start, stopindex='1.0', backwards=True, nocase=True)
+            if not idx:
+                idx = text.search(term, 'end', stopindex='1.0', backwards=True, nocase=True)
+
+        if not idx:
+            self._last_match_start = None
+            self._last_match_end = None
+            self.search_status.config(text="No matches")
+            return
+
+        end_idx = f"{idx}+{len(term)}c"
+        text.tag_add('search_match', idx, end_idx)
+        text.see(idx)
+        self._last_match_start = idx
+        self._last_match_end = end_idx
+        self.search_status.config(text="")
+
+
+class PvpResultViewer(tk.Toplevel):
+    """Shared viewer for every PvP search (see App._find_pvp_deaths,
+    _find_pvp_kills, _find_pvp_participated) - each row is the matched
+    trigger line, labeled per the search kind. Right-click a row for "Open
+    Log at This Line", same as LogSearchViewer/DropSnapshotViewer.
+    player_name is optional - Participated has no player name of its own
+    (see _search_pvp_participated), so an empty string omits that part of
+    the title instead of showing an empty pair of quotes."""
+    def __init__(self, parent, window_title, player_name, results: list, line_col_label, found_word):
+        super().__init__(parent)
+        if player_name:
+            self.title(f"{window_title} — '{player_name}'  ({len(results)} found)")
+        else:
+            self.title(f"{window_title}  ({len(results)} found)")
+        self.geometry("1150x540")
+        self.results = results
+
+        cols = ('File', 'Line #', 'Timestamp', 'Label', line_col_label)
+        frame = ttk.Frame(self)
+        frame.pack(fill='both', expand=True)
+
+        tv = ttk.Treeview(frame, columns=cols, show='headings', height=22)
+        widths = {'File': 200, 'Line #': 70, 'Timestamp': 90, 'Label': 160, line_col_label: 480}
+        for c in cols:
+            tv.heading(c, text=c)
+            tv.column(c, width=widths[c], anchor='center' if c == 'Line #' else 'w')
+
+        vsb = ttk.Scrollbar(frame, orient='vertical', command=tv.yview)
+        hsb = ttk.Scrollbar(frame, orient='horizontal', command=tv.xview)
+        tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        tv.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        for i, r in enumerate(results):
+            tv.insert('', 'end', iid=str(i),
+                      values=(r['file'], r['line_num'], r['timestamp'], r['label'], r['match_line']))
+
+        ttk.Label(self, text=f"{len(results)} {found_word} found",
+                  foreground='gray').pack(pady=4)
+
+        self.tv = tv
+        self._menu = tk.Menu(self, tearoff=0)
+        self._menu.add_command(label="Open Log at This Line", command=self._open_selected_log)
+        tv.bind('<Button-3>', self._on_right_click)
+
+    def _on_right_click(self, event):
+        row_iid = self.tv.identify_row(event.y)
+        if not row_iid:
+            return
+        self.tv.selection_set(row_iid)
+        self._menu.tk_popup(event.x_root, event.y_root)
+
+    def _open_selected_log(self):
+        sel = self.tv.selection()
+        if not sel:
+            return
+        r = self.results[int(sel[0])]
+        LogFileViewer(self, r['file'], r['path'], r['line_num'])
 
 
 class App(tk.Tk):
@@ -1868,6 +2093,54 @@ class App(tk.Tk):
                       "search every loaded file's raw text for any mention of the term.",
                  font=('Arial', 8, 'italic'), foreground='#666', wraplength=900,
                  justify='left').pack(anchor='w', pady=(4,0))
+
+        # ═══ PVP SECTION ═══
+        # Two independent searches sharing one frame: PvP Kill (left) finds
+        # a player YOU killed; PvP Death (right) finds a player who killed
+        # YOU. See _find_pvp_kills/_find_pvp_deaths for the exact matching
+        # rules for each.
+        pvp_frame = ttk.LabelFrame(t, text="PvP", padding=10)
+        pvp_frame.pack(fill='x', pady=(0,12))
+
+        pvp_kill_col = ttk.Frame(pvp_frame)
+        pvp_kill_col.pack(side='left', anchor='n', fill='both', expand=True)
+
+        ttk.Label(pvp_kill_col, text="Your Kills", font=('Arial', 9, 'bold')).pack(anchor='w', pady=(0,4))
+
+        pvp_kill_row = ttk.Frame(pvp_kill_col)
+        pvp_kill_row.pack(fill='x')
+        ttk.Label(pvp_kill_row, text="Player Name:", width=12).pack(side='left')
+        self.pvp_kill_player_var = tk.StringVar(value='')
+        pvp_kill_entry = ttk.Entry(pvp_kill_row, textvariable=self.pvp_kill_player_var, width=30)
+        pvp_kill_entry.pack(side='left', padx=4)
+        pvp_kill_entry.bind('<Return>', lambda e: self._search_pvp_kills())
+        ttk.Button(pvp_kill_row, text="⚔ Search",
+                  command=self._search_pvp_kills).pack(side='left', padx=4)
+
+        pvp_death_col = ttk.Frame(pvp_frame)
+        pvp_death_col.pack(side='left', anchor='n', fill='both', expand=True, padx=(20,0))
+
+        ttk.Label(pvp_death_col, text="Your Deaths", font=('Arial', 9, 'bold')).pack(anchor='w', pady=(0,4))
+
+        pvp_death_row = ttk.Frame(pvp_death_col)
+        pvp_death_row.pack(fill='x')
+        ttk.Label(pvp_death_row, text="Player Name:", width=12).pack(side='left')
+        self.pvp_death_player_var = tk.StringVar(value='')
+        pvp_death_entry = ttk.Entry(pvp_death_row, textvariable=self.pvp_death_player_var, width=30)
+        pvp_death_entry.pack(side='left', padx=4)
+        pvp_death_entry.bind('<Return>', lambda e: self._search_pvp_deaths())
+        ttk.Button(pvp_death_row, text="💀 Search",
+                  command=self._search_pvp_deaths).pack(side='left', padx=4)
+
+        pvp_participated_col = ttk.Frame(pvp_frame)
+        pvp_participated_col.pack(side='left', anchor='n', fill='both', expand=True, padx=(20,0))
+
+        ttk.Label(pvp_participated_col, text="Participated", font=('Arial', 9, 'bold')).pack(anchor='w', pady=(0,4))
+
+        pvp_participated_row = ttk.Frame(pvp_participated_col)
+        pvp_participated_row.pack(fill='x')
+        ttk.Button(pvp_participated_row, text="🤝 Search",
+                  command=self._search_pvp_participated).pack(side='left')
 
         # ═══ PARSING SECTION ═══
         parse_frame = ttk.LabelFrame(t, text="Parse Options", padding=10)
@@ -2395,6 +2668,237 @@ class App(tk.Tk):
             messagebox.showwarning("Some Files Skipped",
                 f"{len(errors)} file(s) could not be read:\n" + "\n".join(errors))
 
+    def _search_pvp_kills(self):
+        """PvP tab's "PvP Kill" search - finds every time you killed
+        `player_name` (see _find_pvp_kills), shown in a PvpResultViewer,
+        each labeled "You Killed <player_name>"."""
+        player_name = self.pvp_kill_player_var.get().strip()
+        if not player_name:
+            messagebox.showwarning("No Player Name", "Enter a player name first.")
+            return
+        if not self.files:
+            messagebox.showwarning("No Files", "Load some log files first.")
+            return
+
+        results, errors = self._find_pvp_kills(player_name)
+        if not results:
+            msg = f"No PvP kills of '{player_name}' were found in {len(self.files)} file(s)."
+            if errors:
+                msg += f"\n\n{len(errors)} file(s) could not be read: " + "; ".join(errors)
+            messagebox.showinfo("No Matches", msg)
+            return
+        PvpResultViewer(self, "PvP Kills", player_name, results, "Kill Line", "PvP kill(s)")
+
+        if errors:
+            messagebox.showwarning("Some Files Skipped",
+                f"{len(errors)} file(s) could not be read:\n" + "\n".join(errors))
+
+    def _find_pvp_kills(self, player_name):
+        """Finds every "You just killed <player_name>!" line immediately
+        followed by "You earn N realm points!" (N is 1-3 digits and is
+        intentionally excluded from the match, per explicit instruction -
+        only "realm points!" itself needs to be present). Checked within
+        the next few lines rather than strictly the very next one, in case
+        of minor log variations, though the only example seen so far has
+        no gap at all between the two lines."""
+        player_name = player_name.strip()
+        if not player_name:
+            return [], []
+
+        kill_re = re.compile(
+            r'^You just killed ' + re.escape(player_name) + r'!\s*$',
+            re.IGNORECASE)
+        realm_points_re = re.compile(r'You earn \d{1,3} realm points!', re.IGNORECASE)
+
+        results = []
+        errors = []
+        for f in self.files:
+            try:
+                with open(f['path'], 'r', encoding='utf-8', errors='ignore') as fh:
+                    lines = fh.readlines()
+            except Exception as e:
+                errors.append(f"{f['name']}: {e}")
+                continue
+
+            for idx, raw_line in enumerate(lines):
+                ts_match = re.match(r'^<(\d{2}:\d{2}:\d{2})>\s*', raw_line)
+                timestamp = ts_match.group(1) if ts_match else ''
+                kill_text = raw_line[ts_match.end():].strip() if ts_match else raw_line.strip()
+                if not kill_re.match(kill_text):
+                    continue
+                window = ''.join(lines[idx + 1:idx + 4])
+                if not realm_points_re.search(window):
+                    continue
+                results.append({
+                    'file': f['name'],
+                    'path': f['path'],
+                    'line_num': idx + 1,
+                    'timestamp': timestamp,
+                    'label': f'You Killed {player_name}',
+                    'match_line': kill_text,
+                })
+
+        return results, errors
+
+    def _search_pvp_participated(self):
+        """PvP tab's "Participated" search - no player name needed, just a
+        button (see _find_pvp_participated). Shown in a PvpResultViewer,
+        each labeled "Participated"."""
+        if not self.files:
+            messagebox.showwarning("No Files", "Load some log files first.")
+            return
+
+        results, errors = self._find_pvp_participated()
+        if not results:
+            msg = f"No PvP participation realm points were found in {len(self.files)} file(s)."
+            if errors:
+                msg += f"\n\n{len(errors)} file(s) could not be read: " + "; ".join(errors)
+            messagebox.showinfo("No Matches", msg)
+            return
+        PvpResultViewer(self, "PvP Participated", "", results, "Realm Points Line", "participation match(es)")
+
+        if errors:
+            messagebox.showwarning("Some Files Skipped",
+                f"{len(errors)} file(s) could not be read:\n" + "\n".join(errors))
+
+    def _find_pvp_participated(self):
+        """Finds every "You earn N realm points!" line (N is 1-3 digits,
+        not part of the match) EXCEPT ones immediately preceded by "You
+        just killed <name>!" (skipping over any blank lines in between) -
+        those are direct kills, already covered by "Your Kills". Everything
+        else counts as participating in someone else's kill (credited
+        realm points without personally landing the final blow). "Your
+        Deaths" never produces a realm-points line at all (dying doesn't
+        earn you any), so there's nothing to exclude on that side."""
+        realm_points_re = re.compile(r'^You earn \d{1,3} realm points!\s*$', re.IGNORECASE)
+        kill_re = re.compile(r'^You just killed .+!\s*$', re.IGNORECASE)
+
+        def strip_timestamp(line):
+            ts_match = re.match(r'^<(\d{2}:\d{2}:\d{2})>\s*', line)
+            if ts_match:
+                return line[ts_match.end():].strip(), ts_match.group(1)
+            return line.strip(), ''
+
+        results = []
+        errors = []
+        for f in self.files:
+            try:
+                with open(f['path'], 'r', encoding='utf-8', errors='ignore') as fh:
+                    lines = fh.readlines()
+            except Exception as e:
+                errors.append(f"{f['name']}: {e}")
+                continue
+
+            for idx, raw_line in enumerate(lines):
+                line_text, timestamp = strip_timestamp(raw_line)
+                if not realm_points_re.match(line_text):
+                    continue
+
+                prev_idx = idx - 1
+                while prev_idx >= 0 and lines[prev_idx].strip() == '':
+                    prev_idx -= 1
+                if prev_idx >= 0:
+                    prev_text, _ = strip_timestamp(lines[prev_idx])
+                    if kill_re.match(prev_text):
+                        continue  # a direct kill's own line - already in Your Kills
+
+                results.append({
+                    'file': f['name'],
+                    'path': f['path'],
+                    'line_num': idx + 1,
+                    'timestamp': timestamp,
+                    'label': 'Participated',
+                    'match_line': line_text,
+                })
+
+        return results, errors
+
+    def _search_pvp_deaths(self):
+        """PvP tab's "PvP Death" search - finds every time `player_name`'s
+        killing blow was immediately followed by your own death message
+        (see _find_pvp_deaths), shown in a PvpResultViewer, each labeled
+        "<player_name> Killed you"."""
+        player_name = self.pvp_death_player_var.get().strip()
+        if not player_name:
+            messagebox.showwarning("No Player Name", "Enter a player name first.")
+            return
+        if not self.files:
+            messagebox.showwarning("No Files", "Load some log files first.")
+            return
+
+        results, errors = self._find_pvp_deaths(player_name)
+        if not results:
+            msg = f"No PvP deaths from '{player_name}' were found in {len(self.files)} file(s)."
+            if errors:
+                msg += f"\n\n{len(errors)} file(s) could not be read: " + "; ".join(errors)
+            messagebox.showinfo("No Matches", msg)
+            return
+        PvpResultViewer(self, "PvP Deaths", player_name, results, "Killing Blow", "PvP death(s)")
+
+        if errors:
+            messagebox.showwarning("Some Files Skipped",
+                f"{len(errors)} file(s) could not be read:\n" + "\n".join(errors))
+
+    def _find_pvp_deaths(self, player_name):
+        """Finds every "<player_name> ... at you for N damage!" killing
+        blow immediately followed by a blank line and then the standard
+        death message block. Only one killing-blow wording has been seen
+        so far ("fires a lustrous wingclip shortbow at you for 105
+        damage!"), so the match is deliberately loose in the middle (any
+        text between the player's name and "at you for N damage!") to cover
+        other weapon/spell wordings that end the same way - tighten this if
+        that turns out to catch false positives. The death message's
+        "N minutes" is unique per occurrence and intentionally excluded
+        from the match, per explicit instruction - only the fixed
+        surrounding text is checked."""
+        player_name = player_name.strip()
+        if not player_name:
+            return [], []
+
+        attack_re = re.compile(
+            r'^' + re.escape(player_name) + r'\b.*\bat you for \d+ damage!\s*$',
+            re.IGNORECASE)
+        death_block_re = re.compile(
+            r'You were just killed!\s+You now float as a ghost\s+'
+            r'above your dead corpse\.\s+Type RELEASE to complete the\s+'
+            r'death process to start again in the temple, or try to\s+'
+            r'find a Priest to resurrect you in the next \d+ minutes!',
+            re.IGNORECASE)
+
+        results = []
+        errors = []
+        for f in self.files:
+            try:
+                with open(f['path'], 'r', encoding='utf-8', errors='ignore') as fh:
+                    lines = fh.readlines()
+            except Exception as e:
+                errors.append(f"{f['name']}: {e}")
+                continue
+
+            for idx, raw_line in enumerate(lines):
+                ts_match = re.match(r'^<(\d{2}:\d{2}:\d{2})>\s*', raw_line)
+                timestamp = ts_match.group(1) if ts_match else ''
+                attack_text = raw_line[ts_match.end():].strip() if ts_match else raw_line.strip()
+                if not attack_re.match(attack_text):
+                    continue
+                # Expect exactly one blank line, then the death message
+                # block within the next handful of lines.
+                if idx + 1 >= len(lines) or lines[idx + 1].strip() != '':
+                    continue
+                window = ''.join(lines[idx + 2:idx + 8])
+                if not death_block_re.search(window):
+                    continue
+                results.append({
+                    'file': f['name'],
+                    'path': f['path'],
+                    'line_num': idx + 1,
+                    'timestamp': timestamp,
+                    'label': f'{player_name} Killed you',
+                    'match_line': attack_text,
+                })
+
+        return results, errors
+
     def _find_raw_lines(self, query):
         """Plain substring search of every loaded file's raw lines"""
         case_sensitive = self.search_case_var.get()
@@ -2410,7 +2914,7 @@ class App(tk.Tk):
                         if needle in haystack:
                             ts_match = re.match(r'^<(\d{2}:\d{2}:\d{2})>', line)
                             timestamp = ts_match.group(1) if ts_match else ''
-                            results.append((f['name'], line_num, timestamp, line.strip()))
+                            results.append((f['name'], line_num, timestamp, line.strip(), f['path']))
             except Exception as e:
                 errors.append(f"{f['name']}: {e}")
         return results, errors
@@ -2461,6 +2965,8 @@ class App(tk.Tk):
                 snapshot = ''.join(lines[block_start:idx + 1]).rstrip('\n')
                 drops.append({
                     'file': f['name'],
+                    'path': f['path'],
+                    'line_num': idx + 1,
                     'timestamp': current_ts,
                     'item': item_clean,
                     'mob': mob_name,

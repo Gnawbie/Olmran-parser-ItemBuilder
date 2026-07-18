@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.11 (Current)
+### v5.4.12 (Current)
+- Search Logs results (both "Drops only" and plain raw-text search) can now be right-clicked → "Open Log at This Line" - opens the original log file in a new window, scrolled to and highlighting that exact line, with its own Find box (▲/▼ or Enter/Shift+Enter) to search around the rest of the file
+- New "PvP" section on the Parse tab, with three searches: **Your Kills** (finds every time you killed a named player), **Your Deaths** (finds every time a named player killed you), and **Participated** (a plain button - finds every realm-points award you got without landing the kill yourself). Right-click any result row here too for "Open Log at This Line"
+
+### v5.4.11
 - Every Character Items tab now also has the "Delete" button (bottom-right) that Lockers got in v5.4.10 - permanently removes that character's entire tab and its saved items, same placement and behavior as on a Locker tab
 
 ### v5.4.10
