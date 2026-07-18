@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v5.4.11</p>
+    <p class="tagline">Full usage guide - v5.4.12</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -155,6 +155,14 @@
           <li><b>Drops only</b> (default, on) - matches real drop events the same way the Loot parser does, so quality/material prefixes ("bright", "glowing", "shining", etc.) don't cause misses or false confidence. For each drop it shows a <b>snapshot</b>: every line from the last timestamp seen through the drop line itself, so you can see the fight and kill that led up to it. Click a result row to view its snapshot.</li>
           <li>Uncheck <b>Drops only</b> to instead do a plain raw-text search of every loaded file's lines (any mention of the term, not just drops), showing filename, line number, and timestamp per match.</li>
           <li>Case-sensitive matching is optional in both modes.</li>
+          <li>Right-click any result row (either mode) for <b>Open Log at This Line</b> - opens the original log file in a new window, scrolled to and highlighting that exact line, so you can see it in its complete original context. That window has its own Find box at the top (with ▲/▼ buttons, or plain Enter/Shift+Enter) to search around the rest of the file, wrapping around at either end.</li>
+        </ul>
+      </li>
+      <li><b>PvP</b> - three searches for player-vs-player combat, each result row also supporting <b>Open Log at This Line</b>:
+        <ul>
+          <li><b>Your Kills</b> - enter a player's name and find every time you killed them ("You just killed &lt;name&gt;!" immediately followed by "You earn N realm points!"), labeled "You Killed &lt;name&gt;". The realm points number is unique per kill and isn't part of the match.</li>
+          <li><b>Your Deaths</b> - enter a player's name and find every time they killed you (their killing blow line ending "at you for N damage!" immediately followed by a blank line and your own death message), labeled "&lt;name&gt; Killed you". The "N minutes" at the end of the death message is unique per death and isn't part of the match.</li>
+          <li><b>Participated</b> - just a button, no name needed. Finds every "You earn N realm points!" line that ISN'T immediately preceded by "You just killed &lt;name&gt;!" (that combo is a direct kill, already covered by Your Kills) - credit for participating in someone else's kill without landing the final blow yourself.</li>
         </ul>
       </li>
       <li>Parse options (Chat / Combat / Loot) automatically enable or disable based on which file types are loaded.</li>
