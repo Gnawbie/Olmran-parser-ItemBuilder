@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.9"
+VERSION = "5.4.10"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -6017,6 +6017,14 @@ class App(tk.Tk):
         if not char_name:
             messagebox.showwarning("No Character Name", "Enter a character name first.")
             return
+        # Match an existing character/Locker by spelling only, regardless of
+        # capitalization - typing "aria" (or "ARIA") when "Aria" already
+        # exists updates that same character instead of creating a case-
+        # sensitive duplicate. The existing entry's original casing wins
+        # (keeps whatever tab label was already showing).
+        existing_match = next((k for k in self.bank_characters if k.lower() == char_name.lower()), None)
+        if existing_match is not None:
+            char_name = existing_match
 
         text = self.bank_import_text.get('1.0', tk.END)
         owned_keys, recognized, name_counts_by_type = _parse_bank_paste_text(text, self.master_data)
@@ -6283,6 +6291,16 @@ class App(tk.Tk):
 
         count_label = ttk.Label(tab, text="", foreground='#666', wraplength=760, justify='left')
         count_label.pack(anchor='w', pady=(6,0))
+
+        # Only Lockers get a Delete button - permanently removes this
+        # Locker's entire tab and saved items, unlike Clear Saved List
+        # (which just empties the list but keeps the tab around). Bottom-
+        # right corner of the tab, separate from the other buttons above.
+        if cdata.get('is_locker'):
+            delete_frame = ttk.Frame(tab)
+            delete_frame.pack(side='bottom', fill='x', pady=(8,0))
+            ttk.Button(delete_frame, text="Delete",
+                      command=lambda: self._delete_bank_locker(char_name)).pack(side='right')
 
         self.bank_character_widgets[char_name] = {
             'tab': tab, 'tv': tv, 'desc_label': desc_label,
@@ -7481,6 +7499,24 @@ class App(tk.Tk):
         self._recompute_all_saved_item_names()
         self._save_config()
         self._refresh_bank_character_tab(char_name)
+        self._refresh_bank_saved_tab()
+
+    def _delete_bank_locker(self, char_name):
+        """Lockers-only "Delete" button - permanently removes char_name's
+        entire tab (destroying its widgets and dropping it from self.
+        bank_characters), unlike Clear Saved List which just empties the
+        item list but keeps the tab and character around. Main's aggregate
+        view and every other character's own tab are unaffected beyond no
+        longer folding this Locker's gear into their searches."""
+        if not messagebox.askyesno("Delete Locker",
+                f'Permanently delete the Locker "{char_name}" and all its saved items? This can\'t be undone.'):
+            return
+        w = self.bank_character_widgets.pop(char_name, None)
+        if w:
+            w['tab'].destroy()
+        self.bank_characters.pop(char_name, None)
+        self._recompute_all_saved_item_names()
+        self._save_config()
         self._refresh_bank_saved_tab()
 
     def _find_optimal_build(self):

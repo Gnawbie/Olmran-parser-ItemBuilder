@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.9 (Current)
+### v5.4.10 (Current)
+- Import's Character Name field now matches an existing character or Locker by spelling only, regardless of capitalization - typing "aria" or "ARIA" when "Aria" already exists updates that same character instead of creating a case-sensitive duplicate
+- Each Locker tab has a new "Delete" button (bottom-right) that permanently removes that Locker's entire tab and its saved items - unlike "Clear Saved List", which only empties the list but keeps the tab around. Regular character tabs don't get this button
+
+### v5.4.9
 - Fixed the Gear Tag dropdown sometimes not opening on the first click - it previously only got focused, not popped open, so the same click that revealed it didn't expand the list
 - Each Character Items tab (and Locker tab) has two new checkboxes: "Good Gear only" and "Invasion Gear only", which limit Find Best Bank Build to just items carrying that Gear Tag. Both can be checked together (either tag qualifies); neither checked runs as normal, with no restriction
 - Gear Tag's "Blank" option is back (now alongside "Both") - every item starts out Blank by default. "Both" always qualifies under either of the new checkboxes; "Blank" qualifies under neither, so a user who never uses Gear Tag will find both checkboxes just filter down to nothing until they start tagging
