@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.10"
+VERSION = "5.4.11"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -6292,15 +6292,14 @@ class App(tk.Tk):
         count_label = ttk.Label(tab, text="", foreground='#666', wraplength=760, justify='left')
         count_label.pack(anchor='w', pady=(6,0))
 
-        # Only Lockers get a Delete button - permanently removes this
-        # Locker's entire tab and saved items, unlike Clear Saved List
+        # Delete button - permanently removes this character's (or
+        # Locker's) entire tab and saved items, unlike Clear Saved List
         # (which just empties the list but keeps the tab around). Bottom-
         # right corner of the tab, separate from the other buttons above.
-        if cdata.get('is_locker'):
-            delete_frame = ttk.Frame(tab)
-            delete_frame.pack(side='bottom', fill='x', pady=(8,0))
-            ttk.Button(delete_frame, text="Delete",
-                      command=lambda: self._delete_bank_locker(char_name)).pack(side='right')
+        delete_frame = ttk.Frame(tab)
+        delete_frame.pack(side='bottom', fill='x', pady=(8,0))
+        ttk.Button(delete_frame, text="Delete",
+                  command=lambda: self._delete_bank_character(char_name)).pack(side='right')
 
         self.bank_character_widgets[char_name] = {
             'tab': tab, 'tv': tv, 'desc_label': desc_label,
@@ -7501,15 +7500,17 @@ class App(tk.Tk):
         self._refresh_bank_character_tab(char_name)
         self._refresh_bank_saved_tab()
 
-    def _delete_bank_locker(self, char_name):
-        """Lockers-only "Delete" button - permanently removes char_name's
-        entire tab (destroying its widgets and dropping it from self.
-        bank_characters), unlike Clear Saved List which just empties the
-        item list but keeps the tab and character around. Main's aggregate
-        view and every other character's own tab are unaffected beyond no
-        longer folding this Locker's gear into their searches."""
-        if not messagebox.askyesno("Delete Locker",
-                f'Permanently delete the Locker "{char_name}" and all its saved items? This can\'t be undone.'):
+    def _delete_bank_character(self, char_name):
+        """Every character (and Locker) tab's "Delete" button - permanently
+        removes char_name's entire tab (destroying its widgets and dropping
+        it from self.bank_characters), unlike Clear Saved List which just
+        empties the item list but keeps the tab and character around.
+        Main's aggregate view and every other character's own tab are
+        unaffected beyond no longer folding this one's gear into their
+        searches (for a Locker) or it no longer appearing in Main (either
+        kind)."""
+        if not messagebox.askyesno("Delete Character",
+                f'Permanently delete "{char_name}" and all its saved items? This can\'t be undone.'):
             return
         w = self.bank_character_widgets.pop(char_name, None)
         if w:

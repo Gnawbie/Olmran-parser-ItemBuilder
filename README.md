@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.10 (Current)
+### v5.4.11 (Current)
+- Every Character Items tab now also has the "Delete" button (bottom-right) that Lockers got in v5.4.10 - permanently removes that character's entire tab and its saved items, same placement and behavior as on a Locker tab
+
+### v5.4.10
 - Import's Character Name field now matches an existing character or Locker by spelling only, regardless of capitalization - typing "aria" or "ARIA" when "Aria" already exists updates that same character instead of creating a case-sensitive duplicate
 - Each Locker tab has a new "Delete" button (bottom-right) that permanently removes that Locker's entire tab and its saved items - unlike "Clear Saved List", which only empties the list but keeps the tab around. Regular character tabs don't get this button
 
