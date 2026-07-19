@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.13 (Current)
+### v5.4.14 (Current)
+- Fixed "Your Deaths" missing valid PvP deaths whose killing blow wasn't worded "...at you for N damage!" (e.g. "Aerion attacks you with his fiery hands for 145 damage!") - the match no longer requires any specific phrasing before "damage!", just that the line ends with it
+- That same looser match could pick up PvE mob deaths ("A savage owlbear claws you for..."), mislabeled "A Killed you"/"An Killed you"/"You Killed you" - those three are now filtered out of the results
+
+### v5.4.13
 - "Your Kills" and "Your Deaths" (Parse tab → PvP) no longer need a player name typed in - both are now plain buttons, like "Participated" already was. Each finds every match across the loaded logs and pulls the player's name straight out of the matched line for the label
 
 ### v5.4.12

@@ -47,8 +47,9 @@ Things that should apply no matter which class is fighting — battle start/end 
   - Example: `The parrying force around Rhythm goes away.`
 - **NPC/mob arrival** (not necessarily combat-specific, but shows up around battles): `<Name> arrives from the <direction>.`
   - Example: `Swampers arrives from the west.`
-- **Your own death (from the victim's perspective)** - killing blow line ending `at you for <N> damage!`, then a blank line, then a fixed death message block (the `N minutes` at the end is unique per death and not part of the match). **Already implemented** as its own small feature (Parse tab → PvP → "PvP Death") - not waiting on the bigger full-battle parser.
+- **Your own death (from the victim's perspective)** - killing blow line ending in `damage!` (no fixed wording required before it - each class has its own ability/weapon description, e.g. "fiery hands", "lustrous wingclip shortbow", none of which is part of the match), then a blank line, then a fixed death message block (the `N minutes` at the end is unique per death and not part of the match). **Already implemented** as its own small feature (Parse tab → PvP → "Your Deaths") - not waiting on the bigger full-battle parser.
   - Example: `Rhythm fires a lustrous wingclip shortbow at you for 105 damage!`
+  - Second wording seen: `Aerion attacks you with his fiery hands for 145 damage!` (confirms the match can't rely on fixed phrasing like "at you for" - only that the line ends in "damage!")
   - Example death block: `You were just killed!  You now float as a ghost / above your dead corpse.  Type RELEASE to complete the / death process to start again in the temple, or try to / find a Priest to resurrect you in the next 12 minutes!`
 - **A kill you got (from the killer's perspective)** - `You just killed <Name>!` immediately followed (no blank line, per the example) by `You earn <N> realm points!` (N is 1-3 digits and not part of the match). **Already implemented** alongside PvP Death (Parse tab → PvP → "PvP Kill").
   - Example: `You just killed Hippew!` / `You earn 62 realm points!`

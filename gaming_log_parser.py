@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.13"
+VERSION = "5.4.14"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -2821,21 +2821,22 @@ class App(tk.Tk):
                 f"{len(errors)} file(s) could not be read:\n" + "\n".join(errors))
 
     def _find_pvp_deaths(self):
-        """Finds every "<name> ... at you for N damage!" killing blow
-        immediately followed by a blank line and then the standard death
-        message block. Only one killing-blow wording has been seen so far
-        ("fires a lustrous wingclip shortbow at you for 105 damage!"), so
-        the match is deliberately loose in the middle (any text between
-        the attacker's name and "at you for N damage!") to cover other
-        weapon/spell wordings that end the same way - tighten this if that
-        turns out to catch false positives. The attacker's name is
-        captured straight out of the line (assumed to be one whitespace-
-        free token, true of every example seen so far) - no name needs to
-        be typed in ahead of time. The death message's "N minutes" is
-        unique per occurrence and intentionally excluded from the match,
-        per explicit instruction - only the fixed surrounding text is
-        checked."""
-        attack_re = re.compile(r'^(\S+)\b.*\bat you for \d+ damage!\s*$', re.IGNORECASE)
+        """Finds every killing-blow line ending in "damage!" immediately
+        followed by a blank line and then the standard death message
+        block. Deliberately doesn't require any specific wording before
+        "damage!" ("at you for", "fires...at you", "attacks you with",
+        etc.) - every class has its own ability/weapon description there
+        (e.g. "fiery hands", "lustrous wingclip shortbow") and none of that
+        is part of the match, only that the line ends in "damage!" (the
+        damage amount itself is wildcarded too, via \\d+, never a specific
+        value). The attacker's name is captured from the start of the line
+        (assumed to be one whitespace-free token) purely for the result
+        label - no name needs to be typed in ahead of time. The death
+        message's "N minutes" at the end is unique per occurrence and
+        likewise excluded from the match - only the fixed surrounding text
+        ("You were just killed! ... find a Priest to resurrect you in the
+        next N minutes!") is checked."""
+        attack_re = re.compile(r'^(\S+)\b.*\bdamage!\s*$', re.IGNORECASE)
         death_block_re = re.compile(
             r'You were just killed!\s+You now float as a ghost\s+'
             r'above your dead corpse\.\s+Type RELEASE to complete the\s+'
@@ -2868,6 +2869,13 @@ class App(tk.Tk):
                 if not death_block_re.search(window):
                     continue
                 attacker_name = m.group(1).strip()
+                # A/An mean the first word was actually a mob's article
+                # ("A savage owlbear claws you for..." - a PvE death, not
+                # PvP), and "You" isn't a real name either - all three are
+                # false positives from the deliberately loose attack-line
+                # pattern above, not an actual player's name.
+                if attacker_name.lower() in ('a', 'an', 'you'):
+                    continue
                 results.append({
                     'file': f['name'],
                     'path': f['path'],
