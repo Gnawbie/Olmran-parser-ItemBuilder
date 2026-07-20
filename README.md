@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.16 (Current)
+### v5.4.17 (Current)
+- Added "Non-Kaid" and "Non-Event" checkboxes to Build → Bank Build → Build Constraints → Only Found In (below Crafted) - hard exclusions that apply regardless of other realm filters. Non-Kaid excludes every Kaid realm (All/White/Green/Red/Purple); Non-Event excludes both Event and Glory Bea items
+
+### v5.4.16
 - Added a "Check for Update" button (top of the window, visible on every tab) that checks GitHub's latest release against the running version. If you're current, it just says so; if a newer version exists, the button itself becomes "Download & Update" - click it to download the new exe and have the app automatically swap it in and restart, no manual reinstall needed
 - Added a "Download Page" button next to it, for anyone who'd rather download and install a new version manually instead of using the built-in updater
 

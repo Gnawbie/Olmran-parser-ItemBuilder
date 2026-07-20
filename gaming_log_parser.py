@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.16"
+VERSION = "5.4.17"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -4244,6 +4244,21 @@ class App(tk.Tk):
             self.kaid_color_checkbuttons.append(cb)
             self.realm_filter_checkbuttons.append(cb)
 
+        # Non-Kaid/Non-Event - hard exclusions, independent of everything
+        # above (inclusion realms, All, Kaid All/colors). These always
+        # apply exactly as checked, regardless of what else is selected -
+        # not part of the "All vs. individual realm" mutual-exclusivity
+        # group, since excluding something is a different kind of ask than
+        # restricting to something. Non-Kaid excludes every Kaid.* realm;
+        # Non-Event excludes both Event and Glory Bea (Glory Bea items are
+        # also event-sourced, despite being a separate checkbox above).
+        self.exclude_kaid_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(realm_block, text="Non-Kaid", variable=self.exclude_kaid_var).grid(
+            row=3, column=0, sticky='w', padx=4, pady=2)
+        self.exclude_event_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(realm_block, text="Non-Event", variable=self.exclude_event_var).grid(
+            row=3, column=1, sticky='w', padx=4, pady=2)
+
         # "All" - an explicit way to say "no realm restriction at all",
         # rather than relying on every box being left unchecked to mean the
         # same thing. Mutually exclusive with every individual box above
@@ -6217,6 +6232,8 @@ class App(tk.Tk):
             'specific_level_fallback': self.specific_level_fallback_var.get(),
             'realm_filters': {realm: var.get() for realm, var in self.realm_filters.items()},
             'realm_filter_all': self.realm_filter_all_var.get(),
+            'exclude_kaid': self.exclude_kaid_var.get(),
+            'exclude_event': self.exclude_event_var.get(),
             # Armor Constraints
             'armor_all_checks': {t: v.get() for t, v in self.armor_all_checks.items()},
             'armor_checks': {
@@ -6287,6 +6304,8 @@ class App(tk.Tk):
             if realm in self.realm_filters:
                 self.realm_filters[realm].set(val)
         self.realm_filter_all_var.set(data.get('realm_filter_all', False))
+        self.exclude_kaid_var.set(data.get('exclude_kaid', False))
+        self.exclude_event_var.set(data.get('exclude_event', False))
         self._update_kaid_exclusivity()
         self._update_realm_all_exclusivity()
 
@@ -8653,6 +8672,16 @@ class App(tk.Tk):
             if 'crafted' in item_realm.lower() and not self.realm_filters['Crafted'].get():
                 continue
 
+            # Non-Kaid/Non-Event - hard exclusions that always apply
+            # exactly as checked, independent of the inclusion filter
+            # below (see the checkboxes' own comment for why). Non-Event
+            # excludes Glory Bea too, since it's also event-sourced.
+            if self.exclude_kaid_var.get() and 'kaid' in item_realm.lower():
+                continue
+            if self.exclude_event_var.get() and (
+                    'event' in item_realm.lower() or 'glory bea' in item_realm.lower()):
+                continue
+
             # Apply realm filter if any selected ("All" means none - see
             # _update_realm_all_exclusivity)
             selected_realms = ([] if self.realm_filter_all_var.get()
@@ -9848,6 +9877,16 @@ class App(tk.Tk):
             # explicitly checked - see the matching comment in
             # _find_optimal_build for the full reasoning.
             if 'crafted' in item_realm.lower() and not self.realm_filters['Crafted'].get():
+                continue
+
+            # Non-Kaid/Non-Event - hard exclusions that always apply
+            # exactly as checked, independent of the inclusion filter
+            # below (see the checkboxes' own comment for why). Non-Event
+            # excludes Glory Bea too, since it's also event-sourced.
+            if self.exclude_kaid_var.get() and 'kaid' in item_realm.lower():
+                continue
+            if self.exclude_event_var.get() and (
+                    'event' in item_realm.lower() or 'glory bea' in item_realm.lower()):
                 continue
 
             # Apply realm filter if any selected ("All" means none - see
