@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.15 (Current)
+### v5.4.16 (Current)
+- Added a "Check for Update" button (top of the window, visible on every tab) that checks GitHub's latest release against the running version. If you're current, it just says so; if a newer version exists, the button itself becomes "Download & Update" - click it to download the new exe and have the app automatically swap it in and restart, no manual reinstall needed
+- Added a "Download Page" button next to it, for anyone who'd rather download and install a new version manually instead of using the built-in updater
+
+### v5.4.15
 - Added a "Credits" button to the Parse tab, in the Parse Results row, far right - opens a popup listing everyone who contributed to the project
 
 ### v5.4.14

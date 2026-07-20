@@ -7,7 +7,7 @@ Parses Chat, Combat, and Loot from action and chat .log files
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from tkinter import font as tkfont
-import re, os, json, difflib
+import re, os, sys, json, difflib, threading, tempfile, subprocess, webbrowser, urllib.request, urllib.error
 from pathlib import Path
 from datetime import datetime
 import openpyxl
@@ -16,7 +16,11 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.15"
+VERSION = "5.4.16"
+
+# Check for Update button (see App._check_for_update) queries this repo's
+# GitHub Releases API - never contacted automatically, only when clicked.
+GITHUB_REPO = "Gnawbie/Olmran-parser-ItemBuilder"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1954,6 +1958,190 @@ class App(tk.Tk):
         self._save_config()
         self.destroy()
 
+    # ── UPDATE CHECK / SELF-UPDATE ─────────────────────────────
+    # Entirely manual - never runs on startup or on any timer, only when
+    # the user clicks "Check for Update". Two separate steps: check (asks
+    # GitHub's Releases API what the latest tag is, compares it to VERSION)
+    # and, only if the user then clicks the resulting "Download & Update"
+    # button, the actual download-and-replace (see _start_self_update).
+    def _build_update_bar(self):
+        """Small bar above the main scrollable area (so it's visible no
+        matter which tab is selected) holding "Download Page" and "Check
+        for Update" side by side in one row, with the check's status
+        message on its own row underneath."""
+        bar = ttk.Frame(self, padding=(8,4))
+        bar.pack(fill='x', side='top')
+
+        button_row = ttk.Frame(bar)
+        button_row.pack(side='top', anchor='e')
+        ttk.Button(button_row, text="Download Page",
+                  command=self._open_download_page).pack(side='left', padx=(0,8))
+        self.update_check_button = ttk.Button(button_row, text="Check for Update",
+                                              command=self._check_for_update)
+        self.update_check_button.pack(side='left')
+
+        self.update_status_label = ttk.Label(bar, text="", foreground='#666')
+        self.update_status_label.pack(side='top', anchor='e', pady=(2,0))
+
+        self._pending_update_url = None
+        self._pending_update_version = None
+
+    def _open_download_page(self):
+        """"Download Page" button - opens the project's GitHub Pages
+        download site in the default browser, for anyone who'd rather
+        download and install a new version manually instead of using
+        Check for Update's self-updater."""
+        webbrowser.open("https://gnawbie.github.io/Olmran-parser-ItemBuilder/")
+
+    @staticmethod
+    def _version_tuple(v):
+        parts = []
+        for p in (v or '').strip().lstrip('vV').split('.'):
+            try:
+                parts.append(int(p))
+            except ValueError:
+                parts.append(0)
+        return tuple(parts)
+
+    def _check_for_update(self):
+        """"Check for Update" button - disables itself and shows
+        "Checking..." while a background thread asks GitHub's Releases API
+        for the latest tag (see _check_for_update_worker), so the UI never
+        freezes waiting on the network."""
+        self.update_check_button.config(state='disabled', text="Checking...")
+        self.update_status_label.config(text="", foreground='#666')
+        threading.Thread(target=self._check_for_update_worker, daemon=True).start()
+
+    def _check_for_update_worker(self):
+        """Runs off the main thread - only ever touches Tkinter widgets via
+        self.after(0, ...), since Tkinter itself isn't thread-safe."""
+        try:
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+                headers={'Accept': 'application/vnd.github+json',
+                         'User-Agent': 'OlmranItemBuilder-UpdateCheck'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            latest_version = (data.get('tag_name') or '').strip()
+            assets = data.get('assets') or []
+            exe_asset = next((a for a in assets
+                              if (a.get('name') or '').lower().endswith('.exe')), None)
+            download_url = exe_asset.get('browser_download_url') if exe_asset else None
+            self.after(0, lambda: self._on_update_check_done(latest_version, download_url, None))
+        except Exception as e:
+            self.after(0, lambda: self._on_update_check_done(None, None, e))
+
+    def _on_update_check_done(self, latest_version, download_url, error):
+        if error is not None or not latest_version:
+            self.update_check_button.config(state='normal', text="Check for Update")
+            self.update_status_label.config(text="Check failed - no internet?", foreground='#a33')
+            return
+
+        if self._version_tuple(latest_version) > self._version_tuple(VERSION):
+            if not download_url:
+                # A newer tag exists but has no .exe asset attached yet
+                # (release still being prepared) - nothing to offer yet.
+                self.update_check_button.config(state='normal', text="Check for Update")
+                self.update_status_label.config(
+                    text=f"v{latest_version.lstrip('vV')} is out, but no download is attached yet",
+                    foreground='#a33')
+                return
+            self._pending_update_url = download_url
+            self._pending_update_version = latest_version.lstrip('vV')
+            self.update_check_button.config(
+                state='normal', text=f"⬇ Download & Update to v{self._pending_update_version}",
+                command=self._start_self_update)
+            self.update_status_label.config(text="", foreground='#666')
+        else:
+            self.update_check_button.config(state='normal', text="Check for Update")
+            self.update_status_label.config(text="You're on the latest version", foreground='#2a2')
+
+    def _start_self_update(self):
+        """"Download & Update" button (only shown once a newer version was
+        found) - confirms with the user (this replaces the running exe, an
+        action with no undo), then downloads the new exe and hands off to
+        a small batch script (see _write_update_batch_script) that waits
+        for this process to actually exit, swaps the new exe into place,
+        and relaunches it. Only meaningful when actually running as the
+        packaged .exe - from source (python gaming_log_parser.py) there's
+        no exe for this to replace, so it just points at the release page
+        instead."""
+        if not getattr(sys, 'frozen', False):
+            messagebox.showinfo("Running From Source",
+                "Self-update only applies to the packaged .exe. Since this is running from source, "
+                "pull the latest changes from GitHub instead.")
+            return
+
+        version = self._pending_update_version
+        if not messagebox.askyesno("Download and Install Update",
+                f"Download v{version} and restart to install it?\n\n"
+                "The app will close, install the update, and reopen automatically."):
+            return
+
+        self.update_check_button.config(state='disabled', text="Downloading...")
+        self.update_status_label.config(text="", foreground='#666')
+        threading.Thread(target=self._download_update_worker,
+                         args=(self._pending_update_url, version), daemon=True).start()
+
+    def _download_update_worker(self, download_url, version):
+        try:
+            current_exe = os.path.abspath(sys.executable)
+            temp_dir = tempfile.gettempdir()
+            new_exe_path = os.path.join(temp_dir, f"OlmranItemBuilder_v{version}.exe")
+
+            req = urllib.request.Request(
+                download_url, headers={'User-Agent': 'OlmranItemBuilder-UpdateCheck'})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                downloaded = resp.read()
+            if len(downloaded) < 1_000_000:
+                # A real build is many MB - anything drastically smaller is
+                # almost certainly an error page, not the actual exe.
+                raise ValueError(f"Downloaded file is only {len(downloaded)} bytes - too small to be real")
+            with open(new_exe_path, 'wb') as f:
+                f.write(downloaded)
+
+            self.after(0, lambda: self._finish_self_update(current_exe, new_exe_path))
+        except Exception as e:
+            self.after(0, lambda: self._on_update_download_failed(e))
+
+    def _on_update_download_failed(self, error):
+        self.update_check_button.config(
+            state='normal', text=f"⬇ Download & Update to v{self._pending_update_version}",
+            command=self._start_self_update)
+        self.update_status_label.config(text=f"Download failed: {error}", foreground='#a33')
+
+    def _finish_self_update(self, current_exe, new_exe_path):
+        """Hands off to a detached batch script that waits for this
+        process's PID to disappear, replaces current_exe with the
+        downloaded new_exe_path, relaunches it, and deletes itself -
+        needed because a running Windows exe can't overwrite its own file.
+        Then exits immediately (os._exit, not a normal close) so the file
+        lock is released right away instead of waiting on any further
+        cleanup."""
+        try:
+            bat_path = os.path.join(tempfile.gettempdir(), "olmran_update.bat")
+            pid = os.getpid()
+            with open(bat_path, 'w') as f:
+                f.write(
+                    "@echo off\r\n"
+                    ":wait\r\n"
+                    f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL\r\n'
+                    "if not errorlevel 1 (\r\n"
+                    "    timeout /t 1 /nobreak >NUL\r\n"
+                    "    goto wait\r\n"
+                    ")\r\n"
+                    f'move /y "{new_exe_path}" "{current_exe}"\r\n'
+                    f'start "" "{current_exe}"\r\n'
+                    'del "%~f0"\r\n'
+                )
+            subprocess.Popen(['cmd', '/c', bat_path],
+                             creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS)
+        except Exception as e:
+            self._on_update_download_failed(e)
+            return
+        self._save_config()
+        os._exit(0)
+
     # ── BUILD UI ──────────────────────────────────────────────
     def _build_scrollable_root(self):
         """Wrap the whole app in a Canvas + visible vertical Scrollbar, so
@@ -2025,6 +2213,7 @@ class App(tk.Tk):
         style.configure('WeaponRow.TFrame', borderwidth=1, relief='solid', bordercolor='#888888')
         style.configure('WeaponRowAlt.TFrame', borderwidth=1, relief='solid', bordercolor='#bbbbbb')
 
+        self._build_update_bar()
         self._build_scrollable_root()
 
         nb = ttk.Notebook(self._scroll_content)
