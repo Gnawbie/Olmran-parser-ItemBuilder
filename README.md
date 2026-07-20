@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.14 (Current)
+### v5.4.15 (Current)
+- Added a "Credits" button to the Parse tab, in the Parse Results row, far right - opens a popup listing everyone who contributed to the project
+
+### v5.4.14
 - Fixed "Your Deaths" missing valid PvP deaths whose killing blow wasn't worded "...at you for N damage!" (e.g. "Aerion attacks you with his fiery hands for 145 damage!") - the match no longer requires any specific phrasing before "damage!", just that the line ends with it
 - That same looser match could pick up PvE mob deaths ("A savage owlbear claws you for..."), mislabeled "A Killed you"/"An Killed you"/"You Killed you" - those three are now filtered out of the results
 

@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.14"
+VERSION = "5.4.15"
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1260,6 +1260,36 @@ def _bank_owned_match(item_key, owned_keys):
     )
 
 
+CREDITS = [
+    ("Gnawbie", "Majority of Content"),
+    ("Claude", "Programming"),
+    ("Polo", "Content Suggestions"),
+    ("Xanthus", "Content Suggestions"),
+    ("Torchkc", "Bug reports and Content Suggestion"),
+]
+
+
+class CreditsDialog(tk.Toplevel):
+    """Parse tab's "Credits" button - a simple list of who contributed
+    what, see the module-level CREDITS list."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Credits")
+        self.resizable(False, False)
+        self.grab_set()
+
+        ttk.Label(self, text="Credits", font=('Arial', 13, 'bold')).pack(anchor='w', padx=16, pady=(14,8))
+
+        rows_frame = ttk.Frame(self)
+        rows_frame.pack(padx=16, pady=(0,4))
+        for row, (name, role) in enumerate(CREDITS):
+            ttk.Label(rows_frame, text=name, font=('Arial', 10, 'bold')).grid(
+                row=row, column=0, sticky='w', padx=(0,12), pady=3)
+            ttk.Label(rows_frame, text=role).grid(row=row, column=1, sticky='w', pady=3)
+
+        ttk.Button(self, text="Close", command=self.destroy).pack(pady=(10,14))
+
+
 class ItemMatchDialog(tk.Toplevel):
     """Modal dialog listing close-spelling matches for a searched item name,
     letting the user confirm which one they actually meant."""
@@ -2173,10 +2203,14 @@ class App(tk.Tk):
         ttk.Label(t, textvariable=self.status_var,
                   font=('Arial', 10), foreground='#222').pack(anchor='w', pady=(12,0))
 
-        # Mini stats
-        self.stats_frame = ttk.LabelFrame(t, text="Parse Results", padding=10)
-        self.stats_frame.pack(fill='x', pady=(12,0))
-        
+        # Mini stats - Credits button shares this row, pinned to the far
+        # right, rather than living inside the Parse Results box itself.
+        results_row = ttk.Frame(t)
+        results_row.pack(fill='x', pady=(12,0))
+
+        self.stats_frame = ttk.LabelFrame(results_row, text="Parse Results", padding=10)
+        self.stats_frame.pack(side='left')
+
         self.stat_labels = {}
         for i, (k, icon) in enumerate([('chat','💬'),('combat','⚔️'),('loot','💎')]):
             f = ttk.Frame(self.stats_frame)
@@ -2185,6 +2219,9 @@ class App(tk.Tk):
             lbl = ttk.Label(f, text="0 rows", foreground='#555')
             lbl.pack()
             self.stat_labels[k] = lbl
+
+        ttk.Button(results_row, text="Credits",
+                  command=self._show_credits).pack(side='right', anchor='n')
 
     # ── FIELDS TAB ────────────────────────────────────────────
     def _build_fields_tab(self):
@@ -2621,6 +2658,9 @@ class App(tk.Tk):
                 f"No {mode} data yet.\nRun Parse first (with {mode} files loaded).")
             return
         SnapshotViewer(self, mode.title(), rows, self.fields[mode])
+
+    def _show_credits(self):
+        CreditsDialog(self)
 
     def _search_logs(self):
         """Search every loaded file for a term, e.g. an item name. In "Drops
