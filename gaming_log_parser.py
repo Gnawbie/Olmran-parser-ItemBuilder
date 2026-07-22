@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.20"
+VERSION = "5.4.21"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -877,8 +877,6 @@ SPELL_TIER_RESTRICTIONS = {
     # disease.resist is the only spell that goes up to tier iv
     'disease.resist': ['(any)', 'i', 'ii', 'iii', 'iv'],
     **{spell: PROTECT_TIERS for spell in PROTECT_SPELLS},
-    # Class Specific spells don't go up to tier iii at all.
-    **{spell.lower(): ['(any)', 'i', 'ii'] for spell in SPELL_CATEGORIES['Class Specific']},
 }
 
 # A build can include at most this many items from the "Crafted" realm.

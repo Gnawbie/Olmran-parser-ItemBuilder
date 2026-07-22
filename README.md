@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.20 (Current)
+### v5.4.21 (Current)
+- Fixed Build → Basic Constraints → Wanted Spells: Class Specific spells (Reverb, Aura, Backstab, Bash, Berzerk, etc.) were capped at tier ii - their tier dropdown now goes up to iii like other spell categories
+
+### v5.4.20
 - Fixed the auto-updater being able to corrupt the installed exe on a bad download - the sanity check only rejected downloads under 1MB, so a truncated/interrupted download (e.g. 8MB of the real ~15.7MB) could still sail through and get written over the working install, producing an exe that fails to launch at all ("Failed to load Python DLL"). Now validates the exact byte count against GitHub's own reported asset size, plus checks the file starts with a valid EXE header, before ever touching the installed exe - a bad download is now reported as a failure instead of corrupting anything
 
 ### v5.4.19
