@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v5.4.18</p>
+    <p class="tagline">Full usage guide - v5.4.19</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -150,7 +150,8 @@
     <h2 id="parse">2. Parse Tab</h2>
     <p>Load your game logs here and turn them into structured Chat, Combat, and Loot data.</p>
     <ul>
-      <li>Load CHAT logs and ACTION logs - the file type is auto-detected from the filename.</li>
+      <li>Load CHAT logs and ACTION logs - the file type is auto-detected from the filename. The Parse tab has its own inner sub-tabs: <b>Files & Search</b> (everything below) and a separate, always-visible <b>XP Counter</b> sub-tab - the file list appears on both and stays in sync, so files can be loaded without leaving either one.</li>
+      <li><b>XP Counter</b> (its own sub-tab) - computes overall XP/hour from the loaded log(s), parsed from "You gain BASE (+BONUS) experience points." lines, plus a breakdown by area using time actually spent in each one (tracked via the game's own room-title lines). Click the button to compute a working result (replaced each time you click); use its <b>Save</b> button to turn a result into its own persistent, named tab with a <b>Delete</b> button, surviving a restart.</li>
       <li><b>Search Logs</b> finds every time an item actually dropped across a whole batch of loaded logs, independent of running a full parse:
         <ul>
           <li><b>Drops only</b> (default, on) - matches real drop events the same way the Loot parser does, so quality/material prefixes ("bright", "glowing", "shining", etc.) don't cause misses or false confidence. For each drop it shows a <b>snapshot</b>: every line from the last timestamp seen through the drop line itself, so you can see the fight and kill that led up to it. Click a result row to view its snapshot.</li>
