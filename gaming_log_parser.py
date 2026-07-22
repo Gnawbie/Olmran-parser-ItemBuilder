@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.18"
+VERSION = "5.4.19"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -1845,6 +1845,10 @@ class App(tk.Tk):
                     # whatever was last set up as a fast-testing default.
                     self._persisted_test_basic_constraints = (
                         config.get('test_basic_constraints', {}) if self.is_test_build else {})
+                    # Parse tab's XP Counter - saved area/hour reports (raw
+                    # data only; turned into self.xp_saved_reports, complete
+                    # with their tab frames, once the Parse tab is built).
+                    self._persisted_xp_reports = config.get('xp_reports', [])
             else:
                 self.last_open_dir = os.path.expanduser("~")
                 self.last_save_dir = os.path.expanduser("~")
@@ -1858,6 +1862,7 @@ class App(tk.Tk):
                 self._persisted_bank_gear_tags = {}
                 self._persisted_constraint_sets = []
                 self._persisted_test_basic_constraints = {}
+                self._persisted_xp_reports = []
         except Exception:
             self.last_open_dir = os.path.expanduser("~")
             self.last_save_dir = os.path.expanduser("~")
@@ -1871,6 +1876,7 @@ class App(tk.Tk):
             self._persisted_bank_gear_tags = {}
             self._persisted_constraint_sets = []
             self._persisted_test_basic_constraints = {}
+            self._persisted_xp_reports = []
 
     def _save_config(self):
         """Save configuration to file"""
@@ -1903,6 +1909,10 @@ class App(tk.Tk):
                 'constraint_sets': [
                     {'name': cs['name'], 'data': cs['data']}
                     for cs in getattr(self, 'saved_constraint_sets', [])
+                ],
+                'xp_reports': [
+                    {'name': rep['name'], 'data': rep['data']}
+                    for rep in getattr(self, 'xp_saved_reports', [])
                 ],
             }
             if getattr(self, 'is_test_build', False):
@@ -2267,42 +2277,73 @@ class App(tk.Tk):
         self._build_saved_builds_tab()
         self._build_area_items_tab()
 
-    # ── PARSE TAB (FILES + PARSING) ───────────────────────────
-    def _build_parse_tab(self):
-        t = self.tab_parse
-        
-        # ═══ FILES SECTION ═══
-        ttk.Label(t, text="Load Log Files",
+    def _build_file_list_section(self, parent):
+        """Builds one copy of the "Load Log Files" section (toolbar +
+        file table + hint) in the given parent and returns its Treeview.
+        Called once per sub-tab that needs it - every copy is tracked in
+        self.file_tvs/self.file_count_lbls and kept in sync by
+        _refresh_file_list, so loading or removing files from any one of
+        them updates them all."""
+        ttk.Label(parent, text="Load Log Files",
                   font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0, 8))
 
-        top = ttk.Frame(t)
+        top = ttk.Frame(parent)
         top.pack(fill='x')
         ttk.Button(top, text="➕ Add Files",   command=self._add_files).pack(side='left', padx=(0,6))
         ttk.Button(top, text="📁 Add Folder",  command=self._add_folder).pack(side='left', padx=(0,6))
         ttk.Button(top, text="❌ Remove",      command=self._remove_files).pack(side='left', padx=(0,6))
         ttk.Button(top, text="🗑 Clear All",   command=self._clear_files).pack(side='left')
-        self.file_count_lbl = ttk.Label(top, text="", foreground='#444')
-        self.file_count_lbl.pack(side='right')
+        count_lbl = ttk.Label(top, text="", foreground='#444')
+        count_lbl.pack(side='right')
+        self.file_count_lbls.append(count_lbl)
 
         cols = ('File', 'Type', 'Size')
-        frame = ttk.Frame(t)
+        frame = ttk.Frame(parent)
         frame.pack(fill='both', expand=True, pady=8)
 
-        self.file_tv = ttk.Treeview(frame, columns=cols, show='headings', height=8)
-        self.file_tv.heading('File', text='Filename')
-        self.file_tv.heading('Type', text='Auto-Detected Type')
-        self.file_tv.heading('Size', text='Size')
-        self.file_tv.column('File', width=380)
-        self.file_tv.column('Type', width=150)
-        self.file_tv.column('Size', width=90, anchor='e')
+        file_tv = ttk.Treeview(frame, columns=cols, show='headings', height=8)
+        file_tv.heading('File', text='Filename')
+        file_tv.heading('Type', text='Auto-Detected Type')
+        file_tv.heading('Size', text='Size')
+        file_tv.column('File', width=380)
+        file_tv.column('Type', width=150)
+        file_tv.column('Size', width=90, anchor='e')
 
-        vsb = ttk.Scrollbar(frame, command=self.file_tv.yview)
-        self.file_tv.configure(yscrollcommand=vsb.set)
-        self.file_tv.pack(side='left', fill='both', expand=True)
+        vsb = ttk.Scrollbar(frame, command=file_tv.yview)
+        file_tv.configure(yscrollcommand=vsb.set)
+        file_tv.pack(side='left', fill='both', expand=True)
         vsb.pack(side='right', fill='y')
 
-        ttk.Label(t, text="💡 File types are auto-detected (CHAT = Chat logs, ACTION = Action logs)",
+        ttk.Label(parent, text="💡 File types are auto-detected (CHAT = Chat logs, ACTION = Action logs)",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w', pady=(0,12))
+
+        self.file_tvs.append(file_tv)
+        return file_tv
+
+    # ── PARSE TAB (FILES + PARSING) ───────────────────────────
+    def _build_parse_tab(self):
+        # Parse gets its own inner notebook: "Files & Search" holds
+        # everything that used to live directly in this tab, and "XP
+        # Counter" is a separate sub-tab, always present, clear of
+        # everything else - see _build_xp_counter_subtab.
+        self.parse_sub_notebook = ttk.Notebook(self.tab_parse)
+        self.parse_sub_notebook.pack(fill='both', expand=True)
+
+        t = ttk.Frame(self.parse_sub_notebook, padding=12)
+        xp_tab = ttk.Frame(self.parse_sub_notebook, padding=12)
+        self.parse_sub_notebook.add(t, text='📄  Files & Search')
+        self.parse_sub_notebook.add(xp_tab, text='🧮  XP Counter')
+
+        # ═══ FILES SECTION ═══
+        # Built via a shared helper so the exact same section (toolbar +
+        # file table + hint, all backed by the one shared self.files
+        # list) can appear on both this sub-tab and the XP Counter
+        # sub-tab - loading/removing files from either place keeps both
+        # in sync (see self.file_tvs / self.file_count_lbls and
+        # _refresh_file_list/_remove_files).
+        self.file_tvs = []
+        self.file_count_lbls = []
+        self.file_tv = self._build_file_list_section(t)
 
         # ═══ SEARCH SECTION ═══
         # Search across every loaded file's actual lines - independent of Run
@@ -2318,14 +2359,14 @@ class App(tk.Tk):
         search_entry = ttk.Entry(search_row, textvariable=self.search_query_var, width=40)
         search_entry.pack(side='left', padx=4)
         search_entry.bind('<Return>', lambda e: self._search_logs())
+        ttk.Button(search_row, text="🔍 Search",
+                  command=self._search_logs).pack(side='left', padx=4)
         self.search_case_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(search_row, text="Case sensitive",
                        variable=self.search_case_var).pack(side='left', padx=8)
         self.search_drops_only_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(search_row, text="Drops only (with snapshot)",
                        variable=self.search_drops_only_var).pack(side='left', padx=8)
-        ttk.Button(search_row, text="🔍 Search",
-                  command=self._search_logs).pack(side='left', padx=4)
 
         ttk.Label(search_frame,
                  text="💡 \"Drops only\" catches every instance the item actually dropped (ignoring quality/material "
@@ -2433,6 +2474,41 @@ class App(tk.Tk):
 
         ttk.Button(results_row, text="Credits",
                   command=self._show_credits).pack(side='right', anchor='n')
+
+        # ═══ XP COUNTER SUB-TAB (own page, clear of everything else) ═══
+        # Its own copy of "Load Log Files" too, kept in sync with Files &
+        # Search's copy (see _build_file_list_section), so files can be
+        # loaded here without switching sub-tabs.
+        self._build_file_list_section(xp_tab)
+
+        ttk.Label(xp_tab, text="XP Counter",
+                  font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0, 8))
+
+        xp_top_row = ttk.Frame(xp_tab)
+        xp_top_row.pack(fill='x')
+        ttk.Button(xp_top_row, text="🧮 XP Counter",
+                  command=self._open_xp_counter).pack(side='left')
+        ttk.Label(xp_top_row,
+                 text="Computes XP/hour from the loaded log(s), broken down by time actually spent in each area.",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=10)
+
+        # Results notebook: an ephemeral working tab is replaced in place
+        # on every click; saved reports (via that tab's own Save button)
+        # get their own persistent, named tab with a Delete button,
+        # restored from config below.
+        self.xp_notebook = ttk.Notebook(xp_tab)
+        self.xp_notebook.pack(fill='both', expand=True, pady=(10,0))
+
+        self.xp_saved_reports = []
+        self._xp_working_frame = None
+        for rep in getattr(self, '_persisted_xp_reports', []):
+            rep_name = rep.get('name', '')
+            rep_data = rep.get('data', {})
+            if not rep_name or not rep_data:
+                continue
+            frame = self._build_xp_report_frame(self.xp_notebook, rep_data, is_saved=True, name=rep_name)
+            self.xp_notebook.add(frame, text=rep_name)
+            self.xp_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
 
     # ── FIELDS TAB ────────────────────────────────────────────
     def _build_fields_tab(self):
@@ -2752,10 +2828,20 @@ class App(tk.Tk):
         self._update_parse_options()
 
     def _remove_files(self):
-        for iid in self.file_tv.selection():
-            idx = self.file_tv.index(iid)
-            if 0 <= idx < len(self.files):
-                del self.files[idx]
+        # There are now multiple copies of the file list (Files & Search
+        # and XP Counter sub-tabs) all showing the same rows - collect
+        # selected indices across every copy (only whichever one the
+        # user actually clicked in will have a selection) before
+        # deleting, highest index first so earlier deletions don't shift
+        # the indices of ones still pending.
+        selected_indices = set()
+        for tv in self.file_tvs:
+            for iid in tv.selection():
+                idx = tv.index(iid)
+                if 0 <= idx < len(self.files):
+                    selected_indices.add(idx)
+        for idx in sorted(selected_indices, reverse=True):
+            del self.files[idx]
         self._refresh_file_list()
         self._update_parse_options()
 
@@ -2818,13 +2904,15 @@ class App(tk.Tk):
         self._refresh_file_list()
 
     def _refresh_file_list(self):
-        self.file_tv.delete(*self.file_tv.get_children())
-        for f in self.files:
-            kb = f['size'] / 1024
-            self.file_tv.insert('', 'end',
-                values=(f['name'], f['type'], f"{kb:.1f} KB"))
         n = len(self.files)
-        self.file_count_lbl.config(text=f"{n} file{'s' if n != 1 else ''} loaded")
+        for tv in self.file_tvs:
+            tv.delete(*tv.get_children())
+            for f in self.files:
+                kb = f['size'] / 1024
+                tv.insert('', 'end', values=(f['name'], f['type'], f"{kb:.1f} KB"))
+        count_text = f"{n} file{'s' if n != 1 else ''} loaded"
+        for lbl in self.file_count_lbls:
+            lbl.config(text=count_text)
 
     # ── PARSE HELPERS ─────────────────────────────────────────
     def _run_parse(self):
@@ -3137,6 +3225,244 @@ class App(tk.Tk):
                 })
 
         return results, errors
+
+    # ── XP COUNTER ─────────────────────────────────────────────
+    def _compute_xp_stats(self):
+        """Parses every loaded file for area headers and XP-gain lines,
+        returning overall XP/hour plus a per-area breakdown, or None if
+        no XP-gain lines were found in any loaded file.
+
+        An area header is a line that's just "[Area Name]" and nothing
+        else, optionally preceded by a <HH:MM:SS> timestamp - the same
+        bracket-only room title the game prints on entering or looking
+        at a room. This deliberately excludes multi-column status
+        headers like "[ Class        Lvl] Status  Name ..." (the group
+        roster), since those have more text after the closing bracket;
+        a real area header never does.
+
+        An XP-gain line reads "You gain BASE (+BONUS) experience
+        points." - the actual total awarded is BASE+BONUS, confirmed
+        against real logs where BONUS is consistently exactly 2x BASE
+        (a flat 200% bonus event), i.e. the parenthesized number is
+        added on top, not just a restatement of the base.
+
+        Each file's timeline is walked independently and only the
+        area-to-area line movements within a single file count toward
+        "time spent in an area" - the gap between separate log files is
+        real-world downtime, not time spent anywhere in-game. Results
+        are then combined across every loaded file."""
+        ts_re = re.compile(r'^<(\d{2}):(\d{2}):(\d{2})>\s*')
+        area_re = re.compile(r'^\[(.+)\]\s*$')
+        xp_re = re.compile(r'^You gain\s+(\d+)\s*\(\+(\d+)\)\s*experience points\.', re.IGNORECASE)
+
+        area_xp = {}
+        area_seconds = {}
+        total_xp = 0
+        total_seconds = 0.0
+        any_xp_found = False
+
+        for f in self.files:
+            try:
+                with open(f['path'], 'r', encoding='utf-8', errors='ignore') as fh:
+                    lines = fh.readlines()
+            except Exception:
+                continue
+
+            day_offset = 0
+            prev_raw_secs = None
+            last_ts = None
+            first_ts = None
+            current_area = None
+            area_start_ts = None
+
+            def close_stint(end_ts):
+                nonlocal current_area, area_start_ts
+                if current_area is not None and area_start_ts is not None and end_ts is not None:
+                    area_seconds[current_area] = (
+                        area_seconds.get(current_area, 0.0) + (end_ts - area_start_ts))
+
+            for raw_line in lines:
+                line = raw_line.rstrip('\r\n')
+                m_ts = ts_re.match(line)
+                if m_ts:
+                    h, mi, s = (int(x) for x in m_ts.groups())
+                    raw_secs = h * 3600 + mi * 60 + s
+                    if prev_raw_secs is not None and raw_secs < prev_raw_secs:
+                        day_offset += 1
+                    prev_raw_secs = raw_secs
+                    last_ts = raw_secs + day_offset * 86400
+                    if first_ts is None:
+                        first_ts = last_ts
+                    rest = line[m_ts.end():]
+                else:
+                    rest = line
+
+                m_area = area_re.match(rest)
+                if m_area:
+                    name = m_area.group(1).strip()
+                    if name != current_area:
+                        close_stint(last_ts)
+                        current_area = name
+                        area_start_ts = last_ts
+                    continue
+
+                m_xp = xp_re.match(rest.strip())
+                if m_xp:
+                    gained = int(m_xp.group(1)) + int(m_xp.group(2))
+                    total_xp += gained
+                    any_xp_found = True
+                    bucket = current_area if current_area is not None else '(Unknown Area)'
+                    area_xp[bucket] = area_xp.get(bucket, 0) + gained
+
+            close_stint(last_ts)
+            if first_ts is not None and last_ts is not None:
+                total_seconds += (last_ts - first_ts)
+
+        if not any_xp_found:
+            return None
+
+        total_hours = total_seconds / 3600 if total_seconds > 0 else 0
+        overall_rate = (total_xp / total_hours) if total_hours > 0 else 0
+
+        areas = []
+        for name, xp in area_xp.items():
+            secs = area_seconds.get(name, 0.0)
+            hours = secs / 3600
+            rate = (xp / hours) if hours > 0 else 0
+            areas.append({'area': name, 'xp': xp, 'hours': hours, 'xp_per_hour': rate})
+        areas.sort(key=lambda a: a['xp_per_hour'], reverse=True)
+
+        return {
+            'total_xp': total_xp,
+            'total_hours': total_hours,
+            'xp_per_hour': overall_rate,
+            'areas': areas,
+        }
+
+    def _open_xp_counter(self):
+        """Parse tab's "XP Counter" button - computes XP/hour from the
+        currently loaded files (see _compute_xp_stats) and shows it in
+        an ephemeral working tab inside self.xp_notebook. Re-clicking
+        replaces that same working tab rather than stacking up
+        duplicates. The working tab isn't persisted - only an explicit
+        Save (see _save_xp_report_prompt) survives a restart."""
+        if not self.files:
+            messagebox.showwarning("No Files", "Load some log files first.")
+            return
+
+        data = self._compute_xp_stats()
+        if data is None:
+            messagebox.showinfo("No XP Found",
+                'No "You gain ... experience points." lines were found in the loaded file(s).')
+            return
+
+        try:
+            if getattr(self, '_xp_working_frame', None) is not None:
+                try:
+                    self.xp_notebook.forget(self._xp_working_frame)
+                except tk.TclError:
+                    pass
+
+            frame = self._build_xp_report_frame(self.xp_notebook, data, is_saved=False)
+            if self.xp_notebook.tabs():
+                self.xp_notebook.insert(0, frame, text="XP Counter")
+            else:
+                # insert(0, ...) raises TclError ("Slave index 0 out of
+                # bounds") on a completely empty notebook - add() is the
+                # only valid way to add the very first tab.
+                self.xp_notebook.add(frame, text="XP Counter")
+            self._xp_working_frame = frame
+            self.xp_notebook.select(frame)
+        except Exception as e:
+            # This is a windowed exe with no console - an uncaught
+            # exception here has nowhere to go and the button would just
+            # appear to silently do nothing, so surface it instead.
+            messagebox.showerror("XP Counter Error", f"Couldn't display the XP report:\n{e}")
+
+    def _build_xp_report_frame(self, parent, data, is_saved, name=None):
+        """Builds one XP Counter tab's content - overall XP/hour, total
+        XP/hours, and a per-area table sorted by that area's own XP/hour
+        descending. is_saved controls whether the tab gets a Delete
+        button (saved reports) or a Save button (the ephemeral working
+        tab)."""
+        frame = ttk.Frame(parent, padding=10)
+
+        header_row = ttk.Frame(frame)
+        header_row.pack(fill='x')
+        ttk.Label(header_row, text=f"Your XP/hour: {data['xp_per_hour']:,.0f}",
+                  font=('Arial', 13, 'bold')).pack(side='left')
+        if is_saved:
+            ttk.Button(header_row, text="🗑 Delete",
+                      command=lambda: self._delete_xp_report(name)).pack(side='right')
+        else:
+            ttk.Button(header_row, text="💾 Save",
+                      command=lambda: self._save_xp_report_prompt(data)).pack(side='right')
+
+        ttk.Label(frame, text=f"Total: {data['total_xp']:,} XP over {data['total_hours']:.2f} hour(s)",
+                 foreground='#555').pack(anchor='w', pady=(2,10))
+
+        cols = ('Area', 'XP Gained', 'Time', 'XP/Hour')
+        tv_frame = ttk.Frame(frame)
+        tv_frame.pack(fill='both', expand=True)
+        tv = ttk.Treeview(tv_frame, columns=cols, show='headings', height=12)
+        for c, w, anchor in zip(cols, (280, 110, 90, 110), ('w', 'center', 'center', 'center')):
+            tv.heading(c, text=c)
+            tv.column(c, width=w, anchor=anchor)
+        vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        tv.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        for a in data['areas']:
+            hh = int(a['hours'])
+            mm = int(round((a['hours'] - hh) * 60))
+            tv.insert('', 'end', values=(a['area'], f"{a['xp']:,}", f"{hh}h {mm:02d}m",
+                                        f"{a['xp_per_hour']:,.0f}"))
+
+        return frame
+
+    def _save_xp_report_prompt(self, data):
+        """Working tab's "Save" button - names and persists the current
+        XP Counter snapshot as its own tab, surviving a restart (see
+        xp_saved_reports / _save_config). Saving under a name that
+        already exists overwrites that entry in place, after confirming."""
+        name = simpledialog.askstring("Save XP Report", "Save Name:", parent=self)
+        if name is None:
+            return
+        name = name.strip()
+        if not name:
+            return
+
+        for rep in self.xp_saved_reports:
+            if rep['name'] == name:
+                if not messagebox.askyesno("Overwrite?",
+                        f'A saved XP report named "{name}" already exists. Overwrite it?'):
+                    return
+                self.xp_notebook.forget(rep['frame'])
+                rep['data'] = data
+                rep['frame'] = self._build_xp_report_frame(self.xp_notebook, data, is_saved=True, name=name)
+                self.xp_notebook.add(rep['frame'], text=name)
+                self.xp_notebook.select(rep['frame'])
+                self._save_config()
+                return
+
+        frame = self._build_xp_report_frame(self.xp_notebook, data, is_saved=True, name=name)
+        self.xp_notebook.add(frame, text=name)
+        self.xp_saved_reports.append({'name': name, 'data': data, 'frame': frame})
+        self.xp_notebook.select(frame)
+        self._save_config()
+
+    def _delete_xp_report(self, name):
+        """Saved XP report tab's "Delete" button - removes it from the
+        notebook and from persisted config."""
+        for i, rep in enumerate(self.xp_saved_reports):
+            if rep['name'] == name:
+                if not messagebox.askyesno("Delete", f'Delete saved XP report "{name}"?'):
+                    return
+                self.xp_notebook.forget(rep['frame'])
+                del self.xp_saved_reports[i]
+                self._save_config()
+                return
 
     def _find_raw_lines(self, query):
         """Plain substring search of every loaded file's raw lines"""
