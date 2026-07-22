@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.19"
+VERSION = "5.4.20"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2037,11 +2037,12 @@ class App(tk.Tk):
             exe_asset = next((a for a in assets
                               if (a.get('name') or '').lower().endswith('.exe')), None)
             download_url = exe_asset.get('browser_download_url') if exe_asset else None
-            self.after(0, lambda: self._on_update_check_done(latest_version, download_url, None))
+            expected_size = exe_asset.get('size') if exe_asset else None
+            self.after(0, lambda: self._on_update_check_done(latest_version, download_url, expected_size, None))
         except Exception as e:
-            self.after(0, lambda: self._on_update_check_done(None, None, e))
+            self.after(0, lambda: self._on_update_check_done(None, None, None, e))
 
-    def _on_update_check_done(self, latest_version, download_url, error):
+    def _on_update_check_done(self, latest_version, download_url, expected_size, error):
         if error is not None or not latest_version:
             self.update_check_button.config(state='normal', text="Check for Update")
             self.update_status_label.config(text="Check failed - no internet?", foreground='#a33')
@@ -2057,6 +2058,7 @@ class App(tk.Tk):
                     foreground='#a33')
                 return
             self._pending_update_url = download_url
+            self._pending_update_size = expected_size
             self._pending_update_version = latest_version.lstrip('vV')
             self.update_check_button.config(
                 state='normal', text=f"⬇ Download & Update to v{self._pending_update_version}",
@@ -2091,9 +2093,10 @@ class App(tk.Tk):
         self.update_check_button.config(state='disabled', text="Downloading...")
         self.update_status_label.config(text="", foreground='#666')
         threading.Thread(target=self._download_update_worker,
-                         args=(self._pending_update_url, version), daemon=True).start()
+                         args=(self._pending_update_url, version, self._pending_update_size),
+                         daemon=True).start()
 
-    def _download_update_worker(self, download_url, version):
+    def _download_update_worker(self, download_url, version, expected_size):
         try:
             current_exe = os.path.abspath(sys.executable)
             temp_dir = tempfile.gettempdir()
@@ -2103,10 +2106,24 @@ class App(tk.Tk):
                 download_url, headers={'User-Agent': 'OlmranItemBuilder-UpdateCheck'})
             with urllib.request.urlopen(req, timeout=60) as resp:
                 downloaded = resp.read()
-            if len(downloaded) < 1_000_000:
-                # A real build is many MB - anything drastically smaller is
-                # almost certainly an error page, not the actual exe.
-                raise ValueError(f"Downloaded file is only {len(downloaded)} bytes - too small to be real")
+
+            # A truncated/interrupted download (connection dropped
+            # partway through) can still land well above the old ">1MB"
+            # floor and still be many MB short of the real exe - writing
+            # that over the working install produces a corrupted exe
+            # that fails to launch at all ("Failed to load Python DLL").
+            # Check against GitHub's own reported asset size (exact byte
+            # count) when available, and always check the PE header, so
+            # a bad download is caught and reported here instead of ever
+            # touching the installed exe.
+            if expected_size and len(downloaded) != expected_size:
+                raise ValueError(
+                    f"Download incomplete - got {len(downloaded):,} bytes, expected {expected_size:,}. "
+                    "Try again.")
+            if len(downloaded) < 1_000_000 or downloaded[:2] != b'MZ':
+                raise ValueError(
+                    f"Downloaded file ({len(downloaded):,} bytes) doesn't look like a real exe. Try again.")
+
             with open(new_exe_path, 'wb') as f:
                 f.write(downloaded)
 

@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.19 (Current)
+### v5.4.20 (Current)
+- Fixed the auto-updater being able to corrupt the installed exe on a bad download - the sanity check only rejected downloads under 1MB, so a truncated/interrupted download (e.g. 8MB of the real ~15.7MB) could still sail through and get written over the working install, producing an exe that fails to launch at all ("Failed to load Python DLL"). Now validates the exact byte count against GitHub's own reported asset size, plus checks the file starts with a valid EXE header, before ever touching the installed exe - a bad download is now reported as a failure instead of corrupting anything
+
+### v5.4.19
 - Added an "XP Counter" - Parse tab now has its own inner sub-tabs, "Files & Search" (everything that used to be there) and a separate always-visible "XP Counter" sub-tab. Computes XP/hour from the loaded log(s) (parsing "You gain BASE (+BONUS) experience points." lines) plus a per-area breakdown by time actually spent in each area (tracked via the game's room-title lines). Results show in an ephemeral working tab that's replaced on every click; a Save button turns a result into its own persistent, named tab (with a Delete button), surviving a restart. The "Load Log Files" file list appears on both sub-tabs, kept in sync, so files can be loaded without switching away from XP Counter
 
 ### v5.4.18
