@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.17"
+VERSION = "5.4.18"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2111,31 +2111,53 @@ class App(tk.Tk):
         self.update_status_label.config(text=f"Download failed: {error}", foreground='#a33')
 
     def _finish_self_update(self, current_exe, new_exe_path):
-        """Hands off to a detached batch script that waits for this
-        process's PID to disappear, replaces current_exe with the
-        downloaded new_exe_path, relaunches it, and deletes itself -
-        needed because a running Windows exe can't overwrite its own file.
-        Then exits immediately (os._exit, not a normal close) so the file
-        lock is released right away instead of waiting on any further
-        cleanup."""
+        """Hands off to a batch script that repeatedly tries to move the
+        downloaded new_exe_path over current_exe, relaunches it, and
+        deletes itself - needed because a running Windows exe can't
+        overwrite its own file. A `move` onto a still-open exe fails with
+        "Access is denied", so simply retrying the move doubles as the
+        wait for this process to actually exit - no separate
+        tasklist-based PID check needed (tried that; `tasklist | find`
+        silently fails to match under a hidden/no-console batch process,
+        some console-encoding quirk - it reported the PID gone
+        immediately even while still running). Also covers antivirus
+        still scanning the freshly-downloaded file. Uses `ping` against
+        loopback for the retry delay instead of `timeout`, since
+        `timeout` also misbehaves (returns instantly) without a real
+        attached console. Relaunches current_exe either way, even if the
+        move ultimately never succeeds, so the app never just vanishes.
+        Every step is logged to olmran_update_log.txt in the temp dir for
+        diagnosing failures after the fact. Then exits immediately
+        (os._exit, not a normal close) so the file lock is released
+        right away instead of waiting on any further cleanup."""
         try:
             bat_path = os.path.join(tempfile.gettempdir(), "olmran_update.bat")
-            pid = os.getpid()
+            log_path = os.path.join(tempfile.gettempdir(), "olmran_update_log.txt")
             with open(bat_path, 'w') as f:
                 f.write(
                     "@echo off\r\n"
-                    ":wait\r\n"
-                    f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL\r\n'
-                    "if not errorlevel 1 (\r\n"
-                    "    timeout /t 1 /nobreak >NUL\r\n"
-                    "    goto wait\r\n"
+                    f'echo [%date% %time%] starting move-retry loop > "{log_path}"\r\n'
+                    "set retries=0\r\n"
+                    ":retry_move\r\n"
+                    f'move /y "{new_exe_path}" "{current_exe}" >> "{log_path}" 2>&1\r\n'
+                    "if errorlevel 1 (\r\n"
+                    "    set /a retries+=1\r\n"
+                    f'    echo [%date% %time%] move failed, attempt %retries% >> "{log_path}"\r\n'
+                    "    if %retries% GEQ 60 (\r\n"
+                    f'        echo [%date% %time%] giving up on move, relaunching old exe >> "{log_path}"\r\n'
+                    "        goto relaunch\r\n"
+                    "    )\r\n"
+                    "    ping -n 2 127.0.0.1 >NUL\r\n"
+                    "    goto retry_move\r\n"
                     ")\r\n"
-                    f'move /y "{new_exe_path}" "{current_exe}"\r\n'
+                    f'echo [%date% %time%] move succeeded >> "{log_path}"\r\n'
+                    ":relaunch\r\n"
                     f'start "" "{current_exe}"\r\n'
+                    f'echo [%date% %time%] relaunched >> "{log_path}"\r\n'
                     'del "%~f0"\r\n'
                 )
             subprocess.Popen(['cmd', '/c', bat_path],
-                             creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS)
+                             creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception as e:
             self._on_update_download_failed(e)
             return

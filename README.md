@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.17 (Current)
+### v5.4.18 (Current)
+- Fixed the auto-updater's "Download & Update" not actually installing the new version - it would download successfully, close the app, then never reopen it. Root cause: the batch script that swaps the exe used `tasklist | find` to wait for the app to fully exit, but that check silently fails (an encoding quirk of running with a hidden console) and falsely reports the process already gone. It also used `timeout` for retry delays, which doesn't actually pause without a real console attached, so any retry logic burned through instantly. Replaced both with a single retry loop that just keeps retrying the file move itself (a still-open exe naturally blocks it) using a `ping`-based delay instead, and falls back to relaunching the old exe if the move never succeeds, so the app can no longer just vanish after clicking update
+
+### v5.4.17
 - Added "Non-Kaid" and "Non-Event" checkboxes to Build → Bank Build → Build Constraints → Only Found In (below Crafted) - hard exclusions that apply regardless of other realm filters. Non-Kaid excludes every Kaid realm (All/White/Green/Red/Purple); Non-Event excludes both Event and Glory Bea items
 
 ### v5.4.16
