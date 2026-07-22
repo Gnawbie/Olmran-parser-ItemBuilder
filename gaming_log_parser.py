@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.21"
+VERSION = "5.4.22"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2125,7 +2125,7 @@ class App(tk.Tk):
             with open(new_exe_path, 'wb') as f:
                 f.write(downloaded)
 
-            self.after(0, lambda: self._finish_self_update(current_exe, new_exe_path))
+            self.after(0, lambda: self._finish_self_update(current_exe, new_exe_path, len(downloaded)))
         except Exception as e:
             self.after(0, lambda: self._on_update_download_failed(e))
 
@@ -2135,7 +2135,7 @@ class App(tk.Tk):
             command=self._start_self_update)
         self.update_status_label.config(text=f"Download failed: {error}", foreground='#a33')
 
-    def _finish_self_update(self, current_exe, new_exe_path):
+    def _finish_self_update(self, current_exe, new_exe_path, expected_size):
         """Hands off to a batch script that repeatedly tries to move the
         downloaded new_exe_path over current_exe, relaunches it, and
         deletes itself - needed because a running Windows exe can't
@@ -2145,16 +2145,25 @@ class App(tk.Tk):
         tasklist-based PID check needed (tried that; `tasklist | find`
         silently fails to match under a hidden/no-console batch process,
         some console-encoding quirk - it reported the PID gone
-        immediately even while still running). Also covers antivirus
-        still scanning the freshly-downloaded file. Uses `ping` against
-        loopback for the retry delay instead of `timeout`, since
-        `timeout` also misbehaves (returns instantly) without a real
-        attached console. Relaunches current_exe either way, even if the
-        move ultimately never succeeds, so the app never just vanishes.
-        Every step is logged to olmran_update_log.txt in the temp dir for
-        diagnosing failures after the fact. Then exits immediately
-        (os._exit, not a normal close) so the file lock is released
-        right away instead of waiting on any further cleanup."""
+        immediately even while still running). Also re-checks
+        new_exe_path's on-disk size against expected_size (the exact byte
+        count already confirmed right after downloading) immediately
+        before every move attempt - antivirus can quarantine or truncate
+        a freshly-downloaded, unsigned exe sitting in Temp between when
+        it was written and when this script finally gets around to
+        moving it (it can only run once the old exe's process has fully
+        exited, which isn't necessarily instant), and that gap was a real
+        hole: the original per-download check only ran once, in memory,
+        long before this. Relaunches current_exe either way, even if the
+        move ultimately never succeeds, so the app never just vanishes -
+        and never corrupts current_exe with a since-tampered file. Uses
+        `ping` against loopback for the retry delay instead of `timeout`,
+        since `timeout` also misbehaves (returns instantly) without a
+        real attached console. Every step is logged to
+        olmran_update_log.txt in the temp dir for diagnosing failures
+        after the fact. Then exits immediately (os._exit, not a normal
+        close) so the file lock is released right away instead of
+        waiting on any further cleanup."""
         try:
             bat_path = os.path.join(tempfile.gettempdir(), "olmran_update.bat")
             log_path = os.path.join(tempfile.gettempdir(), "olmran_update_log.txt")
@@ -2164,6 +2173,18 @@ class App(tk.Tk):
                     f'echo [%date% %time%] starting move-retry loop > "{log_path}"\r\n'
                     "set retries=0\r\n"
                     ":retry_move\r\n"
+                    'set "cursize="\r\n'
+                    f'for %%A in ("{new_exe_path}") do set "cursize=%%~zA"\r\n'
+                    f'if not "%cursize%"=="{expected_size}" (\r\n'
+                    "    set /a retries+=1\r\n"
+                    f'    echo [%date% %time%] size check failed - got %cursize%, expected {expected_size} - attempt %retries% >> "{log_path}"\r\n'
+                    "    if %retries% GEQ 60 (\r\n"
+                    f'        echo [%date% %time%] giving up - downloaded file never matched expected size, relaunching old exe >> "{log_path}"\r\n'
+                    "        goto relaunch\r\n"
+                    "    )\r\n"
+                    "    ping -n 2 127.0.0.1 >NUL\r\n"
+                    "    goto retry_move\r\n"
+                    ")\r\n"
                     f'move /y "{new_exe_path}" "{current_exe}" >> "{log_path}" 2>&1\r\n'
                     "if errorlevel 1 (\r\n"
                     "    set /a retries+=1\r\n"

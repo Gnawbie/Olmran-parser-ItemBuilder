@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.21 (Current)
+### v5.4.22 (Current)
+- Closed a real gap in the v5.4.20 auto-updater fix: the download size check only ran once, in memory, before writing the new exe to disk - if antivirus scanned and tampered with the freshly-downloaded, unsigned exe sitting in Temp afterward (which can happen, since the swap can only run once the old process fully exits, not necessarily instantly), that corruption slipped through untouched. The swap script now re-verifies the file's on-disk size immediately before every move attempt, retrying or safely relaunching the current exe untouched if it doesn't match, instead of ever installing a tampered file
+
+### v5.4.21
 - Fixed Build → Basic Constraints → Wanted Spells: Class Specific spells (Reverb, Aura, Backstab, Bash, Berzerk, etc.) were capped at tier ii - their tier dropdown now goes up to iii like other spell categories
 
 ### v5.4.20
