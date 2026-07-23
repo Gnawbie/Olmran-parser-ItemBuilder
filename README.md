@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.26 (Current)
+### v5.4.27 (Current)
+- Fixed Locker Groups drag-and-drop not working - dragging a tab required clicking a tiny sliver right at the tab's edge to register at all, since the check relied on a Tk quirk where the actual clickable label text (where anyone would naturally click) reports differently than the tab's edge does. Dragging a Locker tab onto a group tab (or back out) now works from anywhere on the tab, not just that edge
+
+### v5.4.26
 - Fixed the auto-updater's "Failed to load Python DLL" error still occurring after a successful update on some machines - the v5.4.23 fix added a fixed ~2 second pause before relaunching to let antivirus finish scanning the freshly-placed exe, but scan time varies by machine and 2 seconds wasn't always enough. Replaced the fixed delay with an adaptive check that actively tests whether the file is still locked (the same technique already used for waiting on the old process to exit) and only launches once it's genuinely clear, waiting exactly as long as needed instead of guessing
 
 ### v5.4.25

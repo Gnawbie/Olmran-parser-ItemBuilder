@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.26"
+VERSION = "5.4.27"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -8833,10 +8833,16 @@ class App(tk.Tk):
         notebook.bind('<ButtonRelease-1>', self._on_locker_drag_release)
 
     def _on_locker_drag_press(self, event):
+        """identify() only ever reports the literal string 'tab' for a
+        tiny sliver right at a tab's edge - the actual clickable label
+        text most users click on reports 'focus' or 'padding' instead,
+        so requiring identify()=='tab' here meant a real click almost
+        never registered as a drag start at all. index('@x,y') is the
+        correct, and sufficient, check: it resolves to a real tab index
+        anywhere within a tab's clickable area and raises otherwise (the
+        content area below the strip, or genuinely empty space)."""
         nb = event.widget
         self._locker_drag = None
-        if nb.identify(event.x, event.y) != 'tab':
-            return
         try:
             index = nb.index(f'@{event.x},{event.y}')
             frame = nb.nametowidget(nb.tabs()[index])
@@ -8881,18 +8887,21 @@ class App(tk.Tk):
                 # winfo_containing reports as this outer notebook, not
                 # that group's notebook - check for that specifically
                 # before accepting `result` as-is.
+                # index('@x,y') is the correct hit-test (see
+                # _on_locker_drag_press for why identify()=='tab' isn't -
+                # it only matches a thin sliver at a tab's edge, not the
+                # actual label text a real drop would land on).
                 local_x = event.x_root - w.winfo_rootx()
                 local_y = event.y_root - w.winfo_rooty()
-                if w.identify(local_x, local_y) == 'tab':
-                    try:
-                        hit_index = w.index(f'@{local_x},{local_y}')
-                        hit_frame = w.nametowidget(w.tabs()[hit_index])
-                    except (tk.TclError, IndexError):
-                        hit_frame = None
-                    hit_group = next((g for g in self.bank_locker_groups
-                                      if g['notebook'] is hit_frame), None)
-                    if hit_group is not None:
-                        target_group_id = hit_group['id']
+                try:
+                    hit_index = w.index(f'@{local_x},{local_y}')
+                    hit_frame = w.nametowidget(w.tabs()[hit_index])
+                except (tk.TclError, IndexError):
+                    hit_frame = None
+                hit_group = next((g for g in self.bank_locker_groups
+                                  if g['notebook'] is hit_frame), None)
+                if hit_group is not None:
+                    target_group_id = hit_group['id']
                 break
             w = w.master
         if target_group_id is _NOT_A_LOCKER_DROP_TARGET:
