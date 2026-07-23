@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.25 (Current)
+### v5.4.26 (Current)
+- Fixed the auto-updater's "Failed to load Python DLL" error still occurring after a successful update on some machines - the v5.4.23 fix added a fixed ~2 second pause before relaunching to let antivirus finish scanning the freshly-placed exe, but scan time varies by machine and 2 seconds wasn't always enough. Replaced the fixed delay with an adaptive check that actively tests whether the file is still locked (the same technique already used for waiting on the old process to exit) and only launches once it's genuinely clear, waiting exactly as long as needed instead of guessing
+
+### v5.4.25
 - Added Locker Groups - Build → Bank Build → Lockers now has a leftmost "+" tab (no page of its own) that prompts for a name and creates a new group tab to organize Locker tabs into. Drag a Locker tab onto a group tab to move it in, or drag it back out onto the main tab strip to ungroup it. Group membership persists across restarts
 
 ### v5.4.24

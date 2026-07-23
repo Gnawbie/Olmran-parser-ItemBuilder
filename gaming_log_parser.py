@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.25"
+VERSION = "5.4.26"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2221,20 +2221,40 @@ class App(tk.Tk):
                     "    goto retry_move\r\n"
                     ")\r\n"
                     f'echo [%date% %time%] move succeeded >> "{log_path}"\r\n'
-                    # A moment for antivirus to finish its on-write scan
-                    # of the freshly-placed exe - launching it too soon
-                    # can transiently fail with "Failed to load Python
-                    # DLL...LoadLibrary: The specified module could not
-                    # be found" even though the file itself is fine (AV
-                    # briefly locks it), and a plain manual relaunch
-                    # moments later works - reported independently by a
-                    # second user with that exact recovery pattern. Only
-                    # on the successful-move path (falls through to
-                    # here); the give-up path below jumps straight to
-                    # :relaunch for the untouched, already-stable old
-                    # exe, which was never freshly written and needs no
-                    # settling time.
-                    "ping -n 3 127.0.0.1 >NUL\r\n"
+                    # Antivirus finishing its on-write scan of the
+                    # freshly-placed exe can still hold a lock on it for
+                    # a while after the move itself completes - launching
+                    # too soon transiently fails with "Failed to load
+                    # Python DLL...LoadLibrary: The specified module
+                    # could not be found" even though the file itself is
+                    # completely fine (confirmed independently by two
+                    # users: a plain manual relaunch afterward works
+                    # immediately). A fixed short delay here wasn't
+                    # always long enough - scan time varies by machine -
+                    # so instead of guessing, actively test for the lock
+                    # itself: renaming the file to its own current name
+                    # is a no-op that still requires the file not be
+                    # locked, the same trick the move-retry loop above
+                    # uses for waiting on the OLD exe's process to fully
+                    # exit. Only on the successful-move path (falls
+                    # through to here); the give-up path above jumps
+                    # straight to :relaunch for the untouched,
+                    # already-stable old exe, which was never freshly
+                    # written and needs no settling time.
+                    "set settle_tries=0\r\n"
+                    ":settle_check\r\n"
+                    f'ren "{current_exe}" "{os.path.basename(current_exe)}" >> "{log_path}" 2>&1\r\n'
+                    "if errorlevel 1 (\r\n"
+                    "    set /a settle_tries+=1\r\n"
+                    f'    echo [%date% %time%] exe still locked, attempt %settle_tries% >> "{log_path}"\r\n'
+                    "    if %settle_tries% GEQ 30 (\r\n"
+                    f'        echo [%date% %time%] giving up waiting for lock to clear, launching anyway >> "{log_path}"\r\n'
+                    "        goto relaunch\r\n"
+                    "    )\r\n"
+                    "    ping -n 2 127.0.0.1 >NUL\r\n"
+                    "    goto settle_check\r\n"
+                    ")\r\n"
+                    f'echo [%date% %time%] exe no longer locked, safe to launch >> "{log_path}"\r\n'
                     ":relaunch\r\n"
                     f'start "" "{current_exe}"\r\n'
                     f'echo [%date% %time%] relaunched >> "{log_path}"\r\n'
