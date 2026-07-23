@@ -16,11 +16,17 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.24"
+VERSION = "5.4.25"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
 GITHUB_REPO = "Gnawbie/Olmran-parser-ItemBuilder"
+
+# Sentinel for _get_notebook_locker_target - distinguishes "this notebook
+# isn't part of the Lockers area at all" (a drag dropped somewhere
+# unrelated) from a real target of None (bank_lockers_sub_notebook itself,
+# meaning top-level/ungrouped).
+_NOT_A_LOCKER_DROP_TARGET = object()
 
 # ─────────────────────────────────────────────────────────────
 #  AREA TO REALM MAPPING (from Olmran_Realm_Leveling.xlsx)
@@ -1847,6 +1853,14 @@ class App(tk.Tk):
                     # data only; turned into self.xp_saved_reports, complete
                     # with their tab frames, once the Parse tab is built).
                     self._persisted_xp_reports = config.get('xp_reports', [])
+                    # Lockers' "+" tab Locker Groups - raw {'id','name'}
+                    # pairs only, turned into real notebooks (each its own
+                    # tab of self.bank_lockers_sub_notebook) in
+                    # _build_build_tab, before individual character tabs
+                    # are (re)created so a Locker's group_id has somewhere
+                    # to land immediately.
+                    self._persisted_locker_groups = config.get('locker_groups', [])
+                    self._persisted_locker_group_counter = config.get('locker_group_counter', 0)
             else:
                 self.last_open_dir = os.path.expanduser("~")
                 self.last_save_dir = os.path.expanduser("~")
@@ -1861,6 +1875,8 @@ class App(tk.Tk):
                 self._persisted_constraint_sets = []
                 self._persisted_test_basic_constraints = {}
                 self._persisted_xp_reports = []
+                self._persisted_locker_groups = []
+                self._persisted_locker_group_counter = 0
         except Exception:
             self.last_open_dir = os.path.expanduser("~")
             self.last_save_dir = os.path.expanduser("~")
@@ -1875,6 +1891,8 @@ class App(tk.Tk):
             self._persisted_constraint_sets = []
             self._persisted_test_basic_constraints = {}
             self._persisted_xp_reports = []
+            self._persisted_locker_groups = []
+            self._persisted_locker_group_counter = 0
 
     def _save_config(self):
         """Save configuration to file"""
@@ -1900,10 +1918,16 @@ class App(tk.Tk):
                         'order': list(cdata['order']),
                         'is_locker': bool(cdata.get('is_locker', False)),
                         'exclude_from_others': bool(cdata.get('exclude_from_others', False)),
+                        'group_id': cdata.get('group_id'),
                     }
                     for char, cdata in getattr(self, 'bank_characters', {}).items()
                 },
                 'bank_gear_tags': dict(getattr(self, 'bank_gear_tags', {})),
+                'locker_groups': [
+                    {'id': g['id'], 'name': g['name']}
+                    for g in getattr(self, 'bank_locker_groups', [])
+                ],
+                'locker_group_counter': getattr(self, 'bank_locker_group_counter', 0),
                 'constraint_sets': [
                     {'name': cs['name'], 'data': cs['data']}
                     for cs in getattr(self, 'saved_constraint_sets', [])
@@ -4841,6 +4865,12 @@ class App(tk.Tk):
                 # else's search) doesn't change unless deliberately turned
                 # on. Meaningless for a non-Locker character.
                 'exclude_from_others': bool(_cdata.get('exclude_from_others', False)),
+                # Which Locker Group (see self.bank_locker_groups) this
+                # Locker's tab currently lives inside, or None for
+                # top-level/ungrouped. Meaningless for a non-Locker
+                # character - _relocate_bank_character_tab_if_needed
+                # clears it if is_locker ever gets unchecked.
+                'group_id': _cdata.get('group_id'),
             }
         # Populated per character name by _create_bank_character_tab - widget
         # refs (treeview, checkboxes/vars, status labels) needed to read from
@@ -4988,12 +5018,63 @@ class App(tk.Tk):
         self.bank_lockers_sub_notebook = ttk.Notebook(self.bank_sub_notebook)
         self.bank_sub_notebook.add(self.bank_lockers_sub_notebook, text='Lockers')
 
+        # Locker Groups - lets Locker tabs be organized into named folders
+        # (each its own real ttk.Notebook, itself one tab of
+        # bank_lockers_sub_notebook) via a leftmost "+" tab that never
+        # shows its own page: selecting it immediately reverts to whatever
+        # was selected before and prompts for a new group's name instead
+        # (see _on_lockers_tab_changed/_prompt_create_locker_group). Locker
+        # tabs are dragged into/out of a group tab to move them (see
+        # _bind_locker_tab_drag) - moving one is just destroy-and-rebuild
+        # under the new parent notebook (_create_bank_character_tab already
+        # picks whichever parent a character's group_id currently points
+        # at), the same pattern this file already used for is_locker
+        # flipping a tab between Saved Items and Lockers before groups
+        # existed at all (see _relocate_bank_character_tab_if_needed) -
+        # Tkinter has no real "reparent to a different notebook", but every
+        # Locker tab's content is fully derived from self.bank_characters
+        # data, so rebuilding it fresh loses nothing but scroll position.
+        self.bank_locker_groups = []
+        self.bank_locker_group_counter = getattr(self, '_persisted_locker_group_counter', 0)
+
+        self._bank_lockers_plus_tab = ttk.Frame(self.bank_lockers_sub_notebook)
+        self.bank_lockers_sub_notebook.add(self._bank_lockers_plus_tab, text='+')
+        self._bind_locker_tab_drag(self.bank_lockers_sub_notebook)
+
+        # Restore every persisted group (empty for now - the per-character
+        # loop below fills each one back in via its own group_id) before
+        # that loop runs, so a restored Locker with a group_id has a real
+        # notebook to land in immediately instead of falling back to
+        # top-level for one launch.
+        for _g in getattr(self, '_persisted_locker_groups', []):
+            if _g.get('id') and _g.get('name'):
+                self._create_locker_group_widget(_g['id'], _g['name'])
+
         # One tab per character already used from Import, restored in the
-        # order they were saved - each lands under Saved Items or Lockers
-        # depending on its own is_locker flag (see _create_bank_character_tab).
+        # order they were saved - each lands under Saved Items, a specific
+        # Locker Group, or Lockers' own top level, depending on its
+        # is_locker flag and group_id (see _create_bank_character_tab).
         for _char in self.bank_characters:
             self._create_bank_character_tab(_char)
         self._refresh_bank_saved_tab()
+
+        # Adding the "+" tab to what was, at that moment, an empty
+        # notebook makes Tk auto-select it immediately (a notebook always
+        # keeps some tab selected once it has one) - binding
+        # <<NotebookTabChanged>> any earlier than this would catch that
+        # implicit initial selection as if it were a real click and pop
+        # the "New Locker Group" prompt on every single launch, before
+        # the user ever touched anything. Binding only now, after every
+        # startup tab is already in place, means only genuine later
+        # interaction ever reaches the handler. If any real tab exists
+        # (besides "+" itself), select it now instead of leaving "+"
+        # showing on screen (it has no page of its own to show).
+        real_tabs = [t for t in self.bank_lockers_sub_notebook.tabs()
+                    if t != str(self._bank_lockers_plus_tab)]
+        self._bank_lockers_last_tab = real_tabs[0] if real_tabs else None
+        if real_tabs:
+            self.bank_lockers_sub_notebook.select(real_tabs[0])
+        self.bank_lockers_sub_notebook.bind('<<NotebookTabChanged>>', self._on_lockers_tab_changed)
 
         # Shared controls - Min/Max/Specific Level and the search buttons -
         # packed under the sub-notebook rather than inside any one sub-tab,
@@ -7323,10 +7404,17 @@ class App(tk.Tk):
         changes later on an existing character. Called once per character
         at startup (for every persisted name) and again the first time a
         new name is used from the Import tab - see
-        _save_bank_import_to_character."""
+        _save_bank_import_to_character.
+
+        A Locker with a group_id lands inside that Locker Group's own
+        notebook instead of bank_lockers_sub_notebook directly, if that
+        group still exists - see _get_locker_group."""
         cdata = self.bank_characters.get(char_name, {})
-        parent_notebook = (self.bank_lockers_sub_notebook if cdata.get('is_locker')
-                            else self.bank_saved_sub_notebook)
+        if cdata.get('is_locker'):
+            group = self._get_locker_group(cdata.get('group_id'))
+            parent_notebook = group['notebook'] if group else self.bank_lockers_sub_notebook
+        else:
+            parent_notebook = self.bank_saved_sub_notebook
         tab = ttk.Frame(parent_notebook, padding=8)
         parent_notebook.add(tab, text=char_name)
 
@@ -8595,17 +8683,26 @@ class App(tk.Tk):
         """A character's is_locker flag can change on any Import save (not
         just the first one - see _save_bank_import_to_character), which
         means its tab may now belong under a different parent notebook
-        (self.bank_lockers_sub_notebook vs. self.bank_saved_sub_notebook
-        directly) than the one it was originally built under. Tkinter has
-        no "move to a new parent" - the tab is destroyed and rebuilt fresh
-        via _create_bank_character_tab (which re-reads is_locker itself and
-        picks the correct parent), only when the flag actually changed
-        since the tab was last (re)built."""
+        (self.bank_lockers_sub_notebook, a Locker Group's own notebook, or
+        self.bank_saved_sub_notebook directly) than the one it was
+        originally built under. Tkinter has no "move to a new parent" -
+        the tab is destroyed and rebuilt fresh via _create_bank_character_
+        tab (which re-reads is_locker/group_id itself and picks the
+        correct parent), only when the flag actually changed since the
+        tab was last (re)built. Un-flagging a character as a Locker also
+        clears its group_id - Locker Groups only make sense for Lockers,
+        and leaving a stale group_id behind would silently drop the
+        character straight back into that same group if is_locker ever
+        gets re-checked later."""
         w = self.bank_character_widgets.get(char_name)
         if not w:
             return
         cdata = self.bank_characters.get(char_name, {})
-        desired_parent = (self.bank_lockers_sub_notebook if cdata.get('is_locker')
+        if not cdata.get('is_locker'):
+            cdata['group_id'] = None
+        group = self._get_locker_group(cdata.get('group_id')) if cdata.get('is_locker') else None
+        desired_parent = (group['notebook'] if group
+                          else self.bank_lockers_sub_notebook if cdata.get('is_locker')
                           else self.bank_saved_sub_notebook)
         current_parent = w['tab'].nametowidget(w['tab'].winfo_parent())
         if current_parent is desired_parent:
@@ -8613,6 +8710,193 @@ class App(tk.Tk):
         w['tab'].destroy()
         del self.bank_character_widgets[char_name]
         self._create_bank_character_tab(char_name)
+
+    # ── LOCKER GROUPS ("+" TAB, DRAG-TO-GROUP) ─────────────────
+    def _get_locker_group(self, group_id):
+        """Looks up a Locker Group by id, or None if group_id is falsy or
+        no longer exists (a stale group_id left on a character after its
+        group was somehow removed - not currently possible since groups
+        can't be deleted yet, but harmless to guard against)."""
+        if not group_id:
+            return None
+        return next((g for g in self.bank_locker_groups if g['id'] == group_id), None)
+
+    def _get_notebook_locker_target(self, notebook):
+        """What dropping a dragged Locker tab onto `notebook` should mean:
+        None if it's bank_lockers_sub_notebook itself (top-level/
+        ungrouped), a real group_id if it's that Locker Group's own
+        notebook, or the _NOT_A_LOCKER_DROP_TARGET sentinel if `notebook`
+        isn't part of the Lockers area at all."""
+        if notebook is self.bank_lockers_sub_notebook:
+            return None
+        for g in self.bank_locker_groups:
+            if g['notebook'] is notebook:
+                return g['id']
+        return _NOT_A_LOCKER_DROP_TARGET
+
+    def _get_char_name_for_tab_frame(self, frame):
+        """Reverse lookup: which character (if any) owns this tab Frame -
+        used to figure out what's actually being dragged. Returns None
+        for the "+" tab or a Locker Group's own notebook (neither is a
+        character tab, so neither is draggable)."""
+        for name, w in self.bank_character_widgets.items():
+            if w.get('tab') is frame:
+                return name
+        return None
+
+    def _create_locker_group_widget(self, group_id, name):
+        """Low-level: builds one Locker Group's own notebook and adds it
+        as a tab of bank_lockers_sub_notebook, with no prompting - used to
+        restore a persisted group at startup and by
+        _prompt_create_locker_group for a brand new one."""
+        group_notebook = ttk.Notebook(self.bank_lockers_sub_notebook)
+        self.bank_lockers_sub_notebook.add(group_notebook, text=name)
+        self._bind_locker_tab_drag(group_notebook)
+        group = {'id': group_id, 'name': name, 'notebook': group_notebook}
+        self.bank_locker_groups.append(group)
+        return group
+
+    def _prompt_create_locker_group(self):
+        """The "+" tab's action (see _on_lockers_tab_changed) - asks for a
+        name and creates a new, empty Locker Group tab. Locker tabs are
+        moved into it afterward by dragging them onto it (see
+        _on_locker_drag_release)."""
+        name = simpledialog.askstring("New Locker Group", "Group Name:", parent=self)
+        if name is None:
+            return
+        name = name.strip()
+        if not name:
+            return
+        self.bank_locker_group_counter += 1
+        self._create_locker_group_widget(f"group_{self.bank_locker_group_counter}", name)
+        self._save_config()
+
+    def _on_lockers_tab_changed(self, event):
+        """The "+" tab has no page of its own - selecting it immediately
+        reverts to whatever tab was selected right before, then prompts
+        for a new Locker Group's name instead (see
+        _prompt_create_locker_group), so it's never actually shown as the
+        active view.
+
+        <<NotebookTabChanged>> is a deferred virtual event (fires on the
+        next update()/mainloop pass, not synchronously when a tab is
+        added/selected) - adding "+" as this notebook's very first-ever
+        tab makes Tk auto-select it immediately, and that firing only
+        actually reaches this handler on whatever update() call happens
+        to come first, which could be well after startup has otherwise
+        finished. self._bank_lockers_last_tab being unset (None) is how
+        that first, non-interactive settling is told apart from a real
+        later click: only prompt when there's an actual previous tab to
+        revert to - with nothing to revert to, this can only be that
+        initial firing, not a genuine action to respond to."""
+        nb = self.bank_lockers_sub_notebook
+        try:
+            current = nb.select()
+        except tk.TclError:
+            return
+        if current == str(self._bank_lockers_plus_tab):
+            if self._bank_lockers_last_tab and self._bank_lockers_last_tab in nb.tabs():
+                nb.select(self._bank_lockers_last_tab)
+                self._prompt_create_locker_group()
+            return
+        self._bank_lockers_last_tab = current
+
+    def _bind_locker_tab_drag(self, notebook):
+        """Lets a real Locker tab (not the "+" tab, not a Locker Group tab
+        itself) be dragged onto a different Locker Group tab, or back onto
+        bank_lockers_sub_notebook's own top-level tab strip, to move it
+        there (see _on_locker_drag_release/_move_locker_to_group). Bound
+        identically on bank_lockers_sub_notebook and every Locker Group's
+        own notebook, since a drag can start from either one."""
+        notebook.bind('<ButtonPress-1>', self._on_locker_drag_press)
+        notebook.bind('<B1-Motion>', self._on_locker_drag_motion)
+        notebook.bind('<ButtonRelease-1>', self._on_locker_drag_release)
+
+    def _on_locker_drag_press(self, event):
+        nb = event.widget
+        self._locker_drag = None
+        if nb.identify(event.x, event.y) != 'tab':
+            return
+        try:
+            index = nb.index(f'@{event.x},{event.y}')
+            frame = nb.nametowidget(nb.tabs()[index])
+        except (tk.TclError, IndexError):
+            return
+        char_name = self._get_char_name_for_tab_frame(frame)
+        if char_name is None:
+            return
+        self._locker_drag = {'char_name': char_name, 'start_x': event.x_root,
+                             'start_y': event.y_root, 'active': False}
+
+    def _on_locker_drag_motion(self, event):
+        drag = getattr(self, '_locker_drag', None)
+        if not drag or drag['active']:
+            return
+        if abs(event.x_root - drag['start_x']) >= 6 or abs(event.y_root - drag['start_y']) >= 6:
+            drag['active'] = True
+            self.config(cursor='hand2')
+
+    def _on_locker_drag_release(self, event):
+        drag = getattr(self, '_locker_drag', None)
+        self._locker_drag = None
+        self.config(cursor='')
+        if not drag or not drag['active']:
+            return
+
+        target_widget = self.winfo_containing(event.x_root, event.y_root)
+        w = target_widget
+        target_group_id = _NOT_A_LOCKER_DROP_TARGET
+        while w is not None:
+            result = self._get_notebook_locker_target(w)
+            if result is not _NOT_A_LOCKER_DROP_TARGET:
+                target_group_id = result
+                # A Locker Group's own tab LABEL is drawn by whichever
+                # notebook it's a tab OF (bank_lockers_sub_notebook, or
+                # another group nested inside another, if that's ever
+                # allowed) - only its content area actually belongs to
+                # the group's own notebook widget. So landing on `w` here
+                # (this notebook's own drop target, e.g. None/top-level)
+                # doesn't yet account for the drop point possibly being
+                # directly over a DIFFERENT group's tab label, which
+                # winfo_containing reports as this outer notebook, not
+                # that group's notebook - check for that specifically
+                # before accepting `result` as-is.
+                local_x = event.x_root - w.winfo_rootx()
+                local_y = event.y_root - w.winfo_rooty()
+                if w.identify(local_x, local_y) == 'tab':
+                    try:
+                        hit_index = w.index(f'@{local_x},{local_y}')
+                        hit_frame = w.nametowidget(w.tabs()[hit_index])
+                    except (tk.TclError, IndexError):
+                        hit_frame = None
+                    hit_group = next((g for g in self.bank_locker_groups
+                                      if g['notebook'] is hit_frame), None)
+                    if hit_group is not None:
+                        target_group_id = hit_group['id']
+                break
+            w = w.master
+        if target_group_id is _NOT_A_LOCKER_DROP_TARGET:
+            return
+
+        cdata = self.bank_characters.get(drag['char_name'], {})
+        if cdata.get('group_id') == target_group_id:
+            return
+        self._move_locker_to_group(drag['char_name'], target_group_id)
+
+    def _move_locker_to_group(self, char_name, group_id):
+        """Moves a Locker's tab into Locker Group `group_id` (None for
+        back to top-level/ungrouped) - destroy-and-rebuild under the new
+        parent, the same pattern _relocate_bank_character_tab_if_needed
+        uses for the is_locker flag itself (see _create_bank_character_
+        tab for why this loses nothing but scroll position)."""
+        cdata = self.bank_characters.setdefault(char_name, {})
+        cdata['group_id'] = group_id
+        w = self.bank_character_widgets.get(char_name)
+        if w:
+            w['tab'].destroy()
+            del self.bank_character_widgets[char_name]
+        self._create_bank_character_tab(char_name)
+        self._save_config()
 
     def _refresh_bank_character_tab(self, char_name):
         """Redraw one character's own Saved Items tab from

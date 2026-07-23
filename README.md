@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.24 (Current)
+### v5.4.25 (Current)
+- Added Locker Groups - Build → Bank Build → Lockers now has a leftmost "+" tab (no page of its own) that prompts for a name and creates a new group tab to organize Locker tabs into. Drag a Locker tab onto a group tab to move it in, or drag it back out onto the main tab strip to ungroup it. Group membership persists across restarts
+
+### v5.4.24
 - Fixed a bug where scrolling the mouse wheel over the Saved Builds tab's list would permanently break scrolling the main window for the rest of the session (the first time the mouse ever crossed it) - it used its own separate app-wide wheel binding that replaced, then fully removed, the one everything else relies on. Now uses a shared registry instead, so the mouse wheel scrolls the main window everywhere by default, defers to whichever list/table/canvas is actually under the cursor when it has its own scrolling, and keeps working correctly afterward no matter where you've scrolled
 
 ### v5.4.23
