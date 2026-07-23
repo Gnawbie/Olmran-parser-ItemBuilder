@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.22"
+VERSION = "5.4.23"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2197,6 +2197,20 @@ class App(tk.Tk):
                     "    goto retry_move\r\n"
                     ")\r\n"
                     f'echo [%date% %time%] move succeeded >> "{log_path}"\r\n'
+                    # A moment for antivirus to finish its on-write scan
+                    # of the freshly-placed exe - launching it too soon
+                    # can transiently fail with "Failed to load Python
+                    # DLL...LoadLibrary: The specified module could not
+                    # be found" even though the file itself is fine (AV
+                    # briefly locks it), and a plain manual relaunch
+                    # moments later works - reported independently by a
+                    # second user with that exact recovery pattern. Only
+                    # on the successful-move path (falls through to
+                    # here); the give-up path below jumps straight to
+                    # :relaunch for the untouched, already-stable old
+                    # exe, which was never freshly written and needs no
+                    # settling time.
+                    "ping -n 3 127.0.0.1 >NUL\r\n"
                     ":relaunch\r\n"
                     f'start "" "{current_exe}"\r\n'
                     f'echo [%date% %time%] relaunched >> "{log_path}"\r\n'

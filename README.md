@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.22 (Current)
+### v5.4.23 (Current)
+- Fixed the auto-updater's "Failed to load Python DLL...LoadLibrary: The specified module could not be found" error on the very first launch after an update - confirmed by a second, independent report that a plain manual relaunch immediately fixed it, meaning the freshly-swapped exe was never actually corrupted, just briefly locked by antivirus finishing its on-write scan. The swap script now waits a couple seconds after moving the new exe into place before launching it, giving that scan time to finish first
+
+### v5.4.22
 - Closed a real gap in the v5.4.20 auto-updater fix: the download size check only ran once, in memory, before writing the new exe to disk - if antivirus scanned and tampered with the freshly-downloaded, unsigned exe sitting in Temp afterward (which can happen, since the swap can only run once the old process fully exits, not necessarily instantly), that corruption slipped through untouched. The swap script now re-verifies the file's on-disk size immediately before every move attempt, retrying or safely relaunching the current exe untouched if it doesn't match, instead of ever installing a tampered file
 
 ### v5.4.21
