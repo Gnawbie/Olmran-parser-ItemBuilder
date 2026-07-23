@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.23"
+VERSION = "5.4.24"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2234,14 +2234,30 @@ class App(tk.Tk):
         (they're built into self._scroll_content exactly as if it were
         `self`).
 
-        Mouse wheel scrolling is also bound app-wide (bind_all) as a
-        convenience, but a widget that already handles its own wheel
-        scrolling (Treeview/Text/Listbox/Combobox) is left alone rather
-        than also scrolling the outer window - otherwise hovering over e.g.
-        a Results table while scrolling would double-scroll both it and
-        the whole window. The Scrollbar itself is the reliable path either
-        way, in case the wheel handling ever doesn't fire for a given
-        widget."""
+        Mouse wheel scrolling is also bound app-wide (bind_all), ONE
+        single handler for the whole app's lifetime, as a convenience:
+        - A widget that already handles its own wheel scrolling
+          (Treeview/Text/Listbox/Combobox) is left alone rather than also
+          scrolling the outer window - otherwise hovering over e.g. a
+          Results table while scrolling would double-scroll both it and
+          the whole window.
+        - Any other scrollable tk.Canvas built elsewhere (e.g. Saved
+          Builds' own canvas) registers itself in
+          self._extra_scroll_canvases (see _register_scroll_canvas) so
+          hovering it scrolls that canvas instead of this outer one -
+          plain tk.Canvas has no built-in wheel handling of its own the
+          way Treeview/Text/Listbox do, so it can't be covered by the
+          class check above and needs an explicit registry instead.
+          Every such canvas MUST use this registry rather than its own
+          local bind_all('<MouseWheel>', ...) - a second, independent
+          bind_all for the same global event replaces this one entirely
+          while hovering it, and unbind_all on <Leave> then wipes it out
+          for good instead of restoring it, permanently breaking the
+          whole app's wheel-scroll for the rest of the session the first
+          time the mouse ever crosses that widget (a real bug this
+          replaced - see Saved Builds).
+        The Scrollbar itself is the reliable path either way, in case
+        the wheel handling ever doesn't fire for a given widget."""
         outer = ttk.Frame(self)
         outer.pack(fill='both', expand=True)
 
@@ -2263,8 +2279,10 @@ class App(tk.Tk):
         canvas.bind('<Configure>', _on_canvas_configure)
 
         self_scrolling_classes = {'Treeview', 'Text', 'Listbox', 'TCombobox', 'ComboboxPopdownFrame'}
+        self._extra_scroll_canvases = []
 
         def _on_global_mousewheel(event):
+            delta_units = int(-1 * (event.delta / 120))
             w = event.widget
             while w is not None:
                 try:
@@ -2272,15 +2290,27 @@ class App(tk.Tk):
                         return
                 except tk.TclError:
                     break
+                if w in self._extra_scroll_canvases:
+                    w.yview_scroll(delta_units, 'units')
+                    return
                 if w is content:
                     break
                 w = w.master
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+            canvas.yview_scroll(delta_units, 'units')
 
         canvas.bind_all('<MouseWheel>', _on_global_mousewheel)
 
         self._scroll_canvas = canvas
         self._scroll_content = content
+
+    def _register_scroll_canvas(self, canvas):
+        """Registers a scrollable tk.Canvas built elsewhere (e.g. Saved
+        Builds) with the single app-wide mouse wheel handler set up in
+        _build_scrollable_root, so hovering it scrolls that canvas
+        instead of the outer window - see that method's docstring for
+        why every such canvas needs to go through this rather than its
+        own local bind_all('<MouseWheel>', ...)."""
+        self._extra_scroll_canvases.append(canvas)
 
     def _build_ui(self):
         style = ttk.Style(self)
@@ -5237,10 +5267,7 @@ class App(tk.Tk):
             canvas.itemconfig(saved_canvas_window, width=event.width)
         canvas.bind('<Configure>', _on_canvas_configure)
 
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
-        canvas.bind('<Enter>', lambda e: canvas.bind_all('<MouseWheel>', _on_mousewheel))
-        canvas.bind('<Leave>', lambda e: canvas.unbind_all('<MouseWheel>'))
+        self._register_scroll_canvas(canvas)
 
         # list of {'name': tk.StringVar, 'headers': [...], 'rows': [...]} -
         # restored from the config file so saved builds survive closing and

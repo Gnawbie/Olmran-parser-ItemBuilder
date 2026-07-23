@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.23 (Current)
+### v5.4.24 (Current)
+- Fixed a bug where scrolling the mouse wheel over the Saved Builds tab's list would permanently break scrolling the main window for the rest of the session (the first time the mouse ever crossed it) - it used its own separate app-wide wheel binding that replaced, then fully removed, the one everything else relies on. Now uses a shared registry instead, so the mouse wheel scrolls the main window everywhere by default, defers to whichever list/table/canvas is actually under the cursor when it has its own scrolling, and keeps working correctly afterward no matter where you've scrolled
+
+### v5.4.23
 - Fixed the auto-updater's "Failed to load Python DLL...LoadLibrary: The specified module could not be found" error on the very first launch after an update - confirmed by a second, independent report that a plain manual relaunch immediately fixed it, meaning the freshly-swapped exe was never actually corrupted, just briefly locked by antivirus finishing its on-write scan. The swap script now waits a couple seconds after moving the new exe into place before launching it, giving that scan time to finish first
 
 ### v5.4.22
