@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.27 (Current)
+### v5.4.28 (Current)
+- Added two circles to each Wanted Sigils chip (Build → Armor Constraints) - red requires one piece of gear carrying that sigil AND any Wanted Spell; blue requires that sigil AND a matching Protect spell (that element's own, or the generic Elemental Protect) instead, independent of the Wanted Spells list. Mutually exclusive per sigil, enforced as hard requirements even if it leaves other slots empty
+
+### v5.4.27
 - Fixed Locker Groups drag-and-drop not working - dragging a tab required clicking a tiny sliver right at the tab's edge to register at all, since the check relied on a Tk quirk where the actual clickable label text (where anyone would naturally click) reports differently than the tab's edge does. Dragging a Locker tab onto a group tab (or back out) now works from anywhere on the tab, not just that edge
 
 ### v5.4.26

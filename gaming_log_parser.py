@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.27"
+VERSION = "5.4.28"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -1948,6 +1948,8 @@ class App(tk.Tk):
                     'priority_spells_data': list(getattr(self, 'priority_spells_data', [])),
                     'priority_tiers_data': [list(pair) for pair in getattr(self, 'priority_tiers_data', [])],
                     'wanted_sigils_data': list(getattr(self, 'wanted_sigils_data', [])),
+                    'wanted_sigils_required': list(getattr(self, 'wanted_sigils_required', set())),
+                    'wanted_sigils_protect_required': list(getattr(self, 'wanted_sigils_protect_required', set())),
                     'required_items': [dict(item) for item in getattr(self, 'required_items', [])],
                     'min_level': self.min_level_var.get() if hasattr(self, 'min_level_var') else '',
                     'max_level': self.max_level_var.get() if hasattr(self, 'max_level_var') else '',
@@ -1974,6 +1976,8 @@ class App(tk.Tk):
         self.priority_spells_data = list(data.get('priority_spells_data', []))
         self.priority_tiers_data = [tuple(pair) for pair in data.get('priority_tiers_data', [])]
         self.wanted_sigils_data = list(data.get('wanted_sigils_data', []))
+        self.wanted_sigils_required = set(data.get('wanted_sigils_required', []))
+        self.wanted_sigils_protect_required = set(data.get('wanted_sigils_protect_required', []))
         self.required_items = [dict(item) for item in data.get('required_items', [])]
         self.min_level_var.set(data.get('min_level', ''))
         self.max_level_var.set(data.get('max_level', ''))
@@ -4146,6 +4150,15 @@ class App(tk.Tk):
         wanted_sigil_scroll_frame.pack(fill='both', expand=True, pady=(6,4))
 
         self.wanted_sigils_data = []
+        # Each chip's own two circles (see _render_wanted_sigil_chips) -
+        # mutually exclusive per sigil, toggled by
+        # _toggle_wanted_sigil_required/_toggle_wanted_sigil_protect_
+        # required. Enforced as hard pre-assignments before the main
+        # search runs (see _assign_required_sigils), same timing/pattern
+        # as Required Items - may leave other slots empty rather than
+        # give up on either requirement.
+        self.wanted_sigils_required = set()
+        self.wanted_sigils_protect_required = set()
         self.wanted_sigils_text = tk.Text(wanted_sigil_scroll_frame, height=4, width=22, wrap='word',
                                           cursor='arrow', state='disabled')
         wanted_sigil_scroll = ttk.Scrollbar(wanted_sigil_scroll_frame, orient='vertical',
@@ -4156,6 +4169,11 @@ class App(tk.Tk):
 
         ttk.Button(wanted_sigil_box, text="Clear All",
                   command=self._clear_wanted_sigils).pack(anchor='w')
+        ttk.Label(wanted_sigil_box,
+                 text="💡 ● red = required with a Wanted Spell. ● blue = required with a matching "
+                      "Protect spell instead.",
+                 font=('Arial', 7, 'italic'), foreground='#666', wraplength=180,
+                 justify='left').pack(anchor='w', pady=(4,0))
 
         # Load saved armor defaults
         self._load_armor_defaults()
@@ -5799,20 +5817,64 @@ class App(tk.Tk):
         """Remove one sigil chip (called by a chip's own ✕ button)"""
         if sigil in self.wanted_sigils_data:
             self.wanted_sigils_data.remove(sigil)
+            self.wanted_sigils_required.discard(sigil)
+            self.wanted_sigils_protect_required.discard(sigil)
             self._render_wanted_sigil_chips()
 
     def _clear_wanted_sigils(self):
         """Clear all sigils from the wanted sigils list"""
         self.wanted_sigils_data = []
+        self.wanted_sigils_required = set()
+        self.wanted_sigils_protect_required = set()
+        self._render_wanted_sigil_chips()
+
+    def _toggle_wanted_sigil_required(self, sigil):
+        """Circle 1 (red) - requires one piece of gear carrying this
+        sigil AND any Wanted/Priority spell, even if it leaves other
+        slots empty (see _assign_required_sigils). Mutually exclusive
+        with circle 2's Protect-only requirement for the same sigil -
+        turning this one on clears that one for the same sigil."""
+        if sigil in self.wanted_sigils_required:
+            self.wanted_sigils_required.discard(sigil)
+        else:
+            self.wanted_sigils_required.add(sigil)
+            self.wanted_sigils_protect_required.discard(sigil)
+        self._render_wanted_sigil_chips()
+
+    def _toggle_wanted_sigil_protect_required(self, sigil):
+        """Circle 2 (blue) - requires one piece of gear carrying this
+        sigil AND that element's own Protect spell (or the generic
+        Elemental Protect), independent of the Wanted Spells list
+        entirely (see _assign_required_sigils/PROTECT_SPELLS). Mutually
+        exclusive with circle 1 for the same sigil."""
+        if sigil in self.wanted_sigils_protect_required:
+            self.wanted_sigils_protect_required.discard(sigil)
+        else:
+            self.wanted_sigils_protect_required.add(sigil)
+            self.wanted_sigils_required.discard(sigil)
         self._render_wanted_sigil_chips()
 
     def _render_wanted_sigil_chips(self):
-        """Redraw the Wanted Sigils area as chips, same flow-and-wrap style as Wanted Spells."""
+        """Redraw the Wanted Sigils area as chips, same flow-and-wrap style as Wanted Spells.
+        Each chip gets two small circles ahead of its name: red toggles
+        the "required with a Wanted Spell" hard constraint, blue toggles
+        the "required with a matching Protect spell" one instead - filled
+        (●) means active, hollow (○) means inactive."""
         text = self.wanted_sigils_text
         text.config(state='normal')
         text.delete('1.0', tk.END)
         for sigil in self.wanted_sigils_data:
             chip = ttk.Frame(text, relief='raised', borderwidth=1)
+            is_required = sigil in self.wanted_sigils_required
+            required_lbl = ttk.Label(chip, text=('●' if is_required else '○'), padding=(3, 1),
+                                     foreground=('#FF0000' if is_required else '#999'), cursor='hand2')
+            required_lbl.pack(side='left')
+            required_lbl.bind('<Button-1>', lambda e, s=sigil: self._toggle_wanted_sigil_required(s))
+            is_protect_required = sigil in self.wanted_sigils_protect_required
+            protect_lbl = ttk.Label(chip, text=('●' if is_protect_required else '○'), padding=(1, 1),
+                                    foreground=('#2a6bb2' if is_protect_required else '#999'), cursor='hand2')
+            protect_lbl.pack(side='left')
+            protect_lbl.bind('<Button-1>', lambda e, s=sigil: self._toggle_wanted_sigil_protect_required(s))
             ttk.Label(chip, text=sigil, padding=(4, 1)).pack(side='left')
             remove_lbl = ttk.Label(chip, text='✕', padding=(4, 1),
                                    foreground='#a33', cursor='hand2')
@@ -6751,6 +6813,8 @@ class App(tk.Tk):
             'priority_spells_data': list(self.priority_spells_data),
             'priority_tiers_data': [list(pair) for pair in self.priority_tiers_data],
             'wanted_sigils_data': list(self.wanted_sigils_data),
+            'wanted_sigils_required': list(self.wanted_sigils_required),
+            'wanted_sigils_protect_required': list(self.wanted_sigils_protect_required),
             'required_items': [dict(item) for item in self.required_items],
             'min_level': self.min_level_var.get(),
             'max_level': self.max_level_var.get(),
@@ -6821,6 +6885,8 @@ class App(tk.Tk):
         self.priority_spells_data = list(data.get('priority_spells_data', []))
         self.priority_tiers_data = [tuple(pair) for pair in data.get('priority_tiers_data', [])]
         self.wanted_sigils_data = list(data.get('wanted_sigils_data', []))
+        self.wanted_sigils_required = set(data.get('wanted_sigils_required', []))
+        self.wanted_sigils_protect_required = set(data.get('wanted_sigils_protect_required', []))
         self.required_items = [dict(item) for item in data.get('required_items', [])]
         self.min_level_var.set(data.get('min_level', ''))
         self.max_level_var.set(data.get('max_level', ''))
@@ -7270,6 +7336,87 @@ class App(tk.Tk):
                 used_claw_items.append(item)
 
         return crafted_count, used_claw_items
+
+    def _assign_required_sigils(self, build, covered_bases, wanted_bases, items_by_slot):
+        """Force one armor piece into the build for each sigil flagged
+        "required" via a Wanted Sigils chip's circle (see
+        _toggle_wanted_sigil_required/_toggle_wanted_sigil_protect_
+        required) - same timing/pattern as _assign_required_items
+        (before the main search runs, so the rest of the build is
+        calculated around them and their slots are skipped below), for
+        the same reason: this is a harder ask than the passive Wanted
+        Sigils scoring bonus, which only prefers a sigil match and never
+        guarantees one.
+
+        Circle 1 (self.wanted_sigils_required) needs that sigil paired
+        with any Wanted/Priority spell (any tier) - same match rule the
+        rest of the search uses. Circle 2 (self.wanted_sigils_protect_
+        required) instead needs that sigil paired with that element's own
+        Protect spell, or the generic Elemental Protect, regardless of
+        the Wanted Spells list - Protect items store their spell with a
+        minor/normal/improved tier PREFIX (e.g. "minor.fire.protect"), so
+        this is a substring check same as everywhere else, not an exact
+        match. The two are mutually exclusive per sigil (enforced when
+        toggled), so a sigil is never processed by both loops below.
+
+        For each required sigil, picks the single best candidate across
+        every still-open ARMOR_SIGIL_SLOTS slot (highest matched spell
+        tier, then highest level) - if no item anywhere satisfies a given
+        sigil's requirement, that one requirement just can't be met and
+        is silently skipped, same as an unreachable Required Item slot."""
+        def best_candidate(sigil_lower, spell_ok):
+            best_item = None
+            best_slot = None
+            best_key = None
+            for slot in ARMOR_SIGIL_SLOTS:
+                if slot in build:
+                    continue
+                for item in items_by_slot.get(slot, []):
+                    item_sigil = (item.get('Sigil') or '').strip().lower()
+                    if item_sigil != sigil_lower:
+                        continue
+                    item_spell = (item.get('Spell') or '').lower()
+                    if not spell_ok(item_spell):
+                        continue
+                    item_tier = _item_tier_rank(item_spell)
+                    try:
+                        item_level_num = int(item.get('Level') or 0)
+                    except (ValueError, TypeError):
+                        item_level_num = 0
+                    key = (item_tier, item_level_num)
+                    if best_key is None or key > best_key:
+                        best_key = key
+                        best_item = item
+                        best_slot = slot
+            return best_item, best_slot
+
+        def assign(item, slot):
+            build[slot] = item
+            item_spell = (item.get('Spell') or '').lower()
+            for base in wanted_bases:
+                if base in item_spell:
+                    covered_bases.add(base)
+
+        for sigil in self.wanted_sigils_required:
+            sigil_lower = sigil.strip().lower()
+            if not sigil_lower:
+                continue
+            item, slot = best_candidate(
+                sigil_lower, lambda item_spell: any(b in item_spell for b in wanted_bases))
+            if item is not None:
+                assign(item, slot)
+
+        for sigil in self.wanted_sigils_protect_required:
+            sigil_lower = sigil.strip().lower()
+            if not sigil_lower:
+                continue
+            own_protect = f"{sigil_lower}.protect"
+            protect_ok = ((lambda s: own_protect in s or 'elemental.protect' in s)
+                         if own_protect in PROTECT_SPELLS
+                         else (lambda s: 'elemental.protect' in s))
+            item, slot = best_candidate(sigil_lower, protect_ok)
+            if item is not None:
+                assign(item, slot)
 
     def _save_bank_import_to_character(self):
         """Import tab's only button - parses the pasted text exactly like
@@ -9700,6 +9847,12 @@ class App(tk.Tk):
         # around them: their spells count as covered and their slots are skipped
         # below, same as anything the greedy search would have picked itself.
         crafted_count, used_claw_items = self._assign_required_items(build, covered_bases, wanted_bases)
+
+        # Wanted Sigils' own two per-chip circles - a harder ask than the
+        # passive Wanted Sigils scoring bonus below, so these get forced
+        # in right alongside Required Items, before anything else
+        # (including Max Lvl) gets a chance to claim the same slot.
+        self._assign_required_sigils(build, covered_bases, wanted_bases, items_by_slot)
 
         # Max Lvl (Armor Constraints) - up to 3 armor slots can be marked to
         # greedily grab the highest-level candidate for that slot BEFORE the
