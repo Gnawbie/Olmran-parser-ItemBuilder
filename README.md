@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.28 (Current)
+### v5.4.29 (Current)
+- Wanted Sigils (Build → Armor Constraints): the two circles now stay their own color (red/blue) whether hollow or filled in, instead of turning gray when off
+- Internal: added a developer-only diagnostic mode for the auto-updater's swap step, to help track down a recurring "Failed to load Python DLL" report - invisible to everyone else, who keep the normal silent, auto-closing update
+
+### v5.4.28
 - Added two circles to each Wanted Sigils chip (Build → Armor Constraints) - red requires one piece of gear carrying that sigil AND any Wanted Spell; blue requires that sigil AND a matching Protect spell (that element's own, or the generic Elemental Protect) instead, independent of the Wanted Spells list. Mutually exclusive per sigil, enforced as hard requirements even if it leaves other slots empty
 
 ### v5.4.27

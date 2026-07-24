@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.28"
+VERSION = "5.4.29"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2187,85 +2187,132 @@ class App(tk.Tk):
         and never corrupts current_exe with a since-tampered file. Uses
         `ping` against loopback for the retry delay instead of `timeout`,
         since `timeout` also misbehaves (returns instantly) without a
-        real attached console. Every step is logged to
-        olmran_update_log.txt in the temp dir for diagnosing failures
-        after the fact. Then exits immediately (os._exit, not a normal
-        close) so the file lock is released right away instead of
-        waiting on any further cleanup."""
+        real attached console.
+
+        Runs in a real, visible console window (CREATE_NEW_CONSOLE, not
+        hidden) with every command's own output printing directly to it
+        rather than being redirected into a log file - the DLL-load error
+        has persisted across multiple fix attempts despite each one
+        checking out in isolated testing.
+
+        Runs in two modes, chosen by whether the current Windows account
+        is this developer's own (see `verbose` below) - a real, visible
+        console that stays open under the user's own control (ending in
+        `pause`, only deleting itself after that keypress) ONLY on that
+        one account, to actually watch what's happening live while
+        chasing this recurring bug, rather than every regular user seeing
+        a technical debug console pop up during what should be an
+        invisible background update. Everyone else keeps the original
+        silent behavior: hidden window, output quietly appended to
+        olmran_update_log.txt, auto-closes when done. Then exits
+        immediately (os._exit, not a normal close) so the file lock is
+        released right away instead of waiting on any further cleanup."""
+        # This developer's own machine only - see the module docstring
+        # above for why this stays this narrow rather than applying to
+        # every user.
+        verbose = os.environ.get('USERNAME', '').strip().lower() == 'walli'
         try:
             bat_path = os.path.join(tempfile.gettempdir(), "olmran_update.bat")
             log_path = os.path.join(tempfile.gettempdir(), "olmran_update_log.txt")
+
+            def emit(msg):
+                return f'echo {msg}\r\n' if verbose else f'echo {msg} >> "{log_path}"\r\n'
+
+            redirect = '' if verbose else f' >> "{log_path}" 2>&1'
+
+            lines = ["@echo off\r\n"]
+            if verbose:
+                lines += [
+                    'echo ============================================================\r\n',
+                    'echo  Olmran Item Builder - installing update\r\n',
+                    'echo  This window shows every step live and stays open until you\r\n',
+                    'echo  close it - please leave it open until it says "finished".\r\n',
+                    'echo ============================================================\r\n',
+                    'echo.\r\n',
+                ]
+            else:
+                lines += [f'echo [%date% %time%] starting move-retry loop > "{log_path}"\r\n']
+
+            lines += [
+                "set retries=0\r\n",
+                ":retry_move\r\n",
+                'set "cursize="\r\n',
+                f'for %%A in ("{new_exe_path}") do set "cursize=%%~zA"\r\n',
+                f'if not "%cursize%"=="{expected_size}" (\r\n',
+                "    set /a retries+=1\r\n",
+                emit(f'[%date% %time%] size check failed - got "%cursize%", expected {expected_size} - attempt %retries%'),
+                "    if %retries% GEQ 60 (\r\n",
+                emit('[%date% %time%] giving up - downloaded file never matched expected size, relaunching old exe'),
+                "        goto relaunch\r\n",
+                "    )\r\n",
+                "    ping -n 2 127.0.0.1 >NUL\r\n",
+                "    goto retry_move\r\n",
+                ")\r\n",
+                f'move /y "{new_exe_path}" "{current_exe}"{redirect}\r\n',
+                "if errorlevel 1 (\r\n",
+                "    set /a retries+=1\r\n",
+                emit('[%date% %time%] move failed, attempt %retries%'),
+                "    if %retries% GEQ 60 (\r\n",
+                emit('[%date% %time%] giving up on move, relaunching old exe'),
+                "        goto relaunch\r\n",
+                "    )\r\n",
+                "    ping -n 2 127.0.0.1 >NUL\r\n",
+                "    goto retry_move\r\n",
+                ")\r\n",
+                emit('[%date% %time%] move succeeded'),
+                # Antivirus finishing its on-write scan of the
+                # freshly-placed exe can still hold a lock on it for a
+                # while after the move itself completes - launching too
+                # soon transiently fails with "Failed to load Python
+                # DLL...LoadLibrary: The specified module could not be
+                # found" even though the file itself is completely fine
+                # (confirmed independently by two users: a plain manual
+                # relaunch afterward works immediately). A fixed short
+                # delay here wasn't always long enough - scan time varies
+                # by machine - so instead of guessing, actively test for
+                # the lock itself: renaming the file to its own current
+                # name is a no-op that still requires the file not be
+                # locked, the same trick the move-retry loop above uses
+                # for waiting on the OLD exe's process to fully exit.
+                # Only on the successful-move path (falls through to
+                # here); the give-up path above jumps straight to
+                # :relaunch for the untouched, already-stable old exe,
+                # which was never freshly written and needs no settling
+                # time.
+                "set settle_tries=0\r\n",
+                ":settle_check\r\n",
+                f'ren "{current_exe}" "{os.path.basename(current_exe)}"{redirect}\r\n',
+                "if errorlevel 1 (\r\n",
+                "    set /a settle_tries+=1\r\n",
+                emit('[%date% %time%] exe still locked, attempt %settle_tries%'),
+                "    if %settle_tries% GEQ 30 (\r\n",
+                emit('[%date% %time%] giving up waiting for lock to clear, launching anyway'),
+                "        goto relaunch\r\n",
+                "    )\r\n",
+                "    ping -n 2 127.0.0.1 >NUL\r\n",
+                "    goto settle_check\r\n",
+                ")\r\n",
+                emit('[%date% %time%] exe no longer locked, safe to launch'),
+                ":relaunch\r\n",
+                f'start "" "{current_exe}"\r\n',
+                emit('[%date% %time%] relaunched.'),
+            ]
+            if verbose:
+                lines += [
+                    'echo.\r\n',
+                    'echo ============================================================\r\n',
+                    'echo  Finished. Review the output above, then press any key to\r\n',
+                    'echo  close this window.\r\n',
+                    'echo ============================================================\r\n',
+                    'pause >NUL\r\n',
+                ]
+            lines += ['del "%~f0"\r\n']
+
             with open(bat_path, 'w') as f:
-                f.write(
-                    "@echo off\r\n"
-                    f'echo [%date% %time%] starting move-retry loop > "{log_path}"\r\n'
-                    "set retries=0\r\n"
-                    ":retry_move\r\n"
-                    'set "cursize="\r\n'
-                    f'for %%A in ("{new_exe_path}") do set "cursize=%%~zA"\r\n'
-                    f'if not "%cursize%"=="{expected_size}" (\r\n'
-                    "    set /a retries+=1\r\n"
-                    f'    echo [%date% %time%] size check failed - got %cursize%, expected {expected_size} - attempt %retries% >> "{log_path}"\r\n'
-                    "    if %retries% GEQ 60 (\r\n"
-                    f'        echo [%date% %time%] giving up - downloaded file never matched expected size, relaunching old exe >> "{log_path}"\r\n'
-                    "        goto relaunch\r\n"
-                    "    )\r\n"
-                    "    ping -n 2 127.0.0.1 >NUL\r\n"
-                    "    goto retry_move\r\n"
-                    ")\r\n"
-                    f'move /y "{new_exe_path}" "{current_exe}" >> "{log_path}" 2>&1\r\n'
-                    "if errorlevel 1 (\r\n"
-                    "    set /a retries+=1\r\n"
-                    f'    echo [%date% %time%] move failed, attempt %retries% >> "{log_path}"\r\n'
-                    "    if %retries% GEQ 60 (\r\n"
-                    f'        echo [%date% %time%] giving up on move, relaunching old exe >> "{log_path}"\r\n'
-                    "        goto relaunch\r\n"
-                    "    )\r\n"
-                    "    ping -n 2 127.0.0.1 >NUL\r\n"
-                    "    goto retry_move\r\n"
-                    ")\r\n"
-                    f'echo [%date% %time%] move succeeded >> "{log_path}"\r\n'
-                    # Antivirus finishing its on-write scan of the
-                    # freshly-placed exe can still hold a lock on it for
-                    # a while after the move itself completes - launching
-                    # too soon transiently fails with "Failed to load
-                    # Python DLL...LoadLibrary: The specified module
-                    # could not be found" even though the file itself is
-                    # completely fine (confirmed independently by two
-                    # users: a plain manual relaunch afterward works
-                    # immediately). A fixed short delay here wasn't
-                    # always long enough - scan time varies by machine -
-                    # so instead of guessing, actively test for the lock
-                    # itself: renaming the file to its own current name
-                    # is a no-op that still requires the file not be
-                    # locked, the same trick the move-retry loop above
-                    # uses for waiting on the OLD exe's process to fully
-                    # exit. Only on the successful-move path (falls
-                    # through to here); the give-up path above jumps
-                    # straight to :relaunch for the untouched,
-                    # already-stable old exe, which was never freshly
-                    # written and needs no settling time.
-                    "set settle_tries=0\r\n"
-                    ":settle_check\r\n"
-                    f'ren "{current_exe}" "{os.path.basename(current_exe)}" >> "{log_path}" 2>&1\r\n'
-                    "if errorlevel 1 (\r\n"
-                    "    set /a settle_tries+=1\r\n"
-                    f'    echo [%date% %time%] exe still locked, attempt %settle_tries% >> "{log_path}"\r\n'
-                    "    if %settle_tries% GEQ 30 (\r\n"
-                    f'        echo [%date% %time%] giving up waiting for lock to clear, launching anyway >> "{log_path}"\r\n'
-                    "        goto relaunch\r\n"
-                    "    )\r\n"
-                    "    ping -n 2 127.0.0.1 >NUL\r\n"
-                    "    goto settle_check\r\n"
-                    ")\r\n"
-                    f'echo [%date% %time%] exe no longer locked, safe to launch >> "{log_path}"\r\n'
-                    ":relaunch\r\n"
-                    f'start "" "{current_exe}"\r\n'
-                    f'echo [%date% %time%] relaunched >> "{log_path}"\r\n'
-                    'del "%~f0"\r\n'
-                )
+                f.write(''.join(lines))
             subprocess.Popen(['cmd', '/c', bat_path],
-                             creationflags=subprocess.CREATE_NO_WINDOW)
+                             creationflags=(subprocess.CREATE_NEW_CONSOLE if verbose
+                                           else subprocess.CREATE_NO_WINDOW))
         except Exception as e:
             self._on_update_download_failed(e)
             return
@@ -5859,7 +5906,9 @@ class App(tk.Tk):
         Each chip gets two small circles ahead of its name: red toggles
         the "required with a Wanted Spell" hard constraint, blue toggles
         the "required with a matching Protect spell" one instead - filled
-        (●) means active, hollow (○) means inactive."""
+        (●) means active, hollow (○) means inactive (same color either
+        way, so hollow reads as "this one, just not on" rather than a
+        neutral/disabled-looking gray)."""
         text = self.wanted_sigils_text
         text.config(state='normal')
         text.delete('1.0', tk.END)
@@ -5867,12 +5916,12 @@ class App(tk.Tk):
             chip = ttk.Frame(text, relief='raised', borderwidth=1)
             is_required = sigil in self.wanted_sigils_required
             required_lbl = ttk.Label(chip, text=('●' if is_required else '○'), padding=(3, 1),
-                                     foreground=('#FF0000' if is_required else '#999'), cursor='hand2')
+                                     foreground='#FF0000', cursor='hand2')
             required_lbl.pack(side='left')
             required_lbl.bind('<Button-1>', lambda e, s=sigil: self._toggle_wanted_sigil_required(s))
             is_protect_required = sigil in self.wanted_sigils_protect_required
             protect_lbl = ttk.Label(chip, text=('●' if is_protect_required else '○'), padding=(1, 1),
-                                    foreground=('#2a6bb2' if is_protect_required else '#999'), cursor='hand2')
+                                    foreground='#2a6bb2', cursor='hand2')
             protect_lbl.pack(side='left')
             protect_lbl.bind('<Button-1>', lambda e, s=sigil: self._toggle_wanted_sigil_protect_required(s))
             ttk.Label(chip, text=sigil, padding=(4, 1)).pack(side='left')
