@@ -134,7 +134,12 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.32 (Current)
+### v5.4.33 (Current)
+- Fixed "Rebuild (Saved Items First)" sometimes filling two different slots with two different items for the same stat (e.g. a constitution item in both Cloak and Body) - its full-database fallback pass filled each empty slot independently against the same "still needed" list without ever narrowing it down, so two empty slots needing the same spell could both grab their own covering item instead of just one
+- Fixed that same Rebuild's first pass (Saved Items only) sometimes wrongly rejecting an owned item over its exact spell tier or its drop realm, pushing it into the full-database fallback for no reason - it's now consistent with Bank Build's own Hard Search: any tier is accepted and realm no longer matters for items you already own
+- Fixed the full-database fallback used by Rebuild and "Search Full Database for This Slot" ignoring which spell tier was actually requested, picking whichever candidate had the highest level regardless of tier - it now prefers a match for the tier you asked for first
+
+### v5.4.32
 - Added a second download option: a "Folder" distribution (`OlmranItemBuilder_Folder.zip`) alongside the existing single-file `OlmranItemBuilder.exe`. Unzip it once and run the exe from inside - no per-launch self-extraction step, so it opens instantly every time, unlike the onefile build which unpacks itself to a fresh temp folder on every launch. Same program either way; "Check for Update" correctly detects and updates whichever one you're running, including swapping in a fresh copy of its files and relaunching automatically
 
 ### v5.4.31

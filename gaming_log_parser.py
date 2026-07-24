@@ -7,7 +7,7 @@ Parses Chat, Combat, and Loot from action and chat .log files
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from tkinter import font as tkfont
-import re, os, sys, json, difflib, threading, tempfile, subprocess, webbrowser, urllib.request, urllib.error, zipfile, shutil
+import re, os, sys, json, difflib, threading, tempfile, subprocess, webbrowser, urllib.request, urllib.error, zipfile, shutil, traceback
 from pathlib import Path
 from datetime import datetime
 import openpyxl
@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.32"
+VERSION = "5.4.33"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -33,6 +33,58 @@ def _is_folder_build():
     if not getattr(sys, 'frozen', False):
         return False
     return os.path.isdir(os.path.join(os.path.dirname(os.path.abspath(sys.executable)), '_internal'))
+
+# ── DEBUG LOG (test_launcher_debug.py / OlmranItemBuilder_TEST_DEBUG.exe,
+# and automatically on this developer's own machine on ANY build - see
+# `verbose` in _finish_self_update for the same pattern applied to the
+# auto-updater's own console) ──────────────────────────────────────
+# Set OLMRAN_DEBUG_CONSOLE before importing this module to get every
+# button/checkbox click and any uncaught exception written, live, to a
+# plain log file (see _debug_log_path below) - built for reproducing an
+# in-the-moment bug report without relying on the user's own screenshots/
+# memory of what they clicked. No console window at all (an earlier
+# version opened one - piped through `cmd /k findstr` at first, then a
+# separate `powershell -NoExit ... Get-Content -Wait` tailing this same
+# file - dropped in favor of just reading the file directly afterward,
+# simpler and with nothing left running for the user to have to close).
+_DEBUG_CONSOLE_ENABLED = (bool(os.environ.get('OLMRAN_DEBUG_CONSOLE'))
+                          or os.environ.get('USERNAME', '').strip().lower() == 'walli')
+_debug_log_path = None
+_debug_console_started = False
+
+def _start_debug_console():
+    global _debug_log_path, _debug_console_started
+    if not _DEBUG_CONSOLE_ENABLED or _debug_console_started:
+        return
+    _debug_console_started = True
+    try:
+        _debug_log_path = os.path.join(tempfile.gettempdir(), 'olmran_debug_console.log')
+        # Fresh transcript for this run.
+        with open(_debug_log_path, 'w', encoding='utf-8'):
+            pass
+        _debug_log('=' * 60)
+        _debug_log('Olmran Item Builder - Debug Log')
+        _debug_log(f'Logging every button/checkbox click and any error to: {_debug_log_path}')
+        _debug_log('=' * 60)
+    except Exception:
+        _debug_log_path = None
+
+def _debug_log(message):
+    """No-op whenever the debug console isn't running (every normal
+    build/user) - safe to call unconditionally from anywhere. Silently
+    stops trying again for the rest of this run if the log file becomes
+    unwritable partway through, rather than raising out of whatever real
+    app code called this."""
+    global _debug_log_path
+    if _debug_log_path is None:
+        return
+    stamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+    try:
+        with open(_debug_log_path, 'a', encoding='utf-8') as f:
+            for line in str(message).splitlines() or ['']:
+                f.write(f'[{stamp}] {line}\n')
+    except Exception:
+        _debug_log_path = None
 
 # Sentinel for _get_notebook_locker_target - distinguishes "this notebook
 # isn't part of the Lockers area at all" (a drag dropped somewhere
@@ -1746,9 +1798,84 @@ class PvpResultViewer(tk.Toplevel):
         LogFileViewer(self, r['file'], r['path'], r['line_num'])
 
 
+def _patch_widgets_for_debug_logging():
+    """Wraps every ttk.Button/ttk.Checkbutton's own `command=` callback
+    (module-wide, one-time) so each click logs what was clicked and any
+    exception it raised to the debug console, before/around calling the
+    real callback unchanged - covers the vast majority of "commands" a
+    user actually issues without needing to hand-instrument every one of
+    the hundreds of individual button/checkbox call sites throughout this
+    file. Idempotent (checked via a marker attribute) since App() could
+    in principle be constructed more than once in a process.
+
+    Right-click context menus (tk.Menu.add_command/add_checkbutton) are a
+    separate mechanism entirely from a Button's own `command=` - e.g. the
+    Results tab's per-row "Rebuild (Saved Items First)"/"Remove from
+    Build" menu items - and need their own wrap alongside the widget one
+    above, or a whole class of real user actions (anything reached via a
+    right-click menu) would go completely unlogged."""
+    if getattr(ttk.Button, '_olmran_debug_patched', False):
+        return
+    for widget_cls in (ttk.Button, ttk.Checkbutton):
+        orig_init = widget_cls.__init__
+
+        def patched_init(self, master=None, _orig_init=orig_init, **kwargs):
+            cmd = kwargs.get('command')
+            if callable(cmd):
+                label = kwargs.get('text') or (cmd.__name__ if hasattr(cmd, '__name__') else '')
+
+                def wrapped(*args, _cmd=cmd, _label=label):
+                    _debug_log(f'Clicked: {_label!r}')
+                    try:
+                        return _cmd(*args)
+                    except Exception:
+                        _debug_log('EXCEPTION in click handler:\n' + traceback.format_exc())
+                        raise
+                kwargs['command'] = wrapped
+            _orig_init(self, master, **kwargs)
+        widget_cls.__init__ = patched_init
+    ttk.Button._olmran_debug_patched = True
+
+    for method_name in ('add_command', 'add_checkbutton', 'add_radiobutton'):
+        orig_method = getattr(tk.Menu, method_name)
+
+        def patched_menu_method(self, _orig_method=orig_method, **kwargs):
+            cmd = kwargs.get('command')
+            if callable(cmd):
+                label = kwargs.get('label') or (cmd.__name__ if hasattr(cmd, '__name__') else '')
+
+                def wrapped(*args, _cmd=cmd, _label=label):
+                    _debug_log(f'Menu item clicked: {_label!r}')
+                    try:
+                        return _cmd(*args)
+                    except Exception:
+                        _debug_log('EXCEPTION in menu item handler:\n' + traceback.format_exc())
+                        raise
+                kwargs['command'] = wrapped
+            return _orig_method(self, **kwargs)
+        setattr(tk.Menu, method_name, patched_menu_method)
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+        if _DEBUG_CONSOLE_ENABLED:
+            _start_debug_console()
+            _patch_widgets_for_debug_logging()
+            # Tkinter's own hook, called automatically for an uncaught
+            # exception raised inside ANY callback/binding/after() call -
+            # broader coverage than the Button/Checkbutton wrap above
+            # alone (catches Treeview bindings, Combobox selection
+            # events, trace_add callbacks, etc. too). Still runs the
+            # default behavior (prints to stderr) via the base class
+            # implementation, so nothing about normal error handling
+            # changes outside this debug build - this only adds the
+            # extra copy into the debug console.
+            _default_report_callback_exception = self.report_callback_exception
+            def _debug_report_callback_exception(exc, val, tb):
+                _debug_log('UNCAUGHT EXCEPTION:\n' + ''.join(traceback.format_exception(exc, val, tb)))
+                _default_report_callback_exception(exc, val, tb)
+            self.report_callback_exception = _debug_report_callback_exception
         # OLMRAN_TEST_CONFIG lets a separate local-only test build (see
         # test_launcher.py, never committed/pushed) point at an isolated
         # config file instead of the real one, and hard-clean it on every
@@ -2069,6 +2196,7 @@ class App(tk.Tk):
         older release cut before the Folder build existed) is reported the
         same as no update being available yet, via download_url being
         None."""
+        _debug_log(f'Update check: starting (current version={VERSION}, folder_build={_is_folder_build()})')
         try:
             req = urllib.request.Request(
                 f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
@@ -2083,12 +2211,16 @@ class App(tk.Tk):
                               if (a.get('name') or '').lower().endswith(wanted_suffix)), None)
             download_url = update_asset.get('browser_download_url') if update_asset else None
             expected_size = update_asset.get('size') if update_asset else None
+            _debug_log(f'Update check: latest tag={latest_version!r}, wanted asset suffix={wanted_suffix!r}, '
+                       f'matching asset={(update_asset or {}).get("name")!r}, size={expected_size!r}')
             self.after(0, lambda: self._on_update_check_done(latest_version, download_url, expected_size, None))
         except Exception as e:
+            _debug_log(f'Update check FAILED: {e!r}\n{traceback.format_exc()}')
             self.after(0, lambda: self._on_update_check_done(None, None, None, e))
 
     def _on_update_check_done(self, latest_version, download_url, expected_size, error):
         if error is not None or not latest_version:
+            _debug_log(f'Update check done: check failed (error={error!r})')
             self.update_check_button.config(state='normal', text="Check for Update")
             self.update_status_label.config(text="Check failed - no internet?", foreground='#a33')
             return
@@ -2097,6 +2229,7 @@ class App(tk.Tk):
             if not download_url:
                 # A newer tag exists but has no .exe asset attached yet
                 # (release still being prepared) - nothing to offer yet.
+                _debug_log(f'Update check done: v{latest_version} exists but no matching asset attached yet')
                 self.update_check_button.config(state='normal', text="Check for Update")
                 self.update_status_label.config(
                     text=f"v{latest_version.lstrip('vV')} is out, but no download is attached yet",
@@ -2105,11 +2238,14 @@ class App(tk.Tk):
             self._pending_update_url = download_url
             self._pending_update_size = expected_size
             self._pending_update_version = latest_version.lstrip('vV')
+            _debug_log(f'Update check done: v{self._pending_update_version} available '
+                       f'(url={download_url}, size={expected_size})')
             self.update_check_button.config(
                 state='normal', text=f"⬇ Download & Update to v{self._pending_update_version}",
                 command=self._start_self_update)
             self.update_status_label.config(text="", foreground='#666')
         else:
+            _debug_log(f'Update check done: already on latest version ({VERSION})')
             self.update_check_button.config(state='normal', text="Check for Update")
             self.update_status_label.config(text="You're on the latest version", foreground='#2a2')
 
@@ -2123,16 +2259,25 @@ class App(tk.Tk):
         packaged .exe - from source (python gaming_log_parser.py) there's
         no exe for this to replace, so it just points at the release page
         instead."""
+        # Not caught by the generic button-click log wrap - this button's
+        # command is reassigned later via .config(command=...) once an
+        # update is found, not set at __init__ time, so it never goes
+        # through the wrapped constructor _patch_widgets_for_debug_logging
+        # patches.
+        _debug_log("Clicked: 'Download & Update' (Check for Update button, post-check state)")
         if not getattr(sys, 'frozen', False):
+            _debug_log('Self-update: not running as a frozen exe, pointing at release page instead')
             messagebox.showinfo("Running From Source",
                 "Self-update only applies to the packaged .exe. Since this is running from source, "
                 "pull the latest changes from GitHub instead.")
             return
 
         version = self._pending_update_version
-        if not messagebox.askyesno("Download and Install Update",
+        confirmed = messagebox.askyesno("Download and Install Update",
                 f"Download v{version} and restart to install it?\n\n"
-                "The app will close, install the update, and reopen automatically."):
+                "The app will close, install the update, and reopen automatically.")
+        _debug_log(f'Self-update: confirm dialog for v{version} -> {"yes" if confirmed else "no"}')
+        if not confirmed:
             return
 
         self.update_check_button.config(state='disabled', text="Downloading...")
@@ -2143,6 +2288,8 @@ class App(tk.Tk):
 
     def _download_update_worker(self, download_url, version, expected_size):
         is_folder = _is_folder_build()
+        _debug_log(f'Download worker: starting for v{version} (folder_build={is_folder}, '
+                   f'url={download_url}, expected_size={expected_size})')
         try:
             current_exe = os.path.abspath(sys.executable)
             temp_dir = tempfile.gettempdir()
@@ -2151,6 +2298,8 @@ class App(tk.Tk):
                 download_url, headers={'User-Agent': 'OlmranItemBuilder-UpdateCheck'})
             with urllib.request.urlopen(req, timeout=60) as resp:
                 downloaded = resp.read()
+            _debug_log(f'Download worker: downloaded {len(downloaded):,} bytes '
+                       f'(first 2 bytes={downloaded[:2]!r})')
 
             # A truncated/interrupted download (connection dropped
             # partway through) can still land well above the old ">1MB"
@@ -2209,6 +2358,8 @@ class App(tk.Tk):
                 if not (os.path.isfile(staged_exe) and os.path.isdir(staged_internal)):
                     raise ValueError("Downloaded update zip doesn't have the expected folder layout.")
 
+                _debug_log(f'Download worker: zip verified and extracted to {staging_dir}, '
+                           f'handing off to _finish_self_update (is_folder=True)')
                 self.after(0, lambda: self._finish_self_update(
                     current_exe, staged_exe, len(downloaded), is_folder=True,
                     staging_dir=staging_dir, downloaded_zip_path=new_zip_path))
@@ -2221,11 +2372,15 @@ class App(tk.Tk):
                 with open(new_exe_path, 'wb') as f:
                     f.write(downloaded)
 
+                _debug_log(f'Download worker: exe verified and saved to {new_exe_path}, '
+                           f'handing off to _finish_self_update (is_folder=False)')
                 self.after(0, lambda: self._finish_self_update(current_exe, new_exe_path, len(downloaded)))
         except Exception as e:
+            _debug_log(f'Download worker FAILED: {e!r}\n{traceback.format_exc()}')
             self.after(0, lambda: self._on_update_download_failed(e))
 
     def _on_update_download_failed(self, error):
+        _debug_log(f'Update download failed, shown to user: {error}')
         self.update_check_button.config(
             state='normal', text=f"⬇ Download & Update to v{self._pending_update_version}",
             command=self._start_self_update)
@@ -2519,7 +2674,17 @@ class App(tk.Tk):
             subprocess.Popen(['cmd', '/c', bat_path],
                              creationflags=(subprocess.CREATE_NEW_CONSOLE if verbose
                                            else subprocess.CREATE_NO_WINDOW))
+            # From here on, everything happens in the batch script, a
+            # separate process this log can't see into directly - non-
+            # verbose mode's own copy of the same steps lands in
+            # olmran_update_log.txt (same temp dir as this log file),
+            # worth checking too if an update goes wrong from here.
+            _debug_log(f'Finish self-update: handed off to {bat_path} '
+                       f'(is_folder={is_folder}, verbose={verbose}, current_exe={current_exe}) '
+                       f'- this process exits now, see olmran_update_log.txt for the batch script\'s own steps '
+                       f'if not verbose')
         except Exception as e:
+            _debug_log(f'Finish self-update FAILED before handoff: {e!r}\n{traceback.format_exc()}')
             self._on_update_download_failed(e)
             return
         self._save_config()
@@ -5093,6 +5258,7 @@ class App(tk.Tk):
         # missing slot(s) instead of replacing the whole displayed build.
         self._no_item_text_override = None
         self._hard_search_strict_tier = False
+        self._bank_items_restricted = False
         self._saved_hard_search_missing_slots = None
         self._saved_hard_search_build_dict = None
         self._saved_hard_search_attempted_slots = None
@@ -8060,6 +8226,7 @@ class App(tk.Tk):
         across as many Remove/Rebuild cycles as needed."""
         self._no_item_text_override = None
         self._hard_search_strict_tier = False
+        self._bank_items_restricted = False
         self._saved_hard_search_missing_slots = None
         self._saved_hard_search_build_dict = None
         self._saved_hard_search_attempted_slots = None
@@ -8575,15 +8742,36 @@ class App(tk.Tk):
                 "None of the Saved Items were recognized against the loaded master database.")
             return
 
-        # Pass 1: Saved Items only.
+        # Pass 1: Saved Items only. Explicitly clears _hard_search_strict_
+        # tier for the duration - it can otherwise be left True from an
+        # earlier Hard Search Bank Build (preserved deliberately across a
+        # Rebuild, which - unlike a fresh search - never calls
+        # _reset_hard_search_state), silently contradicting this pass's
+        # own "no tier-holding, any tier the bank has is accepted" design:
+        # an owned item at a different tier than exactly requested would
+        # get wrongly rejected here, leaving its base looking uncovered
+        # and pushing it into Pass 2's full-database fallback for no
+        # reason. _bank_items_restricted is instead explicitly set True
+        # here (own reason: this pass's own master_data swap already
+        # means every candidate is something owned, same as Hard Search -
+        # see the realm-filter bypass this drives in _find_optimal_build)
+        # regardless of whatever it was left at, since Pass 1 is always
+        # owned-items-only whether or not the preceding search happened
+        # to be a Hard Search at all.
         original_master_data = self.master_data
+        original_strict_tier = getattr(self, '_hard_search_strict_tier', False)
+        original_items_restricted = getattr(self, '_bank_items_restricted', False)
         self.master_data = matched_items
+        self._hard_search_strict_tier = False
+        self._bank_items_restricted = True
         self._bank_owned_keys = owned_keys
         self._suppress_results_redraw = True
         try:
             self._find_optimal_build()
         finally:
             self.master_data = original_master_data
+            self._hard_search_strict_tier = original_strict_tier
+            self._bank_items_restricted = original_items_restricted
             self._bank_owned_keys = None
             self._suppress_results_redraw = False
 
@@ -8646,11 +8834,26 @@ class App(tk.Tk):
                 self._suppress_results_redraw = False
 
             if uncovered_chips:
+                # remaining_chips shrinks as slots get filled below - a
+                # bare uncovered_chips passed unchanged to every slot in
+                # this loop would let two DIFFERENT still-missing slots
+                # (e.g. Cloak and Body) each independently find their own
+                # "best item covering constitution" and both actually get
+                # placed, since nothing here otherwise notices the base
+                # was already just covered by the previous slot in this
+                # same loop - a real duplicate, not a cosmetic one (see
+                # is_redundant_spell in _find_optimal_build's own solve(),
+                # which prevents exactly this within the main DP, but this
+                # per-slot fallback loop is a separate, simpler mechanism
+                # that never shared that protection).
+                remaining_chips = list(uncovered_chips)
                 for slot in list(still_missing):
-                    item = self._find_best_item_for_slot(slot, uncovered_chips, hold_tier=False)
+                    item = self._find_best_item_for_slot(slot, remaining_chips, hold_tier=False)
                     if item is not None:
                         base_build[slot] = item
                         still_missing.discard(slot)
+                        item_base = _spell_base((item.get('Spell') or '').lower())
+                        remaining_chips = [c for c in remaining_chips if _spell_base(c) != item_base]
 
             if sigil_unmet:
                 wanted_bases = {_spell_base(w) for w in original_wanted}
@@ -8821,6 +9024,7 @@ class App(tk.Tk):
                 self.master_data = matched_items
                 self._no_item_text_override = "No available item"
                 self._hard_search_strict_tier = True
+                self._bank_items_restricted = True
                 try:
                     self._find_optimal_build()
                 finally:
@@ -8878,8 +9082,15 @@ class App(tk.Tk):
 
         hold_tier=True requires an exact tier match against whichever chips
         share the item's base spell (chips with no explicit tier are
-        unrestricted either way); False accepts any tier, preferring the
-        highest level available. An empty `chips` (no wanted spell at all
+        unrestricted either way) - anything else is excluded outright,
+        not just deprioritized. hold_tier=False instead accepts any tier
+        as a last resort, but still PREFERS a candidate matching the
+        requested tier over a same-or-higher-level one that doesn't
+        (ahead of level in the tie-break) - without this, "constitution.ii"
+        specifically requested could still silently come back as a
+        constitution.iii item just because it happened to be the same or
+        a higher level, with nothing here ever preferring the tier
+        actually asked for. An empty `chips` (no wanted spell at all
         applies to this slot - e.g. an always-fill Weapon/Shield slot with
         no spell requirement) makes every candidate eligible instead of
         none, since there's nothing to match against. Returns the item
@@ -8897,22 +9108,25 @@ class App(tk.Tk):
                 target_ranks_by_base.setdefault(base, set()).add(tier)
 
         best = None
-        best_level = -1
+        best_key = None
         for item in candidates:
             item_spell = (item.get('Spell') or '').lower()
             item_base = _spell_base(item_spell)
             if wanted_bases and item_base not in wanted_bases:
                 continue
             target_ranks = target_ranks_by_base.get(item_base)
-            if hold_tier and target_ranks and _item_tier_rank(item_spell) not in target_ranks:
+            item_tier = _item_tier_rank(item_spell)
+            if hold_tier and target_ranks and item_tier not in target_ranks:
                 continue
+            tier_match = 1 if (not target_ranks or item_tier in target_ranks) else 0
             try:
                 item_level = int(item.get('Level') or 0)
             except (ValueError, TypeError):
                 item_level = 0
-            if item_level > best_level:
+            key = (tier_match, item_level)
+            if best is None or key > best_key:
                 best = item
-                best_level = item_level
+                best_key = key
         return best
 
     def _search_missing_slots(self):
@@ -9953,17 +10167,19 @@ class App(tk.Tk):
                 continue
 
             # Apply realm filter if any selected ("All" means none - see
-            # _update_realm_all_exclusivity). Skipped entirely under Hard
-            # Search (self._hard_search_strict_tier) - Hard Search already
-            # restricts candidates to just this character's own Saved
-            # Items, so an item's drop realm is moot: the player already
-            # owns it regardless of where it originally came from. Without
-            # this, an owned item sitting in an unchecked realm (e.g. a
-            # Kaid Purple drop when only Kaid Red/Green/White are checked)
-            # would silently vanish from its own Bank Build search even
+            # _update_realm_all_exclusivity). Skipped entirely whenever
+            # self._bank_items_restricted is set - Bank Build's Hard
+            # Search and Rebuild (Saved Items First)'s own Pass 1 both
+            # restrict candidates to just already-owned Saved Items, so
+            # an item's drop realm is moot: the player already owns it
+            # regardless of where it originally came from. Without this,
+            # an owned item sitting in an unchecked realm (e.g. a Kaid
+            # Purple drop when only Kaid Red/Green/White are checked, or
+            # an Event-realm item when Event isn't checked) would
+            # silently vanish from its own Bank Build/Rebuild search even
             # though nothing else in the pool can replace it.
             selected_realms = ([] if self.realm_filter_all_var.get()
-                                   or getattr(self, '_hard_search_strict_tier', False)
+                                   or getattr(self, '_bank_items_restricted', False)
                               else [realm for realm, var in self.realm_filters.items() if var.get()])
             if selected_realms:
                 realm_match = False
@@ -11175,17 +11391,19 @@ class App(tk.Tk):
                 continue
 
             # Apply realm filter if any selected ("All" means none - see
-            # _update_realm_all_exclusivity). Skipped entirely under Hard
-            # Search (self._hard_search_strict_tier) - Hard Search already
-            # restricts candidates to just this character's own Saved
-            # Items, so an item's drop realm is moot: the player already
-            # owns it regardless of where it originally came from. Without
-            # this, an owned item sitting in an unchecked realm (e.g. a
-            # Kaid Purple drop when only Kaid Red/Green/White are checked)
-            # would silently vanish from its own Bank Build search even
+            # _update_realm_all_exclusivity). Skipped entirely whenever
+            # self._bank_items_restricted is set - Bank Build's Hard
+            # Search and Rebuild (Saved Items First)'s own Pass 1 both
+            # restrict candidates to just already-owned Saved Items, so
+            # an item's drop realm is moot: the player already owns it
+            # regardless of where it originally came from. Without this,
+            # an owned item sitting in an unchecked realm (e.g. a Kaid
+            # Purple drop when only Kaid Red/Green/White are checked, or
+            # an Event-realm item when Event isn't checked) would
+            # silently vanish from its own Bank Build/Rebuild search even
             # though nothing else in the pool can replace it.
             selected_realms = ([] if self.realm_filter_all_var.get()
-                                   or getattr(self, '_hard_search_strict_tier', False)
+                                   or getattr(self, '_bank_items_restricted', False)
                               else [realm for realm, var in self.realm_filters.items() if var.get()])
             if selected_realms:
                 realm_match = False

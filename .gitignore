@@ -31,6 +31,11 @@ test_launcher.py
 OlmranItemBuilder_TEST.exe
 .gaming_log_parser_TEST_config.json
 
+# Local-only debug build (separate persistent console logging every
+# click/error live) - see test_launcher_debug.py. Never committed/pushed.
+test_launcher_debug.py
+OlmranItemBuilder_TEST_DEBUG.exe
+
 # Ad-hoc "build an older tagged version for comparison" test exe(s) - built
 # from an extracted old commit's script, never a real release artifact.
 OlmranItemBuilder_TEST_OLD*.exe
