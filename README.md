@@ -134,7 +134,12 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.29 (Current)
+### v5.4.30 (Current)
+- Fixed Results tab's right-click "Rebuild" (Saved Items First / Full Database, Prefer Owned) not respecting the originating character's Bank Build settings - Search all characters, Good Gear only/Invasion Gear only now carry over into a later Rebuild instead of silently falling back to a generic, every-character pool
+- Fixed "Rebuild (Saved Items First)" not respecting Wanted Sigils circle requirements when every Wanted Spell was already covered by Saved Items alone - a required sigil the bank box couldn't provide can now still be found in the full database on Rebuild
+- Auto-updater: the swap step now automatically retries relaunching if the freshly-updated exe doesn't seem to stick around a few seconds after launch, instead of leaving the "Failed to load Python DLL" error on screen (this retry only shows its own diagnostics on this developer's machine - everyone else's update stays silent and automatic either way)
+
+### v5.4.29
 - Wanted Sigils (Build → Armor Constraints): the two circles now stay their own color (red/blue) whether hollow or filled in, instead of turning gray when off
 - Internal: added a developer-only diagnostic mode for the auto-updater's swap step, to help track down a recurring "Failed to load Python DLL" report - invisible to everyone else, who keep the normal silent, auto-closing update
 

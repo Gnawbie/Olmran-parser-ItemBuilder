@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.29"
+VERSION = "5.4.30"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2294,9 +2294,53 @@ class App(tk.Tk):
                 ")\r\n",
                 emit('[%date% %time%] exe no longer locked, safe to launch'),
                 ":relaunch\r\n",
-                f'start "" "{current_exe}"\r\n',
-                emit('[%date% %time%] relaunched.'),
             ]
+            if verbose:
+                # A real, direct observation (see this method's own
+                # docstring above) ruled out the file-lock theory
+                # entirely: the move and settle-check above both
+                # succeeded on the very first try, with no retries at
+                # all, and the DLL-load error still happened - meaning
+                # it's not this script's timing at all, it's something
+                # going wrong inside the freshly-launched process's OWN
+                # self-extraction (PyInstaller's onefile bootloader
+                # extracts its bundled DLLs to a fresh _MEI<random>
+                # folder on every launch, then LoadLibrary()s them - a
+                # step this batch script has no visibility into or
+                # control over once `start` hands off to it). Since a
+                # plain manual relaunch afterward reliably works
+                # (confirmed independently by two users), the pragmatic
+                # fix is to detect that first launch didn't stick and
+                # just try again automatically. tasklist|find is only
+                # trusted here in verbose mode specifically - it silently
+                # gives false negatives under a hidden/no-console batch
+                # process (see the class of bug this replaced, elsewhere
+                # in this method), but was directly confirmed reliable
+                # under a real, visible console like this one.
+                exe_basename = os.path.basename(current_exe)
+                lines += [
+                    "set launch_tries=0\r\n",
+                    ":try_launch\r\n",
+                    "set /a launch_tries+=1\r\n",
+                    'echo [%date% %time%] launching (attempt %launch_tries%)...\r\n',
+                    f'start "" "{current_exe}"\r\n',
+                    "ping -n 4 127.0.0.1 >NUL\r\n",
+                    f'tasklist /FI "IMAGENAME eq {exe_basename}" | find /I "{exe_basename}" >NUL\r\n',
+                    "if errorlevel 1 (\r\n",
+                    '    echo [%date% %time%] not found running a few seconds after launch - probably crashed immediately\r\n',
+                    "    if %launch_tries% LSS 5 (\r\n",
+                    "        goto try_launch\r\n",
+                    "    )\r\n",
+                    '    echo [%date% %time%] giving up after %launch_tries% attempts - try opening the exe manually\r\n',
+                    ") else (\r\n",
+                    '    echo [%date% %time%] confirmed running.\r\n',
+                    ")\r\n",
+                ]
+            else:
+                lines += [
+                    f'start "" "{current_exe}"\r\n',
+                    emit('[%date% %time%] relaunched.'),
+                ]
             if verbose:
                 lines += [
                     'echo.\r\n',
@@ -4902,6 +4946,17 @@ class App(tk.Tk):
         # search runs (_reset_hard_search_state) - a fresh search shouldn't
         # stay tainted by exclusions from an unrelated previous build.
         self.excluded_item_keys = set()
+
+        # Which character's own Bank Build (if any) produced the results
+        # currently on screen - set by _find_character_saved_items_build,
+        # cleared by _reset_hard_search_state alongside excluded_item_keys
+        # for the same reason. Lets a later Rebuild action
+        # (_rebuild_saved_items_first/_rebuild_full_database_prefer_owned)
+        # re-derive that SAME character's current Search all characters/
+        # Good Gear only/Invasion Gear only settings (see
+        # _compute_bank_character_pool) instead of silently falling back
+        # to a generic, every-character pool with no tag filter at all.
+        self._last_bank_build_char = None
 
         # When True, _find_optimal_build skips redrawing the Results tab
         # entirely (still computes everything else normally - see the
@@ -7851,6 +7906,7 @@ class App(tk.Tk):
         self._saved_hard_search_rows_by_slot = None
         self._update_missing_slots_button_visibility()
         self.excluded_item_keys = set()
+        self._last_bank_build_char = None
         self._update_rebuild_buttons_visibility()
 
     def _update_missing_slots_button_visibility(self):
@@ -8067,37 +8123,55 @@ class App(tk.Tk):
         below Coverage/Priority/Priority Tier/Wanted Sigil in the scoring
         order (see _find_optimal_build).
 
-        Pooled from every saved item anywhere (the legacy pool plus every
-        character, Lockers' Kaid items excluded, an excluded Locker's gear
-        left out entirely) - same pool _rebuild_saved_items_first uses,
-        since this action has no "which character" context of its own
-        either. Still honors self.excluded_item_keys, same as the other
-        two Rebuild actions.
+        If the Results currently on screen came from a specific
+        character's own Bank Build (self._last_bank_build_char, set by
+        _find_character_saved_items_build), re-derives that SAME
+        character's CURRENT Search all characters/Good Gear only/Invasion
+        Gear only settings via _compute_bank_character_pool instead -
+        otherwise (e.g. triggered after the legacy Saved Items tab's own
+        search, which has no one character to speak of) falls back to
+        pooling from every saved item anywhere (the legacy pool plus
+        every character, Lockers' Kaid items excluded, an excluded
+        Locker's gear left out entirely) - same fallback pool
+        _rebuild_saved_items_first uses. Still honors
+        self.excluded_item_keys, same as the other two Rebuild actions.
 
         Rather than a single search, generates one build variant per
         unowned-item cap (0 through 3 - see _generate_capped_unowned_variants)
         so "Generate multiple build options" stacks meaningfully different
         choices (fewer items to acquire vs. a possibly better build) instead
         of near-identical tied-alternate swaps."""
-        non_locker_names = set(self.bank_saved_order)
-        locker_names = set()
-        for cdata in self.bank_characters.values():
-            if cdata.get('is_locker'):
-                if not cdata.get('exclude_from_others'):
-                    locker_names.update(cdata['order'])
-            else:
-                non_locker_names.update(cdata['order'])
-        kaid_names = {
-            (item.get('Item') or '').strip().lower()
-            for item in self.master_data
-            if 'kaid' in (item.get('Realm') or '').strip().lower()
-        }
-        effective_names = non_locker_names | (locker_names - kaid_names)
+        last_char = self._last_bank_build_char
+        if last_char and last_char in self.bank_characters:
+            effective_names, tag_filter = self._compute_bank_character_pool(last_char)
+            if not effective_names:
+                if tag_filter:
+                    messagebox.showwarning("No Matching Items",
+                        f"None of {last_char}'s Saved Items are tagged {' or '.join(sorted(tag_filter))}.")
+                else:
+                    messagebox.showwarning("No Saved Items",
+                        f"{last_char}'s Saved Items list is empty - use the Import tab first.")
+                return
+        else:
+            non_locker_names = set(self.bank_saved_order)
+            locker_names = set()
+            for cdata in self.bank_characters.values():
+                if cdata.get('is_locker'):
+                    if not cdata.get('exclude_from_others'):
+                        locker_names.update(cdata['order'])
+                else:
+                    non_locker_names.update(cdata['order'])
+            kaid_names = {
+                (item.get('Item') or '').strip().lower()
+                for item in self.master_data
+                if 'kaid' in (item.get('Realm') or '').strip().lower()
+            }
+            effective_names = non_locker_names | (locker_names - kaid_names)
 
-        if not effective_names:
-            messagebox.showwarning("No Saved Items",
-                "The Saved Items list is empty - use the Import tab first.")
-            return
+            if not effective_names:
+                messagebox.showwarning("No Saved Items",
+                    "The Saved Items list is empty - use the Import tab first.")
+                return
 
         owned_keys = {(name, None, None) for name in effective_names}
         self._bank_owned_keys = owned_keys
@@ -8229,6 +8303,40 @@ class App(tk.Tk):
         self._autosize_results_columns()
         self._update_rebuild_buttons_visibility()
 
+    def _bank_sigil_requirements_unmet(self, build):
+        """Whether an active Wanted Sigils circle requirement (see
+        _toggle_wanted_sigil_required/_toggle_wanted_sigil_protect_
+        required) isn't yet satisfied anywhere in `build` - same match
+        criteria _assign_required_sigils itself uses. Used by
+        _rebuild_saved_items_first to decide whether it's worth searching
+        the full database an extra time purely for a sigil requirement,
+        even when every Wanted Spell is already fully covered (in which
+        case self.attempted_slots deliberately excludes armor/jewel slots
+        entirely - by design, for the "No suitable item found" flagging
+        those slots would otherwise get - so it can't be used to detect
+        this instead)."""
+        if not (self.wanted_sigils_required or self.wanted_sigils_protect_required):
+            return False
+        wanted_bases = {_spell_base(w) for w in self.wanted_spells_data}
+        wanted_bases.update(self.priority_spells_data)
+
+        for sigil in self.wanted_sigils_required:
+            sigil_lower = sigil.strip().lower()
+            if not any((i.get('Sigil') or '').strip().lower() == sigil_lower
+                       and any(b in (i.get('Spell') or '').lower() for b in wanted_bases)
+                       for i in build.values()):
+                return True
+        for sigil in self.wanted_sigils_protect_required:
+            sigil_lower = sigil.strip().lower()
+            own_protect = f"{sigil_lower}.protect"
+            if not any((i.get('Sigil') or '').strip().lower() == sigil_lower
+                       and (('elemental.protect' in (i.get('Spell') or '').lower())
+                            or (own_protect in PROTECT_SPELLS
+                                and own_protect in (i.get('Spell') or '').lower()))
+                       for i in build.values()):
+                return True
+        return False
+
     def _rebuild_saved_items_first(self):
         """Results tab "Rebuild (Saved Items First)" button - the PvP-gear
         use case this was actually built for: you don't want to risk losing
@@ -8251,37 +8359,53 @@ class App(tk.Tk):
         as "here's what you still need to go acquire." Always excludes
         self.excluded_item_keys, same as Rebuild (Full Database).
 
-        Pooled from every saved item anywhere (the legacy pool plus every
-        character) - this button has no "which character" context of its
-        own (it's triggered globally from the Results tab), so it reaches
-        into all of them rather than picking one. A Locker's Kaid items are
-        left out of that pool, same as every per-character search already
-        does (see _find_character_saved_items_build) - a Locker only ever
-        contributes non-Kaid gear. A non-Locker character's own Kaid items
-        still count fully; that's real gear they actually own. A Locker
-        flagged "Exclude this Locker from other characters' Bank Build
-        searches" is left out of this pool entirely - there's no "this
-        search's own character" here to exempt it for, so an excluded
-        Locker just never contributes anything to a global rebuild."""
-        non_locker_names = set(self.bank_saved_order)
-        locker_names = set()
-        for cdata in self.bank_characters.values():
-            if cdata.get('is_locker'):
-                if not cdata.get('exclude_from_others'):
-                    locker_names.update(cdata['order'])
-            else:
-                non_locker_names.update(cdata['order'])
-        kaid_names = {
-            (item.get('Item') or '').strip().lower()
-            for item in self.master_data
-            if 'kaid' in (item.get('Realm') or '').strip().lower()
-        }
-        effective_names = non_locker_names | (locker_names - kaid_names)
+        If the Results currently on screen came from a specific
+        character's own Bank Build (self._last_bank_build_char, set by
+        _find_character_saved_items_build), re-derives that SAME
+        character's CURRENT Search all characters/Good Gear only/Invasion
+        Gear only settings via _compute_bank_character_pool instead -
+        otherwise falls back to pooling from every saved item anywhere
+        (the legacy pool plus every character). A Locker's Kaid items are
+        left out of that fallback pool, same as every per-character
+        search already does (see _find_character_saved_items_build) - a
+        Locker only ever contributes non-Kaid gear. A non-Locker
+        character's own Kaid items still count fully; that's real gear
+        they actually own. A Locker flagged "Exclude this Locker from
+        other characters' Bank Build searches" is left out of the
+        fallback pool entirely - there's no "this search's own character"
+        here to exempt it for, so an excluded Locker just never
+        contributes anything to a global rebuild."""
+        last_char = self._last_bank_build_char
+        if last_char and last_char in self.bank_characters:
+            effective_names, tag_filter = self._compute_bank_character_pool(last_char)
+            if not effective_names:
+                if tag_filter:
+                    messagebox.showwarning("No Matching Items",
+                        f"None of {last_char}'s Saved Items are tagged {' or '.join(sorted(tag_filter))}.")
+                else:
+                    messagebox.showwarning("No Saved Items",
+                        f"{last_char}'s Saved Items list is empty - use the Import tab first.")
+                return
+        else:
+            non_locker_names = set(self.bank_saved_order)
+            locker_names = set()
+            for cdata in self.bank_characters.values():
+                if cdata.get('is_locker'):
+                    if not cdata.get('exclude_from_others'):
+                        locker_names.update(cdata['order'])
+                else:
+                    non_locker_names.update(cdata['order'])
+            kaid_names = {
+                (item.get('Item') or '').strip().lower()
+                for item in self.master_data
+                if 'kaid' in (item.get('Realm') or '').strip().lower()
+            }
+            effective_names = non_locker_names | (locker_names - kaid_names)
 
-        if not effective_names:
-            messagebox.showwarning("No Saved Items",
-                "The Saved Items list is empty - use the Import tab first.")
-            return
+            if not effective_names:
+                messagebox.showwarning("No Saved Items",
+                    "The Saved Items list is empty - use the Import tab first.")
+                return
         owned_keys = {(name, None, None) for name in effective_names}
         matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
         if not matched_items:
@@ -8319,11 +8443,34 @@ class App(tk.Tk):
         # covering item in some OTHER slot that also qualifies (e.g. a
         # bless item in Jewel instead of the Body slot that's actually
         # missing), same pitfall _search_missing_slots already had to
-        # avoid.
-        if still_missing and uncovered_chips:
+        # avoid. _find_best_item_for_slot itself has no idea Wanted
+        # Sigils circles even exist though (it only matches wanted-spell
+        # chips), so a required sigil that Pass 1's Saved-Items-only pool
+        # couldn't satisfy would otherwise just get silently dropped even
+        # though the full database has a real match - _assign_required_
+        # sigils is called directly afterward, against this same call's
+        # self.items_by_slot, specifically to still catch that.
+        #
+        # Gated on _bank_sigil_requirements_unmet rather than
+        # still_missing/uncovered_chips - every Wanted Spell can already
+        # be fully covered by Saved Items alone while a sigil requirement
+        # still isn't (Pass 1's restricted pool has no obligation to
+        # contain a sigil match), and in exactly that case
+        # self.attempted_slots (source of still_missing) deliberately
+        # excludes every armor/jewel slot by design (see its own
+        # assignment further up in _find_optimal_build) - it isn't a
+        # signal this can reuse. _assign_required_sigils doesn't need
+        # still_missing anyway: it finds its own open slot directly
+        # (any ARMOR_SIGIL_SLOTS slot not already a key in base_build).
+        sigil_unmet = self._bank_sigil_requirements_unmet(base_build)
+        if uncovered_chips or sigil_unmet:
             original_wanted = self.wanted_spells_data
             original_priority_spells = self.priority_spells_data
             original_priority_tiers = self.priority_tiers_data
+            # Sigil-only candidates still qualify even with an empty
+            # wanted_spells_data (see has_wanted_sigil in the candidate
+            # filter inside _find_optimal_build), so leaving this empty
+            # when there are no uncovered_chips doesn't lose anything.
             self.wanted_spells_data = uncovered_chips
             self.priority_spells_data = []
             self.priority_tiers_data = []
@@ -8336,11 +8483,18 @@ class App(tk.Tk):
                 self.priority_tiers_data = original_priority_tiers
                 self._suppress_results_redraw = False
 
-            for slot in list(still_missing):
-                item = self._find_best_item_for_slot(slot, uncovered_chips, hold_tier=False)
-                if item is not None:
-                    base_build[slot] = item
-                    still_missing.discard(slot)
+            if uncovered_chips:
+                for slot in list(still_missing):
+                    item = self._find_best_item_for_slot(slot, uncovered_chips, hold_tier=False)
+                    if item is not None:
+                        base_build[slot] = item
+                        still_missing.discard(slot)
+
+            if sigil_unmet:
+                wanted_bases = {_spell_base(w) for w in original_wanted}
+                wanted_bases.update(original_priority_spells)
+                self._assign_required_sigils(base_build, set(), wanted_bases, self.items_by_slot)
+                still_missing = {s for s in still_missing if s not in base_build}
 
         # Compose and display the merged build.
         self.optimal_build = base_build
@@ -8384,6 +8538,57 @@ class App(tk.Tk):
         self._reset_hard_search_state()
         self._find_optimal_build()
 
+    def _compute_bank_character_pool(self, char_name):
+        """Recomputes `char_name`'s effective Saved Items pool - honoring
+        its CURRENT Search all characters/Good Gear only/Invasion Gear
+        only checkbox states - shared by _find_character_saved_items_build
+        and, via self._last_bank_build_char, by the Rebuild actions that
+        can run afterward (_rebuild_saved_items_first/_rebuild_full_
+        database_prefer_owned), so a Rebuild keeps respecting that same
+        character's own settings instead of silently falling back to a
+        generic, every-character pool with no tag filter at all - the bug
+        this exists to fix. See _find_character_saved_items_build's own
+        docstring for what Search all characters/the Locker rules/Good
+        Gear only/Invasion Gear only each actually do.
+
+        Returns (effective_names, tag_filter) - tag_filter is the set of
+        Gear Tags actually being filtered on (empty if neither checkbox
+        is checked), purely so a caller can phrase its own "nothing
+        matched" message the same way _find_character_saved_items_build
+        already does. effective_names is empty if nothing qualifies."""
+        w = self.bank_character_widgets[char_name]
+        own_names = set(self.bank_characters.get(char_name, {}).get('order', []))
+
+        kaid_names = {
+            (item.get('Item') or '').strip().lower()
+            for item in self.master_data
+            if 'kaid' in (item.get('Realm') or '').strip().lower()
+        }
+        locker_names = set()
+        for cname, cdata in self.bank_characters.items():
+            if cname != char_name and cdata.get('is_locker') and not cdata.get('exclude_from_others'):
+                locker_names.update(n for n in cdata['order'] if n not in kaid_names)
+
+        if w['search_all_var'].get():
+            all_names = set()
+            for cdata in self.bank_characters.values():
+                all_names.update(cdata['order'])
+            effective_names = {n for n in all_names if n not in kaid_names or n in own_names} | locker_names
+        else:
+            effective_names = own_names | locker_names
+
+        tag_filter = set()
+        if w['good_gear_var'].get():
+            tag_filter.add('Good Gear')
+        if w['invasion_gear_var'].get():
+            tag_filter.add('Invasion Gear')
+        if tag_filter:
+            effective_names = {n for n in effective_names
+                               if self.bank_gear_tags.get(n, 'Blank') in tag_filter
+                               or self.bank_gear_tags.get(n, 'Blank') == 'Both'}
+
+        return effective_names, tag_filter
+
     def _find_character_saved_items_build(self, char_name):
         """Character tab's own "Find Best Bank Build" - same idea as the
         old Saved Items tab's search, sourced from just this character's
@@ -8417,45 +8622,8 @@ class App(tk.Tk):
             messagebox.showwarning("No Data", "Please load a master database first")
             return
 
+        effective_names, tag_filter = self._compute_bank_character_pool(char_name)
         w = self.bank_character_widgets[char_name]
-        own_names = set(self.bank_characters.get(char_name, {}).get('order', []))
-
-        kaid_names = {
-            (item.get('Item') or '').strip().lower()
-            for item in self.master_data
-            if 'kaid' in (item.get('Realm') or '').strip().lower()
-        }
-        locker_names = set()
-        for cname, cdata in self.bank_characters.items():
-            if cname != char_name and cdata.get('is_locker') and not cdata.get('exclude_from_others'):
-                locker_names.update(n for n in cdata['order'] if n not in kaid_names)
-
-        if w['search_all_var'].get():
-            all_names = set()
-            for cdata in self.bank_characters.values():
-                all_names.update(cdata['order'])
-            effective_names = {n for n in all_names if n not in kaid_names or n in own_names} | locker_names
-        else:
-            effective_names = own_names | locker_names
-
-        # Gear Tag filter (Good Gear only / Invasion Gear only checkboxes) -
-        # restricts the pool to just items tagged one of the checked tags;
-        # both checked means either tag qualifies. An item tagged "Both"
-        # always qualifies too, under either checkbox - it counts as both
-        # categories at once. An untagged ("Blank", the default every item
-        # starts as) item qualifies under neither - a user who never uses
-        # the Gear Tag feature will find both checkboxes just filter down
-        # to nothing. Neither checkbox checked leaves effective_names
-        # untouched - runs as normal, no restriction at all.
-        tag_filter = set()
-        if w['good_gear_var'].get():
-            tag_filter.add('Good Gear')
-        if w['invasion_gear_var'].get():
-            tag_filter.add('Invasion Gear')
-        if tag_filter:
-            effective_names = {n for n in effective_names
-                               if self.bank_gear_tags.get(n, 'Blank') in tag_filter
-                               or self.bank_gear_tags.get(n, 'Blank') == 'Both'}
 
         if not effective_names:
             if tag_filter:
@@ -8467,6 +8635,12 @@ class App(tk.Tk):
             return
 
         self._reset_hard_search_state()
+        # After _reset_hard_search_state (which clears it, same as
+        # excluded_item_keys) - a later Rebuild action re-derives this
+        # SAME character's current checkbox settings instead of falling
+        # back to a generic, every-character pool (see
+        # _compute_bank_character_pool).
+        self._last_bank_build_char = char_name
 
         owned_keys = {(name, None, None) for name in effective_names}
         matched_items = [item for item in self.master_data if _bank_owned_match(_bank_item_key(item), owned_keys)]
