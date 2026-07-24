@@ -10,6 +10,11 @@ build/
 dist/
 *.spec
 
+# Local convenience copy of the Folder ("onedir") distribution, built into
+# the repo root for quick manual testing - same idea as dist/, the real
+# release asset is the zipped copy attached to the GitHub Release instead.
+OlmranItemBuilder_Folder/
+
 # Old test/scratch data, not part of the release
 prased/
 old/

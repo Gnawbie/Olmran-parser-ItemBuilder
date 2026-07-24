@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v5.4.31</p>
+    <p class="tagline">Full usage guide - v5.4.32</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -139,12 +139,12 @@
 
     <h2 id="getting-started">1. Getting Started</h2>
     <ul>
-      <li>Download <code>OlmranItemBuilder.exe</code> from the download page and put it anywhere on your computer.</li>
-      <li>Double-click it to run - no Python install, no admin rights, no setup step.</li>
+      <li>Two download options on the download page: <code>OlmranItemBuilder.exe</code> (single file, simplest) or <code>OlmranItemBuilder_Folder.zip</code> (unzip once, then run the exe from inside the extracted folder - keep the whole folder together). Same program either way.</li>
+      <li>Put it anywhere on your computer, then double-click the exe to run - no Python install, no admin rights, no setup step.</li>
       <li>Windows SmartScreen may warn about an unrecognized app the first time (it isn't code-signed yet) - click "More info" then "Run anyway".</li>
-      <li>It's a PyInstaller "onefile" build, so it unpacks itself to a temp folder on every launch - expect a few seconds of startup delay each time, not just the first.</li>
-      <li>The bundled community equipment list (<code>Olmran_Community_Eq_and_Stats_List.xlsx</code>) ships inside the .exe itself and loads automatically on startup.</li>
-      <li>A small bar at the very top of the window (visible on every tab) has two buttons: <b>Download Page</b> opens this download site in your browser, and <b>Check for Update</b> checks GitHub's latest release against your current version. If you're current, it just says so; if a newer version exists, the button itself becomes <b>Download & Update</b> - click it (after confirming) to download the new exe and have the app automatically swap it in and restart, no manual reinstall needed.</li>
+      <li>The single-file download is a PyInstaller "onefile" build, so it unpacks itself to a temp folder on every launch - expect a few seconds of startup delay each time, not just the first. The Folder download has no such delay (nothing to unpack on launch) since everything's already sitting in the folder - prefer it if the onefile startup time bothers you, or if you've ever seen a "Failed to load Python DLL" error.</li>
+      <li>The bundled community equipment list (<code>Olmran_Community_Eq_and_Stats_List.xlsx</code>) ships inside the download itself either way and loads automatically on startup.</li>
+      <li>A small bar at the very top of the window (visible on every tab) has two buttons: <b>Download Page</b> opens this download site in your browser, and <b>Check for Update</b> checks GitHub's latest release against your current version. If you're current, it just says so; if a newer version exists, the button itself becomes <b>Download & Update</b> - click it (after confirming) to download the new version and have the app automatically swap it in and restart, no manual reinstall needed. This correctly fetches whichever flavor (onefile or Folder) you're already running.</li>
     </ul>
 
     <h2 id="parse">2. Parse Tab</h2>
@@ -317,7 +317,7 @@
     <h2 id="troubleshooting">10. Troubleshooting</h2>
     <ul>
       <li><b>"Windows protected your PC" / SmartScreen warning</b> - expected, the exe isn't code-signed yet. Click "More info" then "Run anyway".</li>
-      <li><b>The exe takes a few seconds to open every time</b> - expected; it's a PyInstaller onefile build that unpacks itself to a temp folder on every launch.</li>
+      <li><b>The exe takes a few seconds to open every time</b> - expected for the single-file download; it's a PyInstaller onefile build that unpacks itself to a temp folder on every launch. Use the Folder download instead (see 1. Getting Started) for instant startup with no unpacking step.</li>
       <li><b>Files not loading</b> - check the file extension (.log, .txt, .xlsx), make sure it isn't open in another program, and try copying it somewhere else if the path has unusual characters.</li>
       <li><b>Parse results empty</b> - verify the log actually contains delve output ("You examine X closely") and that CHAT vs ACTION auto-detection picked the right type.</li>
       <li><b>Community List not found</b> - if running from source rather than the .exe, make sure <code>Olmran_Community_Eq_and_Stats_List.xlsx</code> is in the same folder, or use Browse... to point at it manually.</li>

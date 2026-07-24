@@ -7,7 +7,7 @@ Parses Chat, Combat, and Loot from action and chat .log files
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from tkinter import font as tkfont
-import re, os, sys, json, difflib, threading, tempfile, subprocess, webbrowser, urllib.request, urllib.error
+import re, os, sys, json, difflib, threading, tempfile, subprocess, webbrowser, urllib.request, urllib.error, zipfile, shutil
 from pathlib import Path
 from datetime import datetime
 import openpyxl
@@ -16,11 +16,23 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.31"
+VERSION = "5.4.32"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
 GITHUB_REPO = "Gnawbie/Olmran-parser-ItemBuilder"
+
+# The two distributed .exe flavors (see OlmranItemBuilder.spec vs
+# OlmranItemBuilder_Folder.spec) are told apart at runtime by whether a
+# PyInstaller onedir "_internal" folder sits next to the running exe -
+# present for the Folder build (everything already unpacked alongside the
+# exe), absent for the onefile build (which self-extracts to a fresh
+# Temp\_MEI* folder on every launch instead). Used by the self-updater to
+# fetch/apply the matching release asset for whichever one is running.
+def _is_folder_build():
+    if not getattr(sys, 'frozen', False):
+        return False
+    return os.path.isdir(os.path.join(os.path.dirname(os.path.abspath(sys.executable)), '_internal'))
 
 # Sentinel for _get_notebook_locker_target - distinguishes "this notebook
 # isn't part of the Lockers area at all" (a drag dropped somewhere
@@ -2050,7 +2062,13 @@ class App(tk.Tk):
 
     def _check_for_update_worker(self):
         """Runs off the main thread - only ever touches Tkinter widgets via
-        self.after(0, ...), since Tkinter itself isn't thread-safe."""
+        self.after(0, ...), since Tkinter itself isn't thread-safe. Looks
+        for a .zip asset (the Folder build) or a .exe asset (the onefile
+        build) depending on which flavor is currently running (see
+        _is_folder_build) - a release missing the matching asset (e.g. an
+        older release cut before the Folder build existed) is reported the
+        same as no update being available yet, via download_url being
+        None."""
         try:
             req = urllib.request.Request(
                 f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
@@ -2060,10 +2078,11 @@ class App(tk.Tk):
                 data = json.loads(resp.read().decode('utf-8'))
             latest_version = (data.get('tag_name') or '').strip()
             assets = data.get('assets') or []
-            exe_asset = next((a for a in assets
-                              if (a.get('name') or '').lower().endswith('.exe')), None)
-            download_url = exe_asset.get('browser_download_url') if exe_asset else None
-            expected_size = exe_asset.get('size') if exe_asset else None
+            wanted_suffix = '.zip' if _is_folder_build() else '.exe'
+            update_asset = next((a for a in assets
+                              if (a.get('name') or '').lower().endswith(wanted_suffix)), None)
+            download_url = update_asset.get('browser_download_url') if update_asset else None
+            expected_size = update_asset.get('size') if update_asset else None
             self.after(0, lambda: self._on_update_check_done(latest_version, download_url, expected_size, None))
         except Exception as e:
             self.after(0, lambda: self._on_update_check_done(None, None, None, e))
@@ -2123,10 +2142,10 @@ class App(tk.Tk):
                          daemon=True).start()
 
     def _download_update_worker(self, download_url, version, expected_size):
+        is_folder = _is_folder_build()
         try:
             current_exe = os.path.abspath(sys.executable)
             temp_dir = tempfile.gettempdir()
-            new_exe_path = os.path.join(temp_dir, f"OlmranItemBuilder_v{version}.exe")
 
             req = urllib.request.Request(
                 download_url, headers={'User-Agent': 'OlmranItemBuilder-UpdateCheck'})
@@ -2135,25 +2154,74 @@ class App(tk.Tk):
 
             # A truncated/interrupted download (connection dropped
             # partway through) can still land well above the old ">1MB"
-            # floor and still be many MB short of the real exe - writing
-            # that over the working install produces a corrupted exe
-            # that fails to launch at all ("Failed to load Python DLL").
-            # Check against GitHub's own reported asset size (exact byte
-            # count) when available, and always check the PE header, so
-            # a bad download is caught and reported here instead of ever
-            # touching the installed exe.
+            # floor and still be many MB short of the real thing - writing
+            # that (or extracting it) over the working install produces a
+            # corrupted install that fails to launch at all ("Failed to
+            # load Python DLL"). Check against GitHub's own reported asset
+            # size (exact byte count) when available, and always check
+            # the file's own header magic bytes, so a bad download is
+            # caught and reported here instead of ever touching the
+            # installed copy.
             if expected_size and len(downloaded) != expected_size:
                 raise ValueError(
                     f"Download incomplete - got {len(downloaded):,} bytes, expected {expected_size:,}. "
                     "Try again.")
-            if len(downloaded) < 1_000_000 or downloaded[:2] != b'MZ':
-                raise ValueError(
-                    f"Downloaded file ({len(downloaded):,} bytes) doesn't look like a real exe. Try again.")
 
-            with open(new_exe_path, 'wb') as f:
-                f.write(downloaded)
+            if is_folder:
+                if len(downloaded) < 1_000_000 or downloaded[:2] != b'PK':
+                    raise ValueError(
+                        f"Downloaded file ({len(downloaded):,} bytes) doesn't look like a real zip. Try again.")
 
-            self.after(0, lambda: self._finish_self_update(current_exe, new_exe_path, len(downloaded)))
+                new_zip_path = os.path.join(temp_dir, f"OlmranItemBuilder_Folder_v{version}.zip")
+                with open(new_zip_path, 'wb') as f:
+                    f.write(downloaded)
+
+                # Extract now, on this still-running process, into a fresh
+                # staging folder well away from the actual install - the
+                # currently-running exe/_internal aren't touched by this,
+                # so there's no conflict with the app still being open.
+                # The batch script (see _finish_self_update) only has to
+                # move already-extracted files into place, not run any
+                # unzip step itself (cmd has no native unzip, and adding a
+                # dependency on PowerShell's Expand-Archive there would be
+                # one more thing that could go wrong per-machine).
+                staging_dir = tempfile.mkdtemp(prefix="OlmranUpdateStaging_")
+                with zipfile.ZipFile(new_zip_path) as zf:
+                    zf.extractall(staging_dir)
+
+                # A zip of the dist/OlmranItemBuilder folder extracts to
+                # either that folder directly at the top level, or (if it
+                # was zipped from one level up) a single top-level
+                # subfolder wrapping it - handle both so how the zip
+                # happened to get built doesn't matter.
+                staged_exe = os.path.join(staging_dir, "OlmranItemBuilder.exe")
+                staged_internal = os.path.join(staging_dir, "_internal")
+                if not (os.path.isfile(staged_exe) and os.path.isdir(staged_internal)):
+                    entries = [e for e in os.listdir(staging_dir)
+                               if os.path.isdir(os.path.join(staging_dir, e))]
+                    if len(entries) == 1:
+                        inner = os.path.join(staging_dir, entries[0])
+                        if (os.path.isfile(os.path.join(inner, "OlmranItemBuilder.exe"))
+                                and os.path.isdir(os.path.join(inner, "_internal"))):
+                            staging_dir = inner
+                            staged_exe = os.path.join(staging_dir, "OlmranItemBuilder.exe")
+                            staged_internal = os.path.join(staging_dir, "_internal")
+                if not (os.path.isfile(staged_exe) and os.path.isdir(staged_internal)):
+                    raise ValueError("Downloaded update zip doesn't have the expected folder layout.")
+
+                self.after(0, lambda: self._finish_self_update(
+                    current_exe, staged_exe, len(downloaded), is_folder=True,
+                    staging_dir=staging_dir, downloaded_zip_path=new_zip_path))
+            else:
+                if len(downloaded) < 1_000_000 or downloaded[:2] != b'MZ':
+                    raise ValueError(
+                        f"Downloaded file ({len(downloaded):,} bytes) doesn't look like a real exe. Try again.")
+
+                new_exe_path = os.path.join(temp_dir, f"OlmranItemBuilder_v{version}.exe")
+                with open(new_exe_path, 'wb') as f:
+                    f.write(downloaded)
+
+                self.after(0, lambda: self._finish_self_update(current_exe, new_exe_path, len(downloaded)))
         except Exception as e:
             self.after(0, lambda: self._on_update_download_failed(e))
 
@@ -2163,50 +2231,65 @@ class App(tk.Tk):
             command=self._start_self_update)
         self.update_status_label.config(text=f"Download failed: {error}", foreground='#a33')
 
-    def _finish_self_update(self, current_exe, new_exe_path, expected_size):
-        """Hands off to a batch script that repeatedly tries to move the
-        downloaded new_exe_path over current_exe, relaunches it, and
-        deletes itself - needed because a running Windows exe can't
-        overwrite its own file. A `move` onto a still-open exe fails with
-        "Access is denied", so simply retrying the move doubles as the
-        wait for this process to actually exit - no separate
-        tasklist-based PID check needed (tried that; `tasklist | find`
-        silently fails to match under a hidden/no-console batch process,
-        some console-encoding quirk - it reported the PID gone
-        immediately even while still running). Also re-checks
-        new_exe_path's on-disk size against expected_size (the exact byte
-        count already confirmed right after downloading) immediately
-        before every move attempt - antivirus can quarantine or truncate
-        a freshly-downloaded, unsigned exe sitting in Temp between when
-        it was written and when this script finally gets around to
-        moving it (it can only run once the old exe's process has fully
-        exited, which isn't necessarily instant), and that gap was a real
-        hole: the original per-download check only ran once, in memory,
-        long before this. Relaunches current_exe either way, even if the
-        move ultimately never succeeds, so the app never just vanishes -
-        and never corrupts current_exe with a since-tampered file. Uses
-        `ping` against loopback for the retry delay instead of `timeout`,
-        since `timeout` also misbehaves (returns instantly) without a
-        real attached console.
+    def _finish_self_update(self, current_exe, new_exe_path, expected_size,
+                             is_folder=False, staging_dir=None, downloaded_zip_path=None):
+        """Hands off to a batch script that swaps the downloaded update
+        into place, relaunches current_exe, and deletes itself - needed
+        because a running Windows exe can't overwrite its own file (or,
+        for the Folder build, its own loaded DLLs sitting in _internal).
 
-        Runs in a real, visible console window (CREATE_NEW_CONSOLE, not
-        hidden) with every command's own output printing directly to it
-        rather than being redirected into a log file - the DLL-load error
-        has persisted across multiple fix attempts despite each one
-        checking out in isolated testing.
+        For the onefile build (is_folder=False, the original behavior):
+        repeatedly tries to move new_exe_path over current_exe. A `move`
+        onto a still-open exe fails with "Access is denied", so simply
+        retrying the move doubles as the wait for this process to
+        actually exit - no separate tasklist-based PID check needed
+        (tried that; `tasklist | find` silently fails to match under a
+        hidden/no-console batch process, some console-encoding quirk - it
+        reported the PID gone immediately even while still running). Also
+        re-checks new_exe_path's on-disk size against expected_size (the
+        exact byte count already confirmed right after downloading)
+        immediately before every move attempt - antivirus can quarantine
+        or truncate a freshly-downloaded, unsigned exe sitting in Temp
+        between when it was written and when this script finally gets
+        around to moving it (it can only run once the old exe's process
+        has fully exited, which isn't necessarily instant), and that gap
+        was a real hole: the original per-download check only ran once,
+        in memory, long before this.
+
+        For the Folder build (is_folder=True): staging_dir/new_exe_path
+        already hold a complete, already-extracted new install (done in
+        Python by _download_update_worker, before this method was even
+        called - cmd has no native unzip, so extraction happens once,
+        up front, rather than adding a PowerShell dependency here).
+        Renaming the OLD _internal folder to a backup name is used as the
+        same "is anything still locked" probe the onefile path uses
+        renaming the exe for - it can only succeed once every DLL loaded
+        out of it has actually been released, which the exe's own file
+        lock alone wouldn't guarantee. The new _internal is then moved
+        into place, the backup deleted, and the exe itself overwritten
+        the same way the onefile path does. If the swap fails partway
+        (renamed old _internal out, but couldn't move the new one in),
+        the backup is renamed straight back so the existing install is
+        never left half-updated.
+
+        Relaunches current_exe either way, even if the swap ultimately
+        never succeeds, so the app never just vanishes - and never
+        corrupts the existing install with a since-tampered download.
+        Uses `ping` against loopback for retry delays instead of
+        `timeout`, since `timeout` also misbehaves (returns instantly)
+        without a real attached console.
 
         Runs in two modes, chosen by whether the current Windows account
         is this developer's own (see `verbose` below) - a real, visible
         console that stays open under the user's own control (ending in
         `pause`, only deleting itself after that keypress) ONLY on that
         one account, to actually watch what's happening live while
-        chasing this recurring bug, rather than every regular user seeing
-        a technical debug console pop up during what should be an
-        invisible background update. Everyone else keeps the original
-        silent behavior: hidden window, output quietly appended to
-        olmran_update_log.txt, auto-closes when done. Then exits
-        immediately (os._exit, not a normal close) so the file lock is
-        released right away instead of waiting on any further cleanup."""
+        chasing a recurring "Failed to load Python DLL" report. Everyone
+        else keeps the original silent behavior: hidden window, output
+        quietly appended to olmran_update_log.txt, auto-closes when done.
+        Then exits immediately (os._exit, not a normal close) so the file
+        lock is released right away instead of waiting on any further
+        cleanup."""
         # This developer's own machine only - see the module docstring
         # above for why this stays this narrow rather than applying to
         # every user.
@@ -2233,36 +2316,70 @@ class App(tk.Tk):
             else:
                 lines += [f'echo [%date% %time%] starting move-retry loop > "{log_path}"\r\n']
 
+            if is_folder:
+                install_dir = os.path.dirname(current_exe)
+                old_internal = os.path.join(install_dir, "_internal")
+                old_internal_bak = os.path.join(install_dir, "_internal_old")
+                staged_internal = os.path.join(staging_dir, "_internal")
+                lines += [
+                    "set retries=0\r\n",
+                    ":retry_swap\r\n",
+                    f'ren "{old_internal}" "_internal_old"{redirect}\r\n',
+                    "if errorlevel 1 (\r\n",
+                    "    set /a retries+=1\r\n",
+                    emit('[%date% %time%] still in use, attempt %retries%'),
+                    "    if %retries% GEQ 60 (\r\n",
+                    emit('[%date% %time%] giving up - never unlocked, relaunching old install unchanged'),
+                    "        goto relaunch\r\n",
+                    "    )\r\n",
+                    "    ping -n 2 127.0.0.1 >NUL\r\n",
+                    "    goto retry_swap\r\n",
+                    ")\r\n",
+                    emit('[%date% %time%] old install unlocked, swapping in the update'),
+                    f'move /y "{staged_internal}" "{old_internal}"{redirect}\r\n',
+                    "if errorlevel 1 (\r\n",
+                    emit('[%date% %time%] swap failed, restoring the previous install unchanged'),
+                    f'    ren "{old_internal_bak}" "_internal"{redirect}\r\n',
+                    "    goto relaunch\r\n",
+                    ")\r\n",
+                    f'rd /s /q "{old_internal_bak}" 2>NUL\r\n',
+                    f'move /y "{new_exe_path}" "{current_exe}"{redirect}\r\n',
+                    emit('[%date% %time%] update installed'),
+                ]
+            else:
+                lines += [
+                    "set retries=0\r\n",
+                    ":retry_move\r\n",
+                    'set "cursize="\r\n',
+                    f'for %%A in ("{new_exe_path}") do set "cursize=%%~zA"\r\n',
+                    f'if not "%cursize%"=="{expected_size}" (\r\n',
+                    "    set /a retries+=1\r\n",
+                    emit(f'[%date% %time%] size check failed - got "%cursize%", expected {expected_size} - attempt %retries%'),
+                    "    if %retries% GEQ 60 (\r\n",
+                    emit('[%date% %time%] giving up - downloaded file never matched expected size, relaunching old exe'),
+                    "        goto relaunch\r\n",
+                    "    )\r\n",
+                    "    ping -n 2 127.0.0.1 >NUL\r\n",
+                    "    goto retry_move\r\n",
+                    ")\r\n",
+                    f'move /y "{new_exe_path}" "{current_exe}"{redirect}\r\n',
+                    "if errorlevel 1 (\r\n",
+                    "    set /a retries+=1\r\n",
+                    emit('[%date% %time%] move failed, attempt %retries%'),
+                    "    if %retries% GEQ 60 (\r\n",
+                    emit('[%date% %time%] giving up on move, relaunching old exe'),
+                    "        goto relaunch\r\n",
+                    "    )\r\n",
+                    "    ping -n 2 127.0.0.1 >NUL\r\n",
+                    "    goto retry_move\r\n",
+                    ")\r\n",
+                    emit('[%date% %time%] move succeeded'),
+                ]
+
             lines += [
-                "set retries=0\r\n",
-                ":retry_move\r\n",
-                'set "cursize="\r\n',
-                f'for %%A in ("{new_exe_path}") do set "cursize=%%~zA"\r\n',
-                f'if not "%cursize%"=="{expected_size}" (\r\n',
-                "    set /a retries+=1\r\n",
-                emit(f'[%date% %time%] size check failed - got "%cursize%", expected {expected_size} - attempt %retries%'),
-                "    if %retries% GEQ 60 (\r\n",
-                emit('[%date% %time%] giving up - downloaded file never matched expected size, relaunching old exe'),
-                "        goto relaunch\r\n",
-                "    )\r\n",
-                "    ping -n 2 127.0.0.1 >NUL\r\n",
-                "    goto retry_move\r\n",
-                ")\r\n",
-                f'move /y "{new_exe_path}" "{current_exe}"{redirect}\r\n',
-                "if errorlevel 1 (\r\n",
-                "    set /a retries+=1\r\n",
-                emit('[%date% %time%] move failed, attempt %retries%'),
-                "    if %retries% GEQ 60 (\r\n",
-                emit('[%date% %time%] giving up on move, relaunching old exe'),
-                "        goto relaunch\r\n",
-                "    )\r\n",
-                "    ping -n 2 127.0.0.1 >NUL\r\n",
-                "    goto retry_move\r\n",
-                ")\r\n",
-                emit('[%date% %time%] move succeeded'),
                 # Antivirus finishing its on-write scan of the
                 # freshly-placed exe can still hold a lock on it for a
-                # while after the move itself completes - launching too
+                # while after the swap itself completes - launching too
                 # soon transiently fails with "Failed to load Python
                 # DLL...LoadLibrary: The specified module could not be
                 # found" even though the file itself is completely fine
@@ -2272,13 +2389,12 @@ class App(tk.Tk):
                 # by machine - so instead of guessing, actively test for
                 # the lock itself: renaming the file to its own current
                 # name is a no-op that still requires the file not be
-                # locked, the same trick the move-retry loop above uses
-                # for waiting on the OLD exe's process to fully exit.
-                # Only on the successful-move path (falls through to
-                # here); the give-up path above jumps straight to
-                # :relaunch for the untouched, already-stable old exe,
-                # which was never freshly written and needs no settling
-                # time.
+                # locked, the same trick used above for waiting on the
+                # OLD install to fully release. Only on the successful-
+                # swap path (falls through to here); the give-up path
+                # above jumps straight to :relaunch for the untouched,
+                # already-stable old install, which was never freshly
+                # written and needs no settling time.
                 "set settle_tries=0\r\n",
                 ":settle_check\r\n",
                 f'ren "{current_exe}" "{os.path.basename(current_exe)}"{redirect}\r\n',
@@ -2294,20 +2410,26 @@ class App(tk.Tk):
                 ")\r\n",
                 emit('[%date% %time%] exe no longer locked, safe to launch'),
                 ":relaunch\r\n",
-                # A leftover _MEI* extraction folder from a crashed/
-                # AV-quarantined previous launch can make PyInstaller's
-                # onefile bootloader reuse a broken, half-populated
-                # folder instead of extracting fresh - repeated launches
-                # then keep failing against the same poisoned folder
-                # instead of each getting a clean one. Safe to clear
-                # unconditionally here: by this point the old exe's
-                # process has already been confirmed fully exited (the
-                # move above only succeeds once nothing still holds the
-                # file open), so any _MEI* folder still sitting in Temp
-                # is orphaned, not in use by anything live.
-                emit('[%date% %time%] clearing stale extraction folders...'),
-                'for /d %%D in ("%TEMP%\\_MEI*") do rd /s /q "%%D" 2>NUL\r\n',
             ]
+            if not is_folder:
+                lines += [
+                    # A leftover _MEI* extraction folder from a crashed/
+                    # AV-quarantined previous launch can make PyInstaller's
+                    # onefile bootloader reuse a broken, half-populated
+                    # folder instead of extracting fresh - repeated launches
+                    # then keep failing against the same poisoned folder
+                    # instead of each getting a clean one. Only relevant to
+                    # the onefile build, which self-extracts to one of
+                    # these on every launch - the Folder build has nothing
+                    # analogous to clean up here. Safe to clear
+                    # unconditionally: by this point the old exe's process
+                    # has already been confirmed fully exited (the move
+                    # above only succeeds once nothing still holds the
+                    # file open), so any _MEI* folder still sitting in
+                    # Temp is orphaned, not in use by anything live.
+                    emit('[%date% %time%] clearing stale extraction folders...'),
+                    'for /d %%D in ("%TEMP%\\_MEI*") do rd /s /q "%%D" 2>NUL\r\n',
+                ]
             if verbose:
                 # A real, direct observation (see this method's own
                 # docstring above) ruled out the file-lock theory
@@ -2384,6 +2506,11 @@ class App(tk.Tk):
                     'echo  close this window.\r\n',
                     'echo ============================================================\r\n',
                     'pause >NUL\r\n',
+                ]
+            if is_folder:
+                lines += [
+                    f'rd /s /q "{staging_dir}" 2>NUL\r\n',
+                    f'del /f /q "{downloaded_zip_path}" 2>NUL\r\n',
                 ]
             lines += ['del "%~f0"\r\n']
 

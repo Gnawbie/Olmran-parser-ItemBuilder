@@ -122,7 +122,7 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 **"Windows protected your PC" / SmartScreen warning on launch** — expected for now, `OlmranItemBuilder.exe` isn't code-signed yet. Click "More info" then "Run anyway". See the [wiki FAQ](https://github.com/Gnawbie/Olmran-parser-ItemBuilder/wiki/FAQ) for details.
 
-**The .exe takes a few seconds to open every time** — expected. It's a PyInstaller "onefile" build that unpacks itself to a temp folder on every launch, not just the first.
+**The .exe takes a few seconds to open every time** — expected for the single-file `OlmranItemBuilder.exe` download. It's a PyInstaller "onefile" build that unpacks itself to a temp folder on every launch, not just the first. If this bothers you, or you've ever seen a "Failed to load Python DLL" error, use the **Folder** download instead ([download page](https://gnawbie.github.io/Olmran-parser-ItemBuilder/)) — unzip it once and it opens instantly every time after, since nothing needs to be unpacked on launch. Both are the same program; "Check for Update" correctly updates whichever one you're running.
 
 **Program won't start otherwise** — see INSTALL_INSTRUCTIONS.txt.
 
@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.31 (Current)
+### v5.4.32 (Current)
+- Added a second download option: a "Folder" distribution (`OlmranItemBuilder_Folder.zip`) alongside the existing single-file `OlmranItemBuilder.exe`. Unzip it once and run the exe from inside - no per-launch self-extraction step, so it opens instantly every time, unlike the onefile build which unpacks itself to a fresh temp folder on every launch. Same program either way; "Check for Update" correctly detects and updates whichever one you're running, including swapping in a fresh copy of its files and relaunching automatically
+
+### v5.4.31
 - Fixed Bank Build's Hard Search silently excluding an owned Saved Item just because its drop realm wasn't checked under "Only Found In" - Hard Search only ever searches items you already have, so an item's original drop realm no longer matters there (this fixed a case where the only Saved Item carrying a required Wanted Sigil never got considered, and that sigil requirement went unmet with no indication why). Every other search mode still respects "Only Found In" as before
 - Auto-updater: fixed the launch-retry check (added in v5.4.30, developer-diagnostics only) always reporting the freshly-updated exe as "not running" and retrying regardless of whether it actually launched, on machines where a Unix-style `find` command (e.g. from Git for Windows) shadows Windows' own `find` on PATH - now calls the real `find.exe` directly instead of trusting PATH. Also clears any stale leftover extraction folder before each relaunch attempt, and waits progressively longer between retries (4/6/8/10/12 seconds instead of a flat 4), since a freshly-extracted, unsigned exe can need more time for antivirus scanning to clear on some machines
 
