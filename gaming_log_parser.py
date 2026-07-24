@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.30"
+VERSION = "5.4.31"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2294,6 +2294,19 @@ class App(tk.Tk):
                 ")\r\n",
                 emit('[%date% %time%] exe no longer locked, safe to launch'),
                 ":relaunch\r\n",
+                # A leftover _MEI* extraction folder from a crashed/
+                # AV-quarantined previous launch can make PyInstaller's
+                # onefile bootloader reuse a broken, half-populated
+                # folder instead of extracting fresh - repeated launches
+                # then keep failing against the same poisoned folder
+                # instead of each getting a clean one. Safe to clear
+                # unconditionally here: by this point the old exe's
+                # process has already been confirmed fully exited (the
+                # move above only succeeds once nothing still holds the
+                # file open), so any _MEI* folder still sitting in Temp
+                # is orphaned, not in use by anything live.
+                emit('[%date% %time%] clearing stale extraction folders...'),
+                'for /d %%D in ("%TEMP%\\_MEI*") do rd /s /q "%%D" 2>NUL\r\n',
             ]
             if verbose:
                 # A real, direct observation (see this method's own
@@ -2317,15 +2330,37 @@ class App(tk.Tk):
                 # process (see the class of bug this replaced, elsewhere
                 # in this method), but was directly confirmed reliable
                 # under a real, visible console like this one.
+                #
+                # `find /I` (bare, relying on PATH) is not safe here - a
+                # Unix-style `find` from Git for Windows/MSYS earlier on
+                # PATH shadows Windows' own find.exe and rejects `/I` as
+                # a bad path argument ("find: 'I': No such file or
+                # directory"), making this check permanently report
+                # "not found" and retry forever regardless of whether
+                # the app actually launched. Force the real one via its
+                # full path instead of trusting PATH.
+                #
+                # The delay before checking also grows with each
+                # attempt (4, 6, 8, 10, 12 sec) rather than a flat 4 -
+                # a fixed short wait doesn't give antivirus real-time
+                # scanning enough time to finish with an unusual,
+                # freshly-extracted DLL on a slower machine, and each
+                # attempt also clears any stale _MEI* folder first (see
+                # the relaunch-label comment above) so a retry always
+                # gets a genuinely fresh extraction rather than
+                # potentially reusing one already poisoned by a
+                # scan/quarantine from the previous attempt.
                 exe_basename = os.path.basename(current_exe)
                 lines += [
                     "set launch_tries=0\r\n",
                     ":try_launch\r\n",
                     "set /a launch_tries+=1\r\n",
+                    'for /d %%D in ("%TEMP%\\_MEI*") do rd /s /q "%%D" 2>NUL\r\n',
                     'echo [%date% %time%] launching (attempt %launch_tries%)...\r\n',
                     f'start "" "{current_exe}"\r\n',
-                    "ping -n 4 127.0.0.1 >NUL\r\n",
-                    f'tasklist /FI "IMAGENAME eq {exe_basename}" | find /I "{exe_basename}" >NUL\r\n',
+                    "set /a launch_wait=2+(2*launch_tries)\r\n",
+                    "ping -n %launch_wait% 127.0.0.1 >NUL\r\n",
+                    f'tasklist /FI "IMAGENAME eq {exe_basename}" | "%WINDIR%\\System32\\find.exe" /I "{exe_basename}" >NUL\r\n',
                     "if errorlevel 1 (\r\n",
                     '    echo [%date% %time%] not found running a few seconds after launch - probably crashed immediately\r\n',
                     "    if %launch_tries% LSS 5 (\r\n",
@@ -9791,8 +9826,17 @@ class App(tk.Tk):
                 continue
 
             # Apply realm filter if any selected ("All" means none - see
-            # _update_realm_all_exclusivity)
+            # _update_realm_all_exclusivity). Skipped entirely under Hard
+            # Search (self._hard_search_strict_tier) - Hard Search already
+            # restricts candidates to just this character's own Saved
+            # Items, so an item's drop realm is moot: the player already
+            # owns it regardless of where it originally came from. Without
+            # this, an owned item sitting in an unchecked realm (e.g. a
+            # Kaid Purple drop when only Kaid Red/Green/White are checked)
+            # would silently vanish from its own Bank Build search even
+            # though nothing else in the pool can replace it.
             selected_realms = ([] if self.realm_filter_all_var.get()
+                                   or getattr(self, '_hard_search_strict_tier', False)
                               else [realm for realm, var in self.realm_filters.items() if var.get()])
             if selected_realms:
                 realm_match = False
@@ -11004,8 +11048,17 @@ class App(tk.Tk):
                 continue
 
             # Apply realm filter if any selected ("All" means none - see
-            # _update_realm_all_exclusivity)
+            # _update_realm_all_exclusivity). Skipped entirely under Hard
+            # Search (self._hard_search_strict_tier) - Hard Search already
+            # restricts candidates to just this character's own Saved
+            # Items, so an item's drop realm is moot: the player already
+            # owns it regardless of where it originally came from. Without
+            # this, an owned item sitting in an unchecked realm (e.g. a
+            # Kaid Purple drop when only Kaid Red/Green/White are checked)
+            # would silently vanish from its own Bank Build search even
+            # though nothing else in the pool can replace it.
             selected_realms = ([] if self.realm_filter_all_var.get()
+                                   or getattr(self, '_hard_search_strict_tier', False)
                               else [realm for realm, var in self.realm_filters.items() if var.get()])
             if selected_realms:
                 realm_match = False

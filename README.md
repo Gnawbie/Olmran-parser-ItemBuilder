@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.30 (Current)
+### v5.4.31 (Current)
+- Fixed Bank Build's Hard Search silently excluding an owned Saved Item just because its drop realm wasn't checked under "Only Found In" - Hard Search only ever searches items you already have, so an item's original drop realm no longer matters there (this fixed a case where the only Saved Item carrying a required Wanted Sigil never got considered, and that sigil requirement went unmet with no indication why). Every other search mode still respects "Only Found In" as before
+- Auto-updater: fixed the launch-retry check (added in v5.4.30, developer-diagnostics only) always reporting the freshly-updated exe as "not running" and retrying regardless of whether it actually launched, on machines where a Unix-style `find` command (e.g. from Git for Windows) shadows Windows' own `find` on PATH - now calls the real `find.exe` directly instead of trusting PATH. Also clears any stale leftover extraction folder before each relaunch attempt, and waits progressively longer between retries (4/6/8/10/12 seconds instead of a flat 4), since a freshly-extracted, unsigned exe can need more time for antivirus scanning to clear on some machines
+
+### v5.4.30
 - Fixed Results tab's right-click "Rebuild" (Saved Items First / Full Database, Prefer Owned) not respecting the originating character's Bank Build settings - Search all characters, Good Gear only/Invasion Gear only now carry over into a later Rebuild instead of silently falling back to a generic, every-character pool
 - Fixed "Rebuild (Saved Items First)" not respecting Wanted Sigils circle requirements when every Wanted Spell was already covered by Saved Items alone - a required sigil the bank box couldn't provide can now still be found in the full database on Rebuild
 - Auto-updater: the swap step now automatically retries relaunching if the freshly-updated exe doesn't seem to stick around a few seconds after launch, instead of leaving the "Failed to load Python DLL" error on screen (this retry only shows its own diagnostics on this developer's machine - everyone else's update stays silent and automatic either way)
