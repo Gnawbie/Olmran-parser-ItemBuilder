@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.6.0"
+VERSION = "5.6.1"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2959,6 +2959,17 @@ class App(tk.Tk):
         pvp_kill_row.pack(fill='x')
         ttk.Button(pvp_kill_row, text="⚔ Search",
                   command=self._search_pvp_kills).pack(side='left')
+        # Total realm points and kill count across every match - readonly,
+        # just display fields, refreshed each time this search runs (see
+        # _search_pvp_kills/_find_pvp_kills).
+        self.pvp_kills_rp_var = tk.StringVar(value='')
+        ttk.Entry(pvp_kill_row, textvariable=self.pvp_kills_rp_var, width=6,
+                 state='readonly', justify='center').pack(side='left', padx=(6,0))
+        ttk.Label(pvp_kill_row, text="Total RP").pack(side='left', padx=(4,8))
+        self.pvp_kills_count_var = tk.StringVar(value='')
+        ttk.Entry(pvp_kill_row, textvariable=self.pvp_kills_count_var, width=6,
+                 state='readonly', justify='center').pack(side='left')
+        ttk.Label(pvp_kill_row, text="Kills").pack(side='left', padx=(4,0))
 
         pvp_death_col = ttk.Frame(pvp_frame)
         pvp_death_col.pack(side='left', anchor='n', fill='both', expand=True, padx=(20,0))
@@ -2979,6 +2990,15 @@ class App(tk.Tk):
         pvp_participated_row.pack(fill='x')
         ttk.Button(pvp_participated_row, text="🤝 Search",
                   command=self._search_pvp_participated).pack(side='left')
+        # Same idea as the Kills row above, for the Participated search.
+        self.pvp_participated_rp_var = tk.StringVar(value='')
+        ttk.Entry(pvp_participated_row, textvariable=self.pvp_participated_rp_var, width=6,
+                 state='readonly', justify='center').pack(side='left', padx=(6,0))
+        ttk.Label(pvp_participated_row, text="Total RP").pack(side='left', padx=(4,8))
+        self.pvp_participated_count_var = tk.StringVar(value='')
+        ttk.Entry(pvp_participated_row, textvariable=self.pvp_participated_count_var, width=6,
+                 state='readonly', justify='center').pack(side='left')
+        ttk.Label(pvp_participated_row, text="Participations").pack(side='left', padx=(4,0))
 
         # ═══ PARSING SECTION ═══
         parse_frame = ttk.LabelFrame(t, text="Parse Options", padding=10)
@@ -3567,12 +3587,16 @@ class App(tk.Tk):
         """PvP tab's "Your Kills" search - no player name needed, just a
         button. Finds every kill you got (see _find_pvp_kills), each
         labeled "You Killed <name>" with the name pulled straight out of
-        the matched line itself."""
+        the matched line itself. Also fills in the Total RP box next to
+        the button with the sum of realm points earned across every
+        matched kill."""
         if not self.files:
             messagebox.showwarning("No Files", "Load some log files first.")
             return
 
-        results, errors = self._find_pvp_kills()
+        results, errors, total_rp = self._find_pvp_kills()
+        self.pvp_kills_rp_var.set(str(total_rp) if results else '')
+        self.pvp_kills_count_var.set(str(len(results)) if results else '')
         if not results:
             msg = f"No PvP kills were found in {len(self.files)} file(s)."
             if errors:
@@ -3587,19 +3611,22 @@ class App(tk.Tk):
 
     def _find_pvp_kills(self):
         """Finds every "You just killed <name>!" line immediately followed
-        by "You earn N realm points!" (N is 1-3 digits and is intentionally
-        excluded from the match, per explicit instruction - only "realm
-        points!" itself needs to be present). The killed player's name is
+        by "You earn N realm points!" (N is 1-3 digits, now captured so its
+        total across every match can be shown in the Total RP box next to
+        the Search button - previously excluded from the match entirely
+        since only "realm points!" itself needed to be present, back when
+        nothing used the actual number). The killed player's name is
         captured straight out of the line - no name needs to be typed in
         ahead of time. Checked within the next few lines rather than
         strictly the very next one, in case of minor log variations, though
         the only example seen so far has no gap at all between the two
-        lines."""
+        lines. Returns (results, errors, total_rp)."""
         kill_re = re.compile(r'^You just killed (.+?)!\s*$', re.IGNORECASE)
-        realm_points_re = re.compile(r'You earn \d{1,3} realm points!', re.IGNORECASE)
+        realm_points_re = re.compile(r'You earn (\d{1,3}) realm points!', re.IGNORECASE)
 
         results = []
         errors = []
+        total_rp = 0
         for f in self.files:
             try:
                 with open(f['path'], 'r', encoding='utf-8', errors='ignore') as fh:
@@ -3616,8 +3643,10 @@ class App(tk.Tk):
                 if not m:
                     continue
                 window = ''.join(lines[idx + 1:idx + 4])
-                if not realm_points_re.search(window):
+                rp_match = realm_points_re.search(window)
+                if not rp_match:
                     continue
+                total_rp += int(rp_match.group(1))
                 killed_name = m.group(1).strip()
                 results.append({
                     'file': f['name'],
@@ -3628,17 +3657,21 @@ class App(tk.Tk):
                     'match_line': kill_text,
                 })
 
-        return results, errors
+        return results, errors, total_rp
 
     def _search_pvp_participated(self):
         """PvP tab's "Participated" search - no player name needed, just a
         button (see _find_pvp_participated). Shown in a PvpResultViewer,
-        each labeled "Participated"."""
+        each labeled "Participated". Also fills in the Total RP box next
+        to the button with the sum of realm points earned across every
+        matched participation line."""
         if not self.files:
             messagebox.showwarning("No Files", "Load some log files first.")
             return
 
-        results, errors = self._find_pvp_participated()
+        results, errors, total_rp = self._find_pvp_participated()
+        self.pvp_participated_rp_var.set(str(total_rp) if results else '')
+        self.pvp_participated_count_var.set(str(len(results)) if results else '')
         if not results:
             msg = f"No PvP participation realm points were found in {len(self.files)} file(s)."
             if errors:
@@ -3653,14 +3686,16 @@ class App(tk.Tk):
 
     def _find_pvp_participated(self):
         """Finds every "You earn N realm points!" line (N is 1-3 digits,
-        not part of the match) EXCEPT ones immediately preceded by "You
-        just killed <name>!" (skipping over any blank lines in between) -
-        those are direct kills, already covered by "Your Kills". Everything
-        else counts as participating in someone else's kill (credited
-        realm points without personally landing the final blow). "Your
-        Deaths" never produces a realm-points line at all (dying doesn't
-        earn you any), so there's nothing to exclude on that side."""
-        realm_points_re = re.compile(r'^You earn \d{1,3} realm points!\s*$', re.IGNORECASE)
+        now captured so its total across every match can be shown in the
+        Total RP box next to the Search button) EXCEPT ones immediately
+        preceded by "You just killed <name>!" (skipping over any blank
+        lines in between) - those are direct kills, already covered by
+        "Your Kills". Everything else counts as participating in someone
+        else's kill (credited realm points without personally landing the
+        final blow). "Your Deaths" never produces a realm-points line at
+        all (dying doesn't earn you any), so there's nothing to exclude on
+        that side. Returns (results, errors, total_rp)."""
+        realm_points_re = re.compile(r'^You earn (\d{1,3}) realm points!\s*$', re.IGNORECASE)
         kill_re = re.compile(r'^You just killed .+!\s*$', re.IGNORECASE)
 
         def strip_timestamp(line):
@@ -3671,6 +3706,7 @@ class App(tk.Tk):
 
         results = []
         errors = []
+        total_rp = 0
         for f in self.files:
             try:
                 with open(f['path'], 'r', encoding='utf-8', errors='ignore') as fh:
@@ -3681,7 +3717,8 @@ class App(tk.Tk):
 
             for idx, raw_line in enumerate(lines):
                 line_text, timestamp = strip_timestamp(raw_line)
-                if not realm_points_re.match(line_text):
+                rp_match = realm_points_re.match(line_text)
+                if not rp_match:
                     continue
 
                 prev_idx = idx - 1
@@ -3692,6 +3729,7 @@ class App(tk.Tk):
                     if kill_re.match(prev_text):
                         continue  # a direct kill's own line - already in Your Kills
 
+                total_rp += int(rp_match.group(1))
                 results.append({
                     'file': f['name'],
                     'path': f['path'],
@@ -3701,7 +3739,7 @@ class App(tk.Tk):
                     'match_line': line_text,
                 })
 
-        return results, errors
+        return results, errors, total_rp
 
     def _search_pvp_deaths(self):
         """PvP tab's "Your Deaths" search - no player name needed, just a

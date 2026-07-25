@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.6.0 (Current)
+### v5.6.1 (Current)
+- Parse tab's PvP section: "Your Kills" and "Participated" each now show a Total RP (realm points) field and a count field (Kills/Participations) next to their Search button, filled in automatically whenever that search runs
+
+### v5.6.0
 - Consolidated Basic/Armor/Weapon Constraints - Armor Constraints and Weapon Constraints no longer have their own top-level sub-tabs; both now live as compact mini-tabs directly inside Basic Constraints' "Build Constraints" area, alongside a "Basic" tab holding the spell dropdowns and Priority box. Every control is the same underlying setting either way - nothing was duplicated or reset
 - Only Found In (with its Events tab) moved into that same "Basic" mini-tab, next to the Priority box, instead of sitting in the row beside Build Constraints
 - Merged "Priority Spell" and "Priority Tier" into a single "Priority" box - the tier dropdown now includes "(any)": picking it behaves like the old Priority Spell (searched for regardless of tier), picking a specific tier behaves like the old Priority Tier (targets that tier specifically)
