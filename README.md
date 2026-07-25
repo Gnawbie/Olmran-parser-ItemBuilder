@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.36 (Current)
+### v5.4.37 (Current)
+- Auto-updater no longer tries to automatically reopen the app after installing an update. Every attempt at fixing an intermittent "Failed to load Python DLL" error on the automatic reopen step (adaptive delays, environment cleanup, better retry detection) still hit the same failure on every retry, while launching the exact same exe independently (a plain double-click) reliably worked - strong evidence the problem was specific to reopening it automatically from within the updater's own process chain. The update still installs the same as before; you'll now see a message when it's done letting you know to open the app again yourself
+
+### v5.4.36
 - Auto-updater: fixed the launch-retry check (developer-diagnostics builds only) always declaring success after the very first attempt, even when the freshly-relaunched exe had actually failed and was sitting on its own fatal error dialog - a process wedged on an error dialog still has a matching image name in the task list, so a bare "is a process with this name running" check was reporting that as success and never actually getting a second attempt. Now also checks the process's own window title for the word "Error" and, if found, closes it and retries instead of stopping
 
 ### v5.4.35

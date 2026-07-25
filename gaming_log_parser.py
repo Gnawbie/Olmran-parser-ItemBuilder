@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.36"
+VERSION = "5.4.37"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2298,8 +2298,9 @@ class App(tk.Tk):
 
         version = self._pending_update_version
         confirmed = messagebox.askyesno("Download and Install Update",
-                f"Download v{version} and restart to install it?\n\n"
-                "The app will close, install the update, and reopen automatically.")
+                f"Download v{version} and install it?\n\n"
+                "The app will close to install the update - you'll need to open it "
+                "again yourself afterward to finish.")
         _debug_log(f'Self-update: confirm dialog for v{version} -> {"yes" if confirmed else "no"}')
         if not confirmed:
             return
@@ -2605,95 +2606,24 @@ class App(tk.Tk):
             # that could plausibly interfere with the NEW extraction
             # about to happen - actively making things worse rather than
             # helping. Removed rather than kept "just in case".
-            if verbose:
-                # A real, direct observation (see this method's own
-                # docstring above) ruled out the file-lock theory
-                # entirely: the move and settle-check above both
-                # succeeded on the very first try, with no retries at
-                # all, and the DLL-load error still happened - meaning
-                # it's not this script's timing at all, it's something
-                # going wrong inside the freshly-launched process's OWN
-                # self-extraction (PyInstaller's onefile bootloader
-                # extracts its bundled DLLs to a fresh _MEI<random>
-                # folder on every launch, then LoadLibrary()s them - a
-                # step this batch script has no visibility into or
-                # control over once `start` hands off to it). Since a
-                # plain manual relaunch afterward reliably works
-                # (confirmed independently by two users), the pragmatic
-                # fix is to detect that first launch didn't stick and
-                # just try again automatically. tasklist|find is only
-                # trusted here in verbose mode specifically - it silently
-                # gives false negatives under a hidden/no-console batch
-                # process (see the class of bug this replaced, elsewhere
-                # in this method), but was directly confirmed reliable
-                # under a real, visible console like this one.
-                #
-                # `find /I` (bare, relying on PATH) is not safe here - a
-                # Unix-style `find` from Git for Windows/MSYS earlier on
-                # PATH shadows Windows' own find.exe and rejects `/I` as
-                # a bad path argument ("find: 'I': No such file or
-                # directory"), making this check permanently report
-                # "not found" and retry forever regardless of whether
-                # the app actually launched. Force the real one via its
-                # full path instead of trusting PATH.
-                #
-                # The delay before checking also grows with each
-                # attempt (4, 6, 8, 10, 12 sec) rather than a flat 4 -
-                # a fixed short wait doesn't give antivirus real-time
-                # scanning enough time to finish with an unusual,
-                # freshly-extracted DLL on a slower machine.
-                #
-                # Directly confirmed (a real, on-screen "Error" dialog
-                # titled exactly "Error", with tasklist still reporting
-                # the image name as running) that a process wedged on
-                # its own fatal error dialog counts as "running" under a
-                # bare image-name check - the exact failure this retry
-                # loop exists to catch was being reported as a SUCCESS,
-                # so it never actually got a second attempt. `tasklist
-                # /V` adds a Window Title column - checking that for the
-                # literal word "Error" (this app's own window title is
-                # never that) distinguishes a real launch from a hung
-                # dialog, and taskkill clears the stuck one before
-                # retrying, so a failed attempt doesn't just sit there
-                # forever (or stack up several dialogs across retries).
-                exe_basename = os.path.basename(current_exe)
-                launch_check_path = os.path.join(tempfile.gettempdir(), "olmran_launch_check.txt")
-                lines += [
-                    "set launch_tries=0\r\n",
-                    ":try_launch\r\n",
-                    "set /a launch_tries+=1\r\n",
-                    'echo [%date% %time%] launching (attempt %launch_tries%)...\r\n',
-                    f'start "" "{current_exe}"\r\n',
-                    "set /a launch_wait=2+(2*launch_tries)\r\n",
-                    "ping -n %launch_wait% 127.0.0.1 >NUL\r\n",
-                    f'tasklist /V /FI "IMAGENAME eq {exe_basename}" > "{launch_check_path}" 2>NUL\r\n',
-                    f'"%WINDIR%\\System32\\find.exe" /I "Error" "{launch_check_path}" >NUL\r\n',
-                    "if errorlevel 1 (\r\n",
-                    f'    "%WINDIR%\\System32\\find.exe" /I "{exe_basename}" "{launch_check_path}" >NUL\r\n',
-                    "    if errorlevel 1 (\r\n",
-                    '        echo [%date% %time%] not found running a few seconds after launch - probably crashed immediately\r\n',
-                    "        if %launch_tries% LSS 5 (\r\n",
-                    "            goto try_launch\r\n",
-                    "        )\r\n",
-                    '        echo [%date% %time%] giving up after %launch_tries% attempts - try opening the exe manually\r\n',
-                    "    ) else (\r\n",
-                    '        echo [%date% %time%] confirmed running.\r\n',
-                    "    )\r\n",
-                    ") else (\r\n",
-                    '    echo [%date% %time%] launched but stuck on its own error dialog - closing it and retrying\r\n',
-                    f'    taskkill /F /IM "{exe_basename}" >NUL 2>&1\r\n',
-                    "    if %launch_tries% LSS 5 (\r\n",
-                    "        goto try_launch\r\n",
-                    "    )\r\n",
-                    '    echo [%date% %time%] giving up after %launch_tries% attempts - try opening the exe manually\r\n',
-                    ")\r\n",
-                    f'del "{launch_check_path}" 2>NUL\r\n',
-                ]
-            else:
-                lines += [
-                    f'start "" "{current_exe}"\r\n',
-                    emit('[%date% %time%] relaunched.'),
-                ]
+            # No longer auto-relaunches at all. Every attempt at fixing
+            # the auto-relaunch step (settle-check timing, environment
+            # sanitization, retry-with-better-detection) still hit the
+            # exact same "Failed to load Python DLL" failure, on every
+            # single retry, while an independent launch of the SAME exe
+            # moments later (outside this batch script's own process
+            # chain, e.g. a plain double-click or a fresh `Start-Process`
+            # call) reliably worked - strong evidence the problem is
+            # specific to being launched as a child of this exact process
+            # chain, not the exe or the swap itself. Rather than keep
+            # chasing that with no fix that's actually held up under
+            # direct testing, the pragmatic answer is to stop trying to
+            # relaunch automatically at all - the swap above still
+            # happens the same as before, the user just needs to open
+            # the app again themselves afterward (they're already told
+            # this in the "Download and Install Update" confirmation
+            # dialog before the download even starts).
+            lines += [emit('[%date% %time%] update installed - please open the app again to continue')]
             if verbose:
                 lines += [
                     'echo.\r\n',
@@ -2729,6 +2659,12 @@ class App(tk.Tk):
             _debug_log(f'Finish self-update FAILED before handoff: {e!r}\n{traceback.format_exc()}')
             self._on_update_download_failed(e)
             return
+        # Blocks here (a real, modal messagebox) until the user
+        # acknowledges it - the app closes only after they click OK, not
+        # before. See the no-auto-relaunch comment above for why this
+        # replaced trying to reopen the app automatically.
+        messagebox.showinfo("Update Installed",
+            "The update has finished installing.\n\nClick OK to close the app, then open it again yourself to continue.")
         self._save_config()
         os._exit(0)
 
