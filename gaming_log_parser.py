@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.37"
+VERSION = "5.4.38"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2470,6 +2470,20 @@ class App(tk.Tk):
         Then exits immediately (os._exit, not a normal close) so the file
         lock is released right away instead of waiting on any further
         cleanup."""
+        # Shown and dismissed BEFORE the batch script is even generated/
+        # spawned, not after - the script's own move-retry loop only
+        # allows a limited number of attempts (~60, a minute or so) while
+        # waiting for this process to actually exit and release its file
+        # lock. Showing this afterward let that clock start ticking
+        # immediately while the user was still reading/deciding on the
+        # dialog, and taking too long to click OK could burn through the
+        # whole retry budget before this process ever exited - the swap
+        # would then give up and the update would silently never
+        # actually install. Blocking here first means current_exe's lock
+        # only gets released a moment after the user clicks OK, right as
+        # the script is about to start looking for it.
+        messagebox.showinfo("Downloaded",
+            "The update has finished downloading.\n\nClick OK to close the app and install it, then open it again yourself to continue.")
         # This developer's own machine only - see the module docstring
         # above for why this stays this narrow rather than applying to
         # every user.
@@ -2659,12 +2673,6 @@ class App(tk.Tk):
             _debug_log(f'Finish self-update FAILED before handoff: {e!r}\n{traceback.format_exc()}')
             self._on_update_download_failed(e)
             return
-        # Blocks here (a real, modal messagebox) until the user
-        # acknowledges it - the app closes only after they click OK, not
-        # before. See the no-auto-relaunch comment above for why this
-        # replaced trying to reopen the app automatically.
-        messagebox.showinfo("Update Installed",
-            "The update has finished installing.\n\nClick OK to close the app, then open it again yourself to continue.")
         self._save_config()
         os._exit(0)
 

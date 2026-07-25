@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.37 (Current)
+### v5.4.38 (Current)
+- Fixed the v5.4.37 "reopen it yourself" message sometimes stopping the update from actually installing at all - it was shown right as the app was closing, but the swap step in the background only waits about a minute for the app to release its own file, and that clock started ticking the moment the message appeared rather than when it was dismissed. Taking longer than that to click OK could let the swap give up entirely before the app ever actually closed. The message now shows (and needs to be dismissed) before the swap starts, not after
+
+### v5.4.37
 - Auto-updater no longer tries to automatically reopen the app after installing an update. Every attempt at fixing an intermittent "Failed to load Python DLL" error on the automatic reopen step (adaptive delays, environment cleanup, better retry detection) still hit the same failure on every retry, while launching the exact same exe independently (a plain double-click) reliably worked - strong evidence the problem was specific to reopening it automatically from within the updater's own process chain. The update still installs the same as before; you'll now see a message when it's done letting you know to open the app again yourself
 
 ### v5.4.36
