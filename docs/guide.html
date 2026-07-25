@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v5.5.1</p>
+    <p class="tagline">Full usage guide - v5.6.0</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -189,7 +189,7 @@
     </ul>
 
     <h2 id="build">5. Build Tab</h2>
-    <p>This is where you search a master equipment database for the best gear for your character. It's organized into five inner sub-tabs: Basic Constraints, Armor Constraints, Weapon Constraints, Bank Build, and Manual. A shared control area at the bottom (Min/Max/Specific Level, and the search buttons) stays visible no matter which sub-tab is active (except Manual, which has its own separate controls entirely - see 5.6).</p>
+    <p>This is where you search a master equipment database for the best gear for your character. It's organized into three inner sub-tabs: Basic Constraints, Bank Build, and Manual. A shared control area at the bottom (Min/Max/Specific Level, and the search buttons) stays visible no matter which sub-tab is active (except Manual, which has its own separate controls entirely - see 5.6). Basic Constraints itself further splits into its own mini-tabs - Basic, Armor Constraints, and Weapon Constraints (sections 5.2-5.4 below) - rather than those being separate top-level sub-tabs.</p>
 
     <h3>5.1 Master Database File</h3>
     <ul>
@@ -201,6 +201,7 @@
     <p>Items whose Area is "Class" are excluded from every search entirely at load time (they're role-specific class-quest rewards, not found in the open world) - see the Class Items dropdown below for the one way to still use one deliberately.</p>
 
     <h3>5.2 Basic Constraints</h3>
+    <p>The "Build Constraints" box near the top of this sub-tab is itself a small mini-notebook with 3 tabs - <b>Basic</b> (everything below, through Save Constraints), <b>Armor Constraints</b> (5.3), and <b>Weapon Constraints</b> (5.4). Switching between them doesn't reset or duplicate anything - it's the exact same underlying settings either way, just organized into tabs instead of 3 separate top-level sub-tabs.</p>
     <p><b>Desired Spells</b> - pick spells from category dropdowns instead of typing them, each paired with a tier dropdown ((any), i, ii, iii):</p>
     <ul>
       <li><b>Basic</b> - Agility, Bless, Dexterity, Constitution, Intelligence, Wisdom, Strength, Evade, Combat, Tough.skin</li>
@@ -211,7 +212,7 @@
     </ul>
     <p>Some spells restrict which tiers are selectable (Agility/Bless cap at ii; Class Specific spells cap at ii; Disease.resist alone goes up to tier iv) - the tier dropdown greys out anything that spell can't reach. Click <b>Add to List</b> to add the current dropdown selection as a removable chip under <b>Wanted Spells</b>. Requesting the same spell at two different tiers (e.g. Dexterity i and Dexterity iii) is treated as one requirement, not two.</p>
     <p><b>Wanted Sigils</b> - pick one or more Sigil types (Cold/Earth/Fire/Lightning/Pain/Shock/Water) and the search actively favors armor carrying them, the same way it does for Wanted Spells - useful since many armor pieces carry a Sigil but no Spell at all. Unlike spells, sigils don't need to be exclusive to one slot - multiple slots can each independently carry a wanted Sigil, and a Wanted Spell always outranks a Wanted Sigil for the same slot. Separately, whenever two candidates for a slot are otherwise exactly tied, the search prefers whichever one's Sigil isn't already used elsewhere in the build - a last-resort tie-break only, never able to override a genuinely better item. Each chip also has two circles for a firmer ask than that passive preference: <b>red</b> requires one piece of gear carrying that sigil AND any Wanted/Priority spell; <b>blue</b> instead requires that sigil AND a matching Protect spell (that element's own, or the generic Elemental Protect), independent of the Wanted Spells list entirely. The two are mutually exclusive per sigil, and both are enforced even if it means leaving some other slot empty.</p>
-    <p><b>Priority Spells</b> and <b>Priority Tier</b> - Priority Spells are always actively searched for (not just preferred among items that already matched something else). Priority Tier pairs one specific spell with one specific tier, so the search targets exactly that tier for it, even over a higher tier that's available elsewhere.</p>
+    <p><b>Priority</b> - pick a spell and a tier (including "(any)"), then click the <b>+</b> button. Tier "(any)" always actively searches for that spell (not just preferred among items that already matched something else). A specific tier instead pairs that spell with that tier, so the search targets exactly it, even over a higher tier that's available elsewhere.</p>
     <p><b>Required Items</b> - type a specific item's name under <b>Require Item:</b> and click <b>Add to Build</b>. It's looked up by exact match first, falling back to a spelling-tolerant fuzzy search that asks you to confirm the closest match if there's no exact hit. Once added it's forced into its slot on every future search, with the rest of the build calculated around it.</p>
     <p><b>Class Items</b> dropdown - lists every item excluded for being in the "Class" area, formatted as <i>Item-MOB-Spell</i> and sorted by Mob (Mob shown in bold caps). Selecting one and clicking <b>Add to Build</b> forces it into Required Items - the one deliberate way an otherwise-excluded item can still end up in a build.</p>
     <p><b>Level Filtering</b> - Min Level / Max Level restrict to a range; Specific Level restricts to an exact level (mutually exclusive with Min/Max). Leave all three blank for no restriction.</p>
@@ -222,10 +223,11 @@
       <li><b>Both</b> - relax level and tier together, preferring the closest combination</li>
       <li><b>Don't populate slot</b> (default) - no fallback; the slot is left empty</li>
     </ul>
-    <p><b>Only Found In</b> (realm filter) - a small two-tab area: the "Only Found In" tab holds Evil, Chaos, Good, Glory Bea, Crafted, Event, or Kaid checkboxes to restrict results to those realms. Leave everything unchecked (or check <b>All</b>) to search every realm except Crafted. Kaid has its own column: <b>Kaid All</b> matches any Kaid sub-realm, or check specific colors (White/Green/Red/Purple) instead - mutually exclusive with Kaid All. <b>Crafted items never appear unless the Crafted checkbox is checked</b>, and a build can include at most one Crafted-realm item even then. Below Crafted are two independent hard exclusions that apply no matter what else is selected above: <b>Non-Kaid</b> (excludes every Kaid realm) and <b>Non-Event</b> (excludes both Event and Glory Bea items). The second tab, <b>Events</b>, lists one checkbox per specific event found in the loaded database (e.g. "Halloween 2020", "Christmas 2023") - checking one lets that event's items through even when the broad Event checkbox above is left unchecked; both work together additively.</p>
+    <p><b>Only Found In</b> (realm filter) - sits next to the Priority box, inside the "Basic" mini-tab. A small two-tab area of its own: the "Only Found In" tab holds Evil, Chaos, Good, Glory Bea, Crafted, Event, or Kaid checkboxes to restrict results to those realms. Leave everything unchecked (or check <b>All</b>) to search every realm except Crafted. Kaid has its own column: <b>Kaid All</b> matches any Kaid sub-realm, or check specific colors (White/Green/Red/Purple) instead - mutually exclusive with Kaid All. <b>Crafted items never appear unless the Crafted checkbox is checked</b>, and a build can include at most one Crafted-realm item even then. Below Crafted are two independent hard exclusions that apply no matter what else is selected above: <b>Non-Kaid</b> (excludes every Kaid realm) and <b>Non-Event</b> (excludes both Event and Glory Bea items). The second tab, <b>Events</b>, lists one checkbox per specific event found in the loaded database (e.g. "Halloween 2020", "Christmas 2023") - checking one lets that event's items through even when the broad Event checkbox above is left unchecked; both work together additively.</p>
     <p><b>Save Constraints</b> (to the right of Only Found In, above Required Items) - names and saves a full snapshot of every current Basic, Armor, and Weapon Constraints selection at once. Saved sets are listed below the button with <b>Load</b>, <b>Rename</b>, and <b>Delete</b> buttons - selecting an entry only highlights it, so an explicit Load click is needed to actually apply it (protecting against accidentally overwriting constraints you're still setting up). Saving under a name that already exists asks to confirm before overwriting it. Persists across closing and reopening the program.</p>
 
     <h3>5.3 Armor Constraints</h3>
+    <p>This is one of Build Constraints' own mini-tabs (see 5.2) - not a separate top-level sub-tab.</p>
     <ul>
       <li>The <b>All:</b> row sets an armor type for every slot at once.</li>
       <li>Override individual slots (Head, Cloak, Body, Hands, Legs, Feet) with Cloth / Leather / Studded / Plate.</li>
@@ -235,6 +237,7 @@
     </ul>
 
     <h3>5.4 Weapon Constraints</h3>
+    <p>Also one of Build Constraints' own mini-tabs (see 5.2) - not a separate top-level sub-tab.</p>
     <ul>
       <li><b>Weapon Types/Combo's</b> - check whichever your build uses: Dual-Wield 1h, 1h/Shield, 2h/Shield, Two-Handed, 1 Claw, 2 Claw, Fired 1h/Shield. Most have their own Style (Melee/Direct/Parry Staff/Fired) and Damage Type (Slashing/Thrusting/Crushing) dropdowns. Each row sits in its own thin bordered box, alternating between two shades of grey row by row.</li>
       <li>Leave everything unchecked and Weapon/Shield aren't populated at all. 1 Claw/2 Claw replace Weapon and Shield entirely rather than filling alongside them.</li>

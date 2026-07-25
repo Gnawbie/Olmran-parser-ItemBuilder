@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.5.1"
+VERSION = "5.6.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2182,8 +2182,7 @@ class App(tk.Tk):
         self.specific_level_var.set(data.get('specific_level', ''))
         self.specific_level_fallback_var.set(data.get('specific_level_fallback', 'none'))
         self._render_spell_chips()
-        self._render_priority_spell_chips()
-        self._render_priority_tier_chips()
+        self._render_priority_chips()
         self._render_wanted_sigil_chips()
         self._render_required_item_chips()
 
@@ -4408,14 +4407,17 @@ class App(tk.Tk):
         build_search_subtab = ttk.Frame(self.build_sub_notebook)
         self.build_sub_notebook.add(build_search_subtab, text='Basic Constraints')
 
-        # Armor Type Constraints has grown enough (per-slot Defense and
-        # Sigil controls alongside the armor type checkboxes) to warrant its
-        # own sub-tab rather than taking up space on Search.
+        # Armor Constraints/Weapon Constraints no longer get their own
+        # top-level sub-tabs - both now live as mini-tabs inside Basic
+        # Constraints' own "Build Constraints" area instead (see
+        # basic_gear_notebook). These two frames are still built (never
+        # added to self.build_sub_notebook, so never shown) purely because
+        # their construction code below is what actually creates the
+        # underlying vars (self.armor_checks, self.two_handed_var, etc.)
+        # the mini-tab duplicates reuse - removing them outright would mean
+        # rewriting that construction to create the vars somewhere else.
         self.build_armor_subtab = ttk.Frame(self.build_sub_notebook, padding=4)
-        self.build_sub_notebook.add(self.build_armor_subtab, text='Armor Constraints')
-
         self.build_weapon_subtab = ttk.Frame(self.build_sub_notebook, padding=4)
-        self.build_sub_notebook.add(self.build_weapon_subtab, text='Weapon Constraints')
 
         self.build_bank_subtab = ttk.Frame(self.build_sub_notebook, padding=8)
         self.build_sub_notebook.add(self.build_bank_subtab, text='Bank Build')
@@ -4614,6 +4616,10 @@ class App(tk.Tk):
         self.wanted_sigils_text.configure(yscrollcommand=wanted_sigil_scroll.set)
         self.wanted_sigils_text.pack(side='left', fill='both', expand=True)
         wanted_sigil_scroll.pack(side='right', fill='y')
+        # Every widget _render_wanted_sigil_chips draws into - just this one
+        # normally; the Basic Constraints mini-tab duplicate (see its own
+        # comment) appends its own copy here so both stay in sync.
+        self.wanted_sigils_texts = [self.wanted_sigils_text]
 
         ttk.Button(wanted_sigil_box, text="Clear All",
                   command=self._clear_wanted_sigils).pack(anchor='w')
@@ -4922,7 +4928,28 @@ class App(tk.Tk):
         spell_and_realm_frame = ttk.Frame(constraints_frame)
         spell_and_realm_frame.pack(fill='x')
 
-        spell_block = ttk.Frame(spell_and_realm_frame)
+        # Basic/Armor/Weapon Constraints as mini-tabs - replaces what used
+        # to be 3 separate top-level sub-tabs (self.build_armor_subtab/
+        # build_weapon_subtab are still built, just never added to
+        # self.build_sub_notebook anymore - see the comment there for why).
+        # Every control in the Armor Constraints/Weapon Constraints
+        # mini-tabs below is bound to the EXACT SAME underlying variable
+        # their original construction code already creates (self.
+        # armor_checks, self.two_handed_var, etc.) - not an
+        # independent copy - so checking a box in either place updates the
+        # other instantly and a real search reads the same state either way.
+        basic_gear_outer = ttk.Frame(spell_and_realm_frame)
+        basic_gear_outer.pack(side='left', anchor='n')
+        basic_gear_notebook = ttk.Notebook(basic_gear_outer, style='RealmMini.TNotebook')
+        basic_gear_notebook.pack()
+        basic_tab_frame = ttk.Frame(basic_gear_notebook, padding=8)
+        basic_gear_notebook.add(basic_tab_frame, text="Basic")
+        basic_armor_tab_frame = ttk.Frame(basic_gear_notebook, padding=8)
+        basic_gear_notebook.add(basic_armor_tab_frame, text="Armor Constraints")
+        basic_weapon_tab_frame = ttk.Frame(basic_gear_notebook, padding=8)
+        basic_gear_notebook.add(basic_weapon_tab_frame, text="Weapon Constraints")
+
+        spell_block = ttk.Frame(basic_tab_frame)
         spell_block.pack(side='left', anchor='n')
 
         # Desired spells - one dropdown row per spell category, each paired with a tier dropdown
@@ -4978,11 +5005,15 @@ class App(tk.Tk):
         # block expands to take the extra row width, making it the wider of
         # the two (Required Items stays a fixed, narrower width beside it).
         wanted_block = ttk.Frame(wanted_and_required_frame)
-        wanted_block.pack(side='left', anchor='n', fill='both', expand=True)
+        # fill='x' (not 'both') - expand is still needed to take the extra
+        # row width, but filling vertically too was stretching the chip
+        # box well past its own height=2 hint to match whatever vertical
+        # space the row happened to have available.
+        wanted_block.pack(side='left', anchor='n', fill='x', expand=True)
         ttk.Label(wanted_block, text="Wanted Spells:").pack(anchor='w')
 
         spell_scroll_frame = ttk.Frame(wanted_block)
-        spell_scroll_frame.pack(fill='both', expand=True)
+        spell_scroll_frame.pack(fill='x', expand=True)
 
         self.wanted_spells_data = []
         self.spell_chips_text = tk.Text(spell_scroll_frame, height=4, width=45, wrap='word',
@@ -4990,7 +5021,7 @@ class App(tk.Tk):
         spell_scroll = ttk.Scrollbar(spell_scroll_frame, orient='vertical',
                                     command=self.spell_chips_text.yview)
         self.spell_chips_text.configure(yscrollcommand=spell_scroll.set)
-        self.spell_chips_text.pack(side='left', fill='both', expand=True)
+        self.spell_chips_text.pack(side='left', fill='x', expand=True)
         spell_scroll.pack(side='right', fill='y')
 
         ttk.Button(wanted_block, text="Clear All",
@@ -5078,16 +5109,22 @@ class App(tk.Tk):
         ttk.Label(level_frame, text="(leave blank for no restriction)",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=4)
 
-        # Priority Spell - sits in the existing gap between the spell dropdowns
+        # Priority - sits in the existing gap between the spell dropdowns
         # and "Only Found In", using space that's already there rather than
         # growing the row. Only offers spells currently in Wanted Spells or
         # Required Items, shown by their short base name (no .i/.ii/.iii tier
-        # suffix) to save space. Multiple can be added; the viewing area below
-        # is the same width as the dropdown and tall enough to reach down to
-        # the Protects row of the spell category dropdowns beside it.
-        priority_block = ttk.Frame(spell_and_realm_frame)
+        # suffix) to save space. One merged box now covers what used to be
+        # two separate ones (Priority Spell/Priority Tier) - picking tier
+        # "(any)" behaves exactly like the old Priority Spell (always
+        # searched for, ignoring tier entirely); picking a specific tier
+        # behaves exactly like the old Priority Tier (targets that tier for
+        # that spell specifically, even beating a higher tier that's
+        # available). Still backed by the same two separate data lists
+        # (self.priority_spells_data/priority_tiers_data) the search logic
+        # already reads - only the UI/display is unified, not the model.
+        priority_block = ttk.Frame(basic_tab_frame)
         priority_block.pack(side='left', anchor='n', padx=(20, 0))
-        ttk.Label(priority_block, text="Priority Spell:").pack(anchor='w')
+        ttk.Label(priority_block, text="Priority:").pack(anchor='w')
 
         priority_pick_frame = ttk.Frame(priority_block)
         priority_pick_frame.pack(anchor='w', pady=(2,0))
@@ -5095,44 +5132,253 @@ class App(tk.Tk):
         self.priority_spell_combo = ttk.Combobox(priority_pick_frame, textvariable=self.priority_spell_var,
                                                  values=['(none)'], state='readonly', width=10)
         self.priority_spell_combo.pack(side='left')
+        self.priority_tier_var = tk.StringVar(value='(any)')
+        self.priority_tier_combo = ttk.Combobox(priority_pick_frame, textvariable=self.priority_tier_var,
+                                                values=SPELL_TIERS, state='readonly', width=6)
+        self.priority_tier_combo.pack(side='left', padx=(2,0))
+        # Narrow the tier options to whatever's valid for the selected spell,
+        # same as the category dropdowns (e.g. Protects -> minor/normal/improved)
+        self.priority_spell_var.trace_add('write', lambda *args: self._update_priority_tier_options())
         ttk.Button(priority_pick_frame, text="+", width=2,
-                  command=self._add_priority_spell).pack(side='left', padx=(2,0))
+                  command=self._add_priority).pack(side='left', padx=(2,0))
 
         self.priority_spells_data = []
+        self.priority_tiers_data = []
         self.priority_spells_text = tk.Text(priority_block, height=7, width=20, wrap='word',
                                             cursor='arrow', state='disabled')
         self.priority_spells_text.pack(anchor='w', pady=(4,0))
 
-        # Priority Tier - a second, parallel priority box that pairs a spell
-        # WITH a specific tier (unlike Priority Spell, which ignores tier
-        # entirely). When a spell+tier pair is added here, the search targets
-        # that tier for that spell specifically - even beating a higher tier
-        # that's available - only falling back to other tiers if none of the
-        # priority tiers are available for that spell.
-        priority_tier_block = ttk.Frame(spell_and_realm_frame)
-        priority_tier_block.pack(side='left', anchor='n', padx=(20, 0))
-        ttk.Label(priority_tier_block, text="Priority Tier:").pack(anchor='w')
+        # --- Armor Constraints mini-tab (duplicate widgets, same vars as
+        # self.build_armor_subtab - see the comment above basic_gear_notebook) ---
+        dup_armor_top_row = ttk.Frame(basic_armor_tab_frame)
+        dup_armor_top_row.pack(anchor='n', fill='x')
 
-        priority_tier_pick_frame = ttk.Frame(priority_tier_block)
-        priority_tier_pick_frame.pack(anchor='w', pady=(2,0))
-        self.priority_tier_spell_var = tk.StringVar(value='(none)')
-        self.priority_tier_spell_combo = ttk.Combobox(priority_tier_pick_frame, textvariable=self.priority_tier_spell_var,
-                                                      values=['(none)'], state='readonly', width=10)
-        self.priority_tier_spell_combo.pack(side='left')
-        self.priority_tier_var = tk.StringVar(value='i')
-        self.priority_tier_combo = ttk.Combobox(priority_tier_pick_frame, textvariable=self.priority_tier_var,
-                                                values=['i', 'ii', 'iii'], state='readonly', width=5)
-        self.priority_tier_combo.pack(side='left', padx=(2,0))
-        # Narrow the tier options to whatever's valid for the selected spell,
-        # same as the category dropdowns (e.g. Protects -> minor/normal/improved)
-        self.priority_tier_spell_var.trace_add('write', lambda *args: self._update_priority_tier_options())
-        ttk.Button(priority_tier_pick_frame, text="+", width=2,
-                  command=self._add_priority_tier).pack(side='left', padx=(2,0))
+        dup_armor_box = ttk.LabelFrame(dup_armor_top_row, text="Armor Type Constraints", padding=8)
+        dup_armor_box.pack(side='left', anchor='n')
 
-        self.priority_tiers_data = []
-        self.priority_tiers_text = tk.Text(priority_tier_block, height=7, width=20, wrap='word',
-                                           cursor='arrow', state='disabled')
-        self.priority_tiers_text.pack(anchor='w', pady=(4,0))
+        dup_armor_header = ttk.Frame(dup_armor_box)
+        dup_armor_header.pack(fill='x', pady=(0,4))
+        ttk.Button(dup_armor_header, text="Set as Default",
+                  command=self._save_armor_defaults).pack(side='left', padx=(0,4))
+        ttk.Button(dup_armor_header, text="Clear Default",
+                  command=self._clear_armor_defaults).pack(side='left', padx=4)
+        ttk.Button(dup_armor_header, text="Clear All",
+                  command=self._clear_all_armor).pack(side='left', padx=4)
+
+        dup_armor_grid_frame = ttk.Frame(dup_armor_box)
+        dup_armor_grid_frame.pack(fill='x')
+
+        ttk.Label(dup_armor_grid_frame, text="All:", width=12, font=('Arial', 9, 'bold')).grid(
+            row=0, column=0, sticky='w', pady=2)
+
+        for col, armor_type in enumerate(['cloth', 'leather', 'studded', 'plate']):
+            ttk.Checkbutton(dup_armor_grid_frame, text=armor_type.title(),
+                           variable=self.armor_all_checks[armor_type],
+                           command=lambda t=armor_type: self._update_all_armor(t)).grid(
+                row=0, column=2 + col, sticky='w', padx=4)
+
+        dup_defense_block = ttk.Frame(dup_armor_grid_frame)
+        dup_defense_block.grid(row=0, column=6, sticky='w', padx=(20,0))
+        ttk.Checkbutton(dup_defense_block, text="Defense:",
+                       variable=self.use_defense_filter_var).pack(side='left', padx=(0,4))
+        ttk.Combobox(dup_defense_block, textvariable=self.min_defense_var, values=DEFENSE_LEVELS,
+                    state='readonly', width=11).pack(side='left', padx=(0,4))
+        ttk.Label(dup_defense_block, text="to").pack(side='left', padx=(0,4))
+        ttk.Combobox(dup_defense_block, textvariable=self.max_defense_var, values=DEFENSE_LEVELS,
+                    state='readonly', width=11).pack(side='left', padx=(0,8))
+
+        for row, (slot, label) in enumerate([('head', 'Head'), ('cloak', 'Cloak'), ('body', 'Body'),
+                           ('hands', 'Hands'), ('legs', 'Legs'), ('feet', 'Feet')], start=1):
+            ttk.Label(dup_armor_grid_frame, text=f"{label}:", width=12).grid(
+                row=row, column=0, sticky='w', pady=2)
+
+            dup_maxlvl_cb = ttk.Checkbutton(dup_armor_grid_frame, text="Max Lvl",
+                                           variable=self.armor_maxlvl_vars[slot],
+                                           command=self._update_armor_maxlvl_cap)
+            dup_maxlvl_cb.grid(row=row, column=1, sticky='w', padx=(0,10))
+            self.armor_maxlvl_checkbuttons.append(dup_maxlvl_cb)
+
+            for col, armor_type in enumerate(['cloth', 'leather', 'studded', 'plate']):
+                ttk.Checkbutton(dup_armor_grid_frame, text=armor_type.title(),
+                               variable=self.armor_checks[slot][armor_type]).grid(
+                    row=row, column=2 + col, sticky='w', padx=4)
+
+            dup_slot_defense_block = ttk.Frame(dup_armor_grid_frame)
+            dup_slot_defense_block.grid(row=row, column=6, sticky='w', padx=(20,0))
+            controls = self.slot_defense_controls[slot]
+            ttk.Checkbutton(dup_slot_defense_block, text="Defense:",
+                           variable=controls['use']).pack(side='left', padx=(0,4))
+            ttk.Combobox(dup_slot_defense_block, textvariable=controls['min'], values=DEFENSE_LEVELS,
+                        state='readonly', width=11).pack(side='left', padx=(0,4))
+            ttk.Label(dup_slot_defense_block, text="to").pack(side='left', padx=(0,4))
+            ttk.Combobox(dup_slot_defense_block, textvariable=controls['max'], values=DEFENSE_LEVELS,
+                        state='readonly', width=11).pack(side='left', padx=(0,8))
+
+            dup_sigil_block = ttk.Frame(dup_armor_grid_frame)
+            dup_sigil_block.grid(row=row, column=7, sticky='w', padx=(12,0))
+            ttk.Label(dup_sigil_block, text="Sigil:").pack(side='left', padx=(0,4))
+            ttk.Combobox(dup_sigil_block, textvariable=self.slot_sigil_vars[slot], values=['Any'] + SIGIL_TYPES,
+                        state='readonly', width=11).pack(side='left')
+
+        dup_wanted_sigil_box = ttk.LabelFrame(dup_armor_top_row, text="Wanted Sigils", padding=8)
+        dup_wanted_sigil_box.pack(side='left', anchor='n', padx=(12,0), fill='y')
+
+        dup_wanted_sigil_input_frame = ttk.Frame(dup_wanted_sigil_box)
+        dup_wanted_sigil_input_frame.pack(fill='x')
+        ttk.Combobox(dup_wanted_sigil_input_frame, textvariable=self.wanted_sigil_var, values=SIGIL_TYPES,
+                    state='readonly', width=10).pack(side='left', padx=(0,4))
+        ttk.Button(dup_wanted_sigil_input_frame, text="Add to List",
+                  command=self._add_wanted_sigil).pack(side='left')
+
+        dup_wanted_sigil_scroll_frame = ttk.Frame(dup_wanted_sigil_box)
+        dup_wanted_sigil_scroll_frame.pack(fill='both', expand=True, pady=(6,4))
+
+        dup_wanted_sigils_text = tk.Text(dup_wanted_sigil_scroll_frame, height=4, width=22, wrap='word',
+                                         cursor='arrow', state='disabled')
+        dup_wanted_sigil_scroll = ttk.Scrollbar(dup_wanted_sigil_scroll_frame, orient='vertical',
+                                                command=dup_wanted_sigils_text.yview)
+        dup_wanted_sigils_text.configure(yscrollcommand=dup_wanted_sigil_scroll.set)
+        dup_wanted_sigils_text.pack(side='left', fill='both', expand=True)
+        dup_wanted_sigil_scroll.pack(side='right', fill='y')
+        self.wanted_sigils_texts.append(dup_wanted_sigils_text)
+
+        ttk.Button(dup_wanted_sigil_box, text="Clear All",
+                  command=self._clear_wanted_sigils).pack(anchor='w')
+        ttk.Label(dup_wanted_sigil_box,
+                 text="💡 ● red = required with a Wanted Spell. ● blue = required with a matching "
+                      "Protect spell instead.",
+                 font=('Arial', 7, 'italic'), foreground='#666', wraplength=180,
+                 justify='left').pack(anchor='w', pady=(4,0))
+
+        # --- Weapon Constraints mini-tab (duplicate widgets, same vars as
+        # self.build_weapon_subtab) ---
+        dup_weapon_constraints_row = ttk.Frame(basic_weapon_tab_frame)
+        dup_weapon_constraints_row.pack(anchor='n', fill='x')
+
+        dup_weapon_box = ttk.LabelFrame(dup_weapon_constraints_row, text="Weapon Constraints", padding=8)
+        dup_weapon_box.pack(side='left', anchor='n')
+
+        ttk.Label(dup_weapon_box, text="Weapon Types/Combo's", font=('Arial', 9, 'bold')).pack(anchor='w', pady=(6,2))
+
+        dup_dual_wield_frame = ttk.Frame(dup_weapon_box, style='WeaponRow.TFrame', padding=(6,4))
+        dup_dual_wield_frame.pack(fill='x', pady=2)
+        ttk.Checkbutton(dup_dual_wield_frame, text="Dual-Wield 1h",
+                       variable=self.dual_wield_1h_var, width=14).pack(side='left')
+        ttk.Label(dup_dual_wield_frame, text="Main:").pack(side='left', padx=(8,4))
+        ttk.Combobox(dup_dual_wield_frame, textvariable=self.dual_wield_1h_main_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+        ttk.Label(dup_dual_wield_frame, text="Off-Hand:").pack(side='left', padx=(8,4))
+        ttk.Combobox(dup_dual_wield_frame, textvariable=self.dual_wield_1h_off_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+
+        dup_combo_1h_shield_frame = ttk.Frame(dup_weapon_box, style='WeaponRowAlt.TFrame', padding=(6,4))
+        dup_combo_1h_shield_frame.pack(fill='x', pady=2)
+        ttk.Checkbutton(dup_combo_1h_shield_frame, text="1h/Shield",
+                       variable=self.combo_1h_shield_var, width=14).pack(side='left')
+        ttk.Label(dup_combo_1h_shield_frame, text="Style:").pack(side='left', padx=(8,4))
+        ttk.Combobox(dup_combo_1h_shield_frame, textvariable=self.combo_1h_shield_style_var,
+                    values=['Melee', 'Direct'], state='readonly', width=8).pack(side='left')
+        ttk.Label(dup_combo_1h_shield_frame, text="Damage Type:").pack(side='left', padx=(8,4))
+        ttk.Combobox(dup_combo_1h_shield_frame, textvariable=self.combo_1h_shield_damage_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+
+        dup_combo_2h_shield_frame = ttk.Frame(dup_weapon_box, style='WeaponRow.TFrame', padding=(6,4))
+        dup_combo_2h_shield_frame.pack(fill='x', pady=2)
+        ttk.Checkbutton(dup_combo_2h_shield_frame, text="2h/Shield",
+                       variable=self.combo_2h_shield_var, width=14).pack(side='left')
+        ttk.Label(dup_combo_2h_shield_frame, text="Damage Type:").pack(side='left', padx=(8,4))
+        ttk.Combobox(dup_combo_2h_shield_frame, textvariable=self.combo_2h_shield_damage_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+
+        dup_two_handed_frame = ttk.Frame(dup_weapon_box, style='WeaponRowAlt.TFrame', padding=(6,4))
+        dup_two_handed_frame.pack(fill='x', pady=2)
+        ttk.Checkbutton(dup_two_handed_frame, text="Two-Handed",
+                       variable=self.two_handed_var, width=14).pack(side='left')
+        ttk.Label(dup_two_handed_frame, text="Style:").pack(side='left', padx=(8,4))
+        ttk.Combobox(dup_two_handed_frame, textvariable=self.two_handed_style_var,
+                    values=['Melee', 'Direct', 'Parry', 'Fired'], state='readonly', width=8).pack(side='left')
+        ttk.Label(dup_two_handed_frame, text="Damage Type:").pack(side='left', padx=(8,4))
+        # Shares self.two_handed_damage_var with the original - its own
+        # enabled/values state (see _update_two_handed_damage_state) is
+        # already kept in sync via that single shared variable's trace, so
+        # this duplicate combo doesn't need its own trace registered.
+        ttk.Combobox(dup_two_handed_frame, textvariable=self.two_handed_damage_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+
+        dup_claw_frame = ttk.Frame(dup_weapon_box, style='WeaponRow.TFrame', padding=(6,4))
+        dup_claw_frame.pack(fill='x', pady=2)
+        ttk.Checkbutton(dup_claw_frame, text="1 Claw", variable=self.claw_1_var).pack(side='left', padx=(0,4))
+        ttk.Checkbutton(dup_claw_frame, text="2 Claw", variable=self.claw_2_var).pack(side='left', padx=(0,12))
+        ttk.Label(dup_claw_frame, text="Sigil (1st):").pack(side='left', padx=(0,4))
+        ttk.Combobox(dup_claw_frame, textvariable=self.claw_1_sigil_var, values=['Any'] + SIGIL_TYPES,
+                    state='readonly', width=10).pack(side='left', padx=(0,12))
+        ttk.Label(dup_claw_frame, text="Sigil (2nd):").pack(side='left', padx=(0,4))
+        ttk.Combobox(dup_claw_frame, textvariable=self.claw_2_sigil_var, values=['Any'] + SIGIL_TYPES,
+                    state='readonly', width=10).pack(side='left')
+
+        dup_combo_fired_1h_shield_frame = ttk.Frame(dup_weapon_box, style='WeaponRowAlt.TFrame', padding=(6,4))
+        dup_combo_fired_1h_shield_frame.pack(fill='x', pady=2)
+        ttk.Checkbutton(dup_combo_fired_1h_shield_frame, text="Fired 1h/Shield",
+                       variable=self.combo_fired_1h_shield_var).pack(side='left')
+
+        ttk.Label(dup_weapon_box, text="Fired direct not factored in at this time",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w', pady=(6,0))
+
+        dup_right_column = ttk.Frame(dup_weapon_constraints_row)
+        dup_right_column.pack(side='left', anchor='n', padx=(20,0))
+
+        dup_melee_box_label = ttk.Frame(dup_right_column)
+        ttk.Label(dup_melee_box_label, text="Melee Weapon Constraints").pack(side='left')
+        ttk.Label(dup_melee_box_label, text="  (Applies to Direct, Parry and Fired weapons as well)",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(side='left')
+        dup_melee_box = ttk.LabelFrame(dup_right_column, labelwidget=dup_melee_box_label, padding=8)
+        dup_melee_box.pack(anchor='n', fill='x')
+
+        for label, var, values, priority_var in [
+                ('Damage:', self.melee_damage_var, MELEE_DAMAGE_LEVELS, self.melee_damage_priority_var),
+                ('Timer:', self.melee_timer_var, MELEE_TIMER_VALUES, self.melee_timer_priority_var),
+                ('Fumble:', self.melee_fumble_var, MELEE_FUMBLE_VALUES, self.melee_fumble_priority_var),
+                ('Accuracy:', self.melee_accuracy_var, MELEE_ACCURACY_VALUES, self.melee_accuracy_priority_var),
+                ('Sigil:', self.melee_sigil_var, MELEE_SIGIL_VALUES, self.melee_sigil_priority_var)]:
+            dup_melee_row = ttk.Frame(dup_melee_box)
+            dup_melee_row.pack(fill='x', pady=2)
+            ttk.Label(dup_melee_row, text=label, width=10).pack(side='left')
+            ttk.Combobox(dup_melee_row, textvariable=var, values=values, state='readonly', width=14).pack(side='left')
+            dup_priority_cb = ttk.Checkbutton(dup_melee_row, text="Priority", variable=priority_var,
+                                              command=self._update_melee_priority_cap)
+            dup_priority_cb.pack(side='left', padx=(8,0))
+            self.melee_priority_checkbuttons.append(dup_priority_cb)
+
+        dup_weight_row = ttk.Frame(dup_melee_box)
+        dup_weight_row.pack(fill='x', pady=2)
+        ttk.Label(dup_weight_row, text="Weight:", width=10).pack(side='left')
+        ttk.Entry(dup_weight_row, textvariable=self.weapon_weight_min_var, width=6).pack(side='left')
+        ttk.Label(dup_weight_row, text=" to ").pack(side='left')
+        ttk.Entry(dup_weight_row, textvariable=self.weapon_weight_max_var, width=6).pack(side='left')
+        ttk.Checkbutton(dup_weight_row, text="Hard Filter", variable=self.weapon_weight_hard_var).pack(
+            side='left', padx=(8,0))
+
+        dup_shield_box = ttk.LabelFrame(dup_right_column, text="Shield Constraints", padding=8)
+        dup_shield_box.pack(anchor='n', fill='x', pady=(10,0))
+
+        dup_sigil_row = ttk.Frame(dup_shield_box)
+        dup_sigil_row.pack(fill='x', pady=1)
+        ttk.Label(dup_sigil_row, text="Sigil:", width=10).pack(side='left')
+        ttk.Combobox(dup_sigil_row, textvariable=self.shield_sigil_var, values=SHIELD_SIGIL_VALUES,
+                    state='readonly', width=14).pack(side='left')
+        dup_first_col_width = 9
+        ttk.Checkbutton(dup_sigil_row, text="Leather", variable=self.shield_armor_checks['leather'],
+                       width=dup_first_col_width).pack(side='left', padx=(12,0))
+
+        dup_defense_row = ttk.Frame(dup_shield_box)
+        dup_defense_row.pack(fill='x', pady=1)
+        ttk.Label(dup_defense_row, text="Defense:", width=10).pack(side='left')
+        ttk.Combobox(dup_defense_row, textvariable=self.shield_defense_var, values=SHIELD_DEFENSE_LEVELS,
+                    state='readonly', width=14).pack(side='left')
+        for armor_type in ('studded', 'plate'):
+            dup_kwargs = {'width': dup_first_col_width} if armor_type == 'studded' else {}
+            ttk.Checkbutton(dup_defense_row, text=armor_type.title(), variable=self.shield_armor_checks[armor_type],
+                           **dup_kwargs).pack(side='left', padx=(12,0))
 
         # Realm filter (Only Found In) - placed in the empty space to the right
         # of the spell dropdowns, in the row frame set up alongside spell_block.
@@ -5140,9 +5386,11 @@ class App(tk.Tk):
         # Found In" holds everything that lived here before (unchanged, same
         # variable name so none of the checkbox-building code below needed to
         # change), "Events" is a second tab next to it for per-event-area
-        # refinement (see _refresh_event_area_checkboxes) - added without
-        # moving or resizing this panel's own anchored position in the row.
-        realm_outer = ttk.Frame(spell_and_realm_frame)
+        # refinement (see _refresh_event_area_checkboxes). Placed inside the
+        # Build Constraints mini-tab's own "Basic" tab (basic_tab_frame),
+        # to the right of Priority, rather than as a separate notebook
+        # beside the whole Build Constraints area.
+        realm_outer = ttk.Frame(basic_tab_frame)
         realm_outer.pack(side='left', anchor='n', padx=(20, 0))
         # Own style (not the shared "TNotebook.Tab") so this small mini-tab's
         # headers aren't bold like the app's main-level tabs.
@@ -6769,11 +7017,15 @@ class App(tk.Tk):
             self.category_tier_vars[category].set(allowed[0])
 
     def _update_priority_tier_options(self):
-        """Same as _update_tier_options, but for the Priority Tier box's own
-        tier dropdown (e.g. picking a Protect there should offer
-        minor/normal/improved, not the default i/ii/iii)."""
-        spell = self.priority_tier_spell_var.get().strip().lower()
-        allowed = [t for t in SPELL_TIER_RESTRICTIONS.get(spell, SPELL_TIERS) if t != '(any)']
+        """Same as _update_tier_options, but for the merged Priority box's
+        own tier dropdown (e.g. picking a Protect there should offer
+        (any)/minor/normal/improved, not the default (any)/i/ii/iii).
+        "(any)" is always kept as an option - picking it means this
+        spell goes into self.priority_spells_data (searched for
+        unconditionally, ignoring tier) instead of
+        self.priority_tiers_data (see _add_priority)."""
+        spell = self.priority_spell_var.get().strip().lower()
+        allowed = SPELL_TIER_RESTRICTIONS.get(spell, SPELL_TIERS)
         self.priority_tier_combo['values'] = allowed
         if self.priority_tier_var.get() not in allowed:
             self.priority_tier_var.set(allowed[0])
@@ -7354,35 +7606,41 @@ class App(tk.Tk):
         the "required with a matching Protect spell" one instead - filled
         (●) means active, hollow (○) means inactive (same color either
         way, so hollow reads as "this one, just not on" rather than a
-        neutral/disabled-looking gray)."""
-        text = self.wanted_sigils_text
-        text.config(state='normal')
-        text.delete('1.0', tk.END)
-        for sigil in self.wanted_sigils_data:
-            chip = ttk.Frame(text, relief='raised', borderwidth=1)
-            is_required = sigil in self.wanted_sigils_required
-            required_lbl = ttk.Label(chip, text=('●' if is_required else '○'), padding=(3, 1),
-                                     foreground='#FF0000', cursor='hand2')
-            required_lbl.pack(side='left')
-            required_lbl.bind('<Button-1>', lambda e, s=sigil: self._toggle_wanted_sigil_required(s))
-            is_protect_required = sigil in self.wanted_sigils_protect_required
-            protect_lbl = ttk.Label(chip, text=('●' if is_protect_required else '○'), padding=(1, 1),
-                                    foreground='#2a6bb2', cursor='hand2')
-            protect_lbl.pack(side='left')
-            protect_lbl.bind('<Button-1>', lambda e, s=sigil: self._toggle_wanted_sigil_protect_required(s))
-            ttk.Label(chip, text=sigil, padding=(4, 1)).pack(side='left')
-            remove_lbl = ttk.Label(chip, text='✕', padding=(4, 1),
-                                   foreground='#a33', cursor='hand2')
-            remove_lbl.pack(side='left')
-            remove_lbl.bind('<Button-1>', lambda e, s=sigil: self._remove_wanted_sigil(s))
-            text.window_create(tk.END, window=chip)
-            text.insert(tk.END, ' ')
-        text.config(state='disabled')
+        neutral/disabled-looking gray).
+
+        Draws into every widget in self.wanted_sigils_texts - normally just
+        self.wanted_sigils_text, but the in-progress Basic Constraints
+        mini-tab exploration (see its own comment) adds a second, duplicate
+        Wanted Sigils box bound to the same underlying data, so both need
+        to redraw together whenever this data changes."""
+        for text in self.wanted_sigils_texts:
+            text.config(state='normal')
+            text.delete('1.0', tk.END)
+            for sigil in self.wanted_sigils_data:
+                chip = ttk.Frame(text, relief='raised', borderwidth=1)
+                is_required = sigil in self.wanted_sigils_required
+                required_lbl = ttk.Label(chip, text=('●' if is_required else '○'), padding=(3, 1),
+                                         foreground='#FF0000', cursor='hand2')
+                required_lbl.pack(side='left')
+                required_lbl.bind('<Button-1>', lambda e, s=sigil: self._toggle_wanted_sigil_required(s))
+                is_protect_required = sigil in self.wanted_sigils_protect_required
+                protect_lbl = ttk.Label(chip, text=('●' if is_protect_required else '○'), padding=(1, 1),
+                                        foreground='#2a6bb2', cursor='hand2')
+                protect_lbl.pack(side='left')
+                protect_lbl.bind('<Button-1>', lambda e, s=sigil: self._toggle_wanted_sigil_protect_required(s))
+                ttk.Label(chip, text=sigil, padding=(4, 1)).pack(side='left')
+                remove_lbl = ttk.Label(chip, text='✕', padding=(4, 1),
+                                       foreground='#a33', cursor='hand2')
+                remove_lbl.pack(side='left')
+                remove_lbl.bind('<Button-1>', lambda e, s=sigil: self._remove_wanted_sigil(s))
+                text.window_create(tk.END, window=chip)
+                text.insert(tk.END, ' ')
+            text.config(state='disabled')
 
     def _refresh_priority_spell_options(self):
-        """Rebuild the Priority Spell and Priority Tier spell dropdowns from
-        whatever's currently in Wanted Spells and Required Items, shown by
-        base name (no tier suffix)"""
+        """Rebuild the merged Priority box's spell dropdown from whatever's
+        currently in Wanted Spells and Required Items, shown by base name
+        (no tier suffix)"""
         bases = {_spell_base(s) for s in self.wanted_spells_data}
         bases.update(_spell_base(item.get('Spell') or '') for item in self.required_items)
         bases.discard('')
@@ -7390,27 +7648,52 @@ class App(tk.Tk):
         self.priority_spell_combo['values'] = values
         if self.priority_spell_var.get() not in values:
             self.priority_spell_var.set('(none)')
-        self.priority_tier_spell_combo['values'] = values
-        if self.priority_tier_spell_var.get() not in values:
-            self.priority_tier_spell_var.set('(none)')
 
-    def _add_priority_spell(self):
-        """Add the spell currently picked in the dropdown to the priority list"""
+    def _add_priority(self):
+        """Add the spell+tier currently picked in the merged Priority box.
+        Tier "(any)" goes into self.priority_spells_data (searched for
+        unconditionally, ignoring tier - the old Priority Spell behavior);
+        any specific tier goes into self.priority_tiers_data as a (spell,
+        tier) pair instead (targets that tier specifically, even beating a
+        higher tier that's available - the old Priority Tier behavior).
+        Both lists feed the same combined chip display (see
+        _render_priority_chips)."""
         spell = self.priority_spell_var.get()
+        tier = self.priority_tier_var.get()
         if not spell or spell == '(none)':
             return
-        if spell not in self.priority_spells_data:
-            self.priority_spells_data.append(spell)
-            self._render_priority_spell_chips()
+        if tier == '(any)':
+            if spell not in self.priority_spells_data:
+                self.priority_spells_data.append(spell)
+                self._render_priority_chips()
+        else:
+            # Protects show friendlier labels (minor/normal/improved) but
+            # these map directly onto the ordinary i/ii/iii tier rank used
+            # everywhere else.
+            tier = PROTECT_TIER_TO_SUFFIX.get(tier, tier)
+            pair = (spell, tier)
+            if pair not in self.priority_tiers_data:
+                self.priority_tiers_data.append(pair)
+                self._render_priority_chips()
 
     def _remove_priority_spell(self, spell):
         """Remove one priority spell chip (called by a chip's own ✕ button)"""
         if spell in self.priority_spells_data:
             self.priority_spells_data.remove(spell)
-            self._render_priority_spell_chips()
+            self._render_priority_chips()
 
-    def _render_priority_spell_chips(self):
-        """Redraw the priority spells viewing area as removable chips"""
+    def _remove_priority_tier(self, pair):
+        """Remove one priority tier chip (called by a chip's own ✕ button)"""
+        if pair in self.priority_tiers_data:
+            self.priority_tiers_data.remove(pair)
+            self._render_priority_chips()
+
+    def _render_priority_chips(self):
+        """Redraw the merged Priority viewing area as removable chips - one
+        row combining both self.priority_spells_data (shown as just the
+        base spell name) and self.priority_tiers_data (shown with its
+        tier), since the two used to have separate boxes/widgets but now
+        share this one."""
         text = self.priority_spells_text
         text.config(state='normal')
         text.delete('1.0', tk.END)
@@ -7423,33 +7706,6 @@ class App(tk.Tk):
             remove_lbl.bind('<Button-1>', lambda e, s=spell: self._remove_priority_spell(s))
             text.window_create(tk.END, window=chip)
             text.insert(tk.END, ' ')
-        text.config(state='disabled')
-
-    def _add_priority_tier(self):
-        """Add the (spell, tier) pair currently picked to the priority tier list"""
-        spell = self.priority_tier_spell_var.get()
-        tier = self.priority_tier_var.get()
-        if not spell or spell == '(none)' or not tier:
-            return
-        # Protects show friendlier labels (minor/normal/improved) but these
-        # map directly onto the ordinary i/ii/iii tier rank used everywhere else.
-        tier = PROTECT_TIER_TO_SUFFIX.get(tier, tier)
-        pair = (spell, tier)
-        if pair not in self.priority_tiers_data:
-            self.priority_tiers_data.append(pair)
-            self._render_priority_tier_chips()
-
-    def _remove_priority_tier(self, pair):
-        """Remove one priority tier chip (called by a chip's own ✕ button)"""
-        if pair in self.priority_tiers_data:
-            self.priority_tiers_data.remove(pair)
-            self._render_priority_tier_chips()
-
-    def _render_priority_tier_chips(self):
-        """Redraw the priority tiers viewing area as removable chips"""
-        text = self.priority_tiers_text
-        text.config(state='normal')
-        text.delete('1.0', tk.END)
         for pair in self.priority_tiers_data:
             spell, tier = pair
             chip = ttk.Frame(text, relief='raised', borderwidth=1)
@@ -8505,8 +8761,7 @@ class App(tk.Tk):
         # .set() doesn't touch the chip-rendering Text widgets - redraw
         # every chip area explicitly, same as _restore_test_basic_constraints.
         self._render_spell_chips()
-        self._render_priority_spell_chips()
-        self._render_priority_tier_chips()
+        self._render_priority_chips()
         self._render_wanted_sigil_chips()
         self._render_required_item_chips()
 

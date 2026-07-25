@@ -134,7 +134,13 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.5.1 (Current)
+### v5.6.0 (Current)
+- Consolidated Basic/Armor/Weapon Constraints - Armor Constraints and Weapon Constraints no longer have their own top-level sub-tabs; both now live as compact mini-tabs directly inside Basic Constraints' "Build Constraints" area, alongside a "Basic" tab holding the spell dropdowns and Priority box. Every control is the same underlying setting either way - nothing was duplicated or reset
+- Only Found In (with its Events tab) moved into that same "Basic" mini-tab, next to the Priority box, instead of sitting in the row beside Build Constraints
+- Merged "Priority Spell" and "Priority Tier" into a single "Priority" box - the tier dropdown now includes "(any)": picking it behaves like the old Priority Spell (searched for regardless of tier), picking a specific tier behaves like the old Priority Tier (targets that tier specifically)
+- Shrunk the Wanted Spells chip box, then resized it to match Required Items for a more even look
+
+### v5.5.1
 - Manual tab: Wanted Spell chips are now optional, not required for the results list to appear at all - with none added, every item matching the other active constraints (Only Found In, Armor Type, Weapon, Melee/Shield, Level, Armor/Weapons/Jewel) shows up; adding one or more chips narrows that down further
 - Manual tab's Armor Type sub-tab: added a checkbox before each of Head/Cloak/Body/Hands/Legs/Feet - checking one or more restricts the list to just those specific armor pieces, on top of whatever the broader Armor/Weapons/Jewel checkboxes already allow
 - Added a "Jewel" sub-tab alongside Armor Type/Weapon/Melee-Shield in Manual's Gear Constraints area, with a Sigil dropdown for jewel items
