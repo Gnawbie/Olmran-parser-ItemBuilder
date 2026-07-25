@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.35"
+VERSION = "5.4.36"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2641,17 +2641,23 @@ class App(tk.Tk):
                 # attempt (4, 6, 8, 10, 12 sec) rather than a flat 4 -
                 # a fixed short wait doesn't give antivirus real-time
                 # scanning enough time to finish with an unusual,
-                # freshly-extracted DLL on a slower machine. Note this
-                # "confirmed running" check is itself an imperfect
-                # signal - it can only see that a process with the right
-                # image name exists, and a process wedged on its own
-                # fatal error dialog (the exact failure this whole retry
-                # loop exists to catch) still counts as "running" by
-                # that measure. Kept anyway since it does still catch
-                # the case where the process exits outright, just not
-                # the hung-dialog case - a real fix for that needs a
-                # different signal than tasklist can provide.
+                # freshly-extracted DLL on a slower machine.
+                #
+                # Directly confirmed (a real, on-screen "Error" dialog
+                # titled exactly "Error", with tasklist still reporting
+                # the image name as running) that a process wedged on
+                # its own fatal error dialog counts as "running" under a
+                # bare image-name check - the exact failure this retry
+                # loop exists to catch was being reported as a SUCCESS,
+                # so it never actually got a second attempt. `tasklist
+                # /V` adds a Window Title column - checking that for the
+                # literal word "Error" (this app's own window title is
+                # never that) distinguishes a real launch from a hung
+                # dialog, and taskkill clears the stuck one before
+                # retrying, so a failed attempt doesn't just sit there
+                # forever (or stack up several dialogs across retries).
                 exe_basename = os.path.basename(current_exe)
+                launch_check_path = os.path.join(tempfile.gettempdir(), "olmran_launch_check.txt")
                 lines += [
                     "set launch_tries=0\r\n",
                     ":try_launch\r\n",
@@ -2660,16 +2666,28 @@ class App(tk.Tk):
                     f'start "" "{current_exe}"\r\n',
                     "set /a launch_wait=2+(2*launch_tries)\r\n",
                     "ping -n %launch_wait% 127.0.0.1 >NUL\r\n",
-                    f'tasklist /FI "IMAGENAME eq {exe_basename}" | "%WINDIR%\\System32\\find.exe" /I "{exe_basename}" >NUL\r\n',
+                    f'tasklist /V /FI "IMAGENAME eq {exe_basename}" > "{launch_check_path}" 2>NUL\r\n',
+                    f'"%WINDIR%\\System32\\find.exe" /I "Error" "{launch_check_path}" >NUL\r\n',
                     "if errorlevel 1 (\r\n",
-                    '    echo [%date% %time%] not found running a few seconds after launch - probably crashed immediately\r\n',
+                    f'    "%WINDIR%\\System32\\find.exe" /I "{exe_basename}" "{launch_check_path}" >NUL\r\n',
+                    "    if errorlevel 1 (\r\n",
+                    '        echo [%date% %time%] not found running a few seconds after launch - probably crashed immediately\r\n',
+                    "        if %launch_tries% LSS 5 (\r\n",
+                    "            goto try_launch\r\n",
+                    "        )\r\n",
+                    '        echo [%date% %time%] giving up after %launch_tries% attempts - try opening the exe manually\r\n',
+                    "    ) else (\r\n",
+                    '        echo [%date% %time%] confirmed running.\r\n',
+                    "    )\r\n",
+                    ") else (\r\n",
+                    '    echo [%date% %time%] launched but stuck on its own error dialog - closing it and retrying\r\n',
+                    f'    taskkill /F /IM "{exe_basename}" >NUL 2>&1\r\n',
                     "    if %launch_tries% LSS 5 (\r\n",
                     "        goto try_launch\r\n",
                     "    )\r\n",
                     '    echo [%date% %time%] giving up after %launch_tries% attempts - try opening the exe manually\r\n',
-                    ") else (\r\n",
-                    '    echo [%date% %time%] confirmed running.\r\n',
                     ")\r\n",
+                    f'del "{launch_check_path}" 2>NUL\r\n',
                 ]
             else:
                 lines += [

@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.35 (Current)
+### v5.4.36 (Current)
+- Auto-updater: fixed the launch-retry check (developer-diagnostics builds only) always declaring success after the very first attempt, even when the freshly-relaunched exe had actually failed and was sitting on its own fatal error dialog - a process wedged on an error dialog still has a matching image name in the task list, so a bare "is a process with this name running" check was reporting that as success and never actually getting a second attempt. Now also checks the process's own window title for the word "Error" and, if found, closes it and retries instead of stopping
+
+### v5.4.35
 - Auto-updater: the relaunched exe now starts from a sanitized environment instead of inheriting the old (about-to-exit) process's own - PyInstaller's bootloader sets variables like `TCL_LIBRARY`/`TK_LIBRARY` pointing at its own extraction folder, and those were being inherited down through the update batch script into the freshly-relaunched exe, which could then try to load Tcl/Tk or the Python DLL from the OLD process's (now-deleted) extraction folder instead of its own. A plain manual double-click was never affected since Explorer's own environment was never touched by any PyInstaller process to begin with
 
 ### v5.4.34
