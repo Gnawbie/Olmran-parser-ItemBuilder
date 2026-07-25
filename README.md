@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.33 (Current)
+### v5.4.34 (Current)
+- Auto-updater: removed the "clear stale extraction folders" step added in v5.4.31 (developer-diagnostics builds only) - direct evidence has since shown every "Failed to load Python DLL" report points at a genuinely fresh extraction folder, not a reused stale one, disproving the theory that step was based on. Worse, it could take 20+ seconds right before the critical relaunch moment on a machine with many old folders to clean up, which is exactly the kind of disk activity burst that could interfere with the new extraction about to happen
+
+### v5.4.33
 - Fixed "Rebuild (Saved Items First)" sometimes filling two different slots with two different items for the same stat (e.g. a constitution item in both Cloak and Body) - its full-database fallback pass filled each empty slot independently against the same "still needed" list without ever narrowing it down, so two empty slots needing the same spell could both grab their own covering item instead of just one
 - Fixed that same Rebuild's first pass (Saved Items only) sometimes wrongly rejecting an owned item over its exact spell tier or its drop realm, pushing it into the full-database fallback for no reason - it's now consistent with Bank Build's own Hard Search: any tier is accepted and realm no longer matters for items you already own
 - Fixed the full-database fallback used by Rebuild and "Search Full Database for This Slot" ignoring which spell tier was actually requested, picking whichever candidate had the highest level regardless of tier - it now prefers a match for the tier you asked for first

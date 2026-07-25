@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.33"
+VERSION = "5.4.34"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2566,25 +2566,21 @@ class App(tk.Tk):
                 emit('[%date% %time%] exe no longer locked, safe to launch'),
                 ":relaunch\r\n",
             ]
-            if not is_folder:
-                lines += [
-                    # A leftover _MEI* extraction folder from a crashed/
-                    # AV-quarantined previous launch can make PyInstaller's
-                    # onefile bootloader reuse a broken, half-populated
-                    # folder instead of extracting fresh - repeated launches
-                    # then keep failing against the same poisoned folder
-                    # instead of each getting a clean one. Only relevant to
-                    # the onefile build, which self-extracts to one of
-                    # these on every launch - the Folder build has nothing
-                    # analogous to clean up here. Safe to clear
-                    # unconditionally: by this point the old exe's process
-                    # has already been confirmed fully exited (the move
-                    # above only succeeds once nothing still holds the
-                    # file open), so any _MEI* folder still sitting in
-                    # Temp is orphaned, not in use by anything live.
-                    emit('[%date% %time%] clearing stale extraction folders...'),
-                    'for /d %%D in ("%TEMP%\\_MEI*") do rd /s /q "%%D" 2>NUL\r\n',
-                ]
+            # A previous fix cleared leftover _MEI* extraction folders
+            # here, on the theory that PyInstaller's onefile bootloader
+            # might reuse a stale, broken one instead of extracting
+            # fresh. Direct evidence has since disproven that theory
+            # outright: every single "Failed to load Python DLL" report
+            # (across many machines and many retries on the same
+            # machine) has pointed at a DIFFERENT, genuinely fresh
+            # _MEI<random> folder - the bootloader never reuses one.
+            # Worse, the cleanup itself was observed taking 20-100+
+            # seconds (deleting a large accumulation of old folders) at
+            # exactly the moment right before the critical relaunch,
+            # which is exactly the kind of disk/antivirus activity burst
+            # that could plausibly interfere with the NEW extraction
+            # about to happen - actively making things worse rather than
+            # helping. Removed rather than kept "just in case".
             if verbose:
                 # A real, direct observation (see this method's own
                 # docstring above) ruled out the file-lock theory
@@ -2621,18 +2617,21 @@ class App(tk.Tk):
                 # attempt (4, 6, 8, 10, 12 sec) rather than a flat 4 -
                 # a fixed short wait doesn't give antivirus real-time
                 # scanning enough time to finish with an unusual,
-                # freshly-extracted DLL on a slower machine, and each
-                # attempt also clears any stale _MEI* folder first (see
-                # the relaunch-label comment above) so a retry always
-                # gets a genuinely fresh extraction rather than
-                # potentially reusing one already poisoned by a
-                # scan/quarantine from the previous attempt.
+                # freshly-extracted DLL on a slower machine. Note this
+                # "confirmed running" check is itself an imperfect
+                # signal - it can only see that a process with the right
+                # image name exists, and a process wedged on its own
+                # fatal error dialog (the exact failure this whole retry
+                # loop exists to catch) still counts as "running" by
+                # that measure. Kept anyway since it does still catch
+                # the case where the process exits outright, just not
+                # the hung-dialog case - a real fix for that needs a
+                # different signal than tasklist can provide.
                 exe_basename = os.path.basename(current_exe)
                 lines += [
                     "set launch_tries=0\r\n",
                     ":try_launch\r\n",
                     "set /a launch_tries+=1\r\n",
-                    'for /d %%D in ("%TEMP%\\_MEI*") do rd /s /q "%%D" 2>NUL\r\n',
                     'echo [%date% %time%] launching (attempt %launch_tries%)...\r\n',
                     f'start "" "{current_exe}"\r\n',
                     "set /a launch_wait=2+(2*launch_tries)\r\n",
