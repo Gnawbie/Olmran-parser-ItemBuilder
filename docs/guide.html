@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v5.6.1</p>
+    <p class="tagline">Full usage guide - v5.6.2</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -189,7 +189,7 @@
     </ul>
 
     <h2 id="build">5. Build Tab</h2>
-    <p>This is where you search a master equipment database for the best gear for your character. It's organized into three inner sub-tabs: Basic Constraints, Bank Build, and Manual. A shared control area at the bottom (Min/Max/Specific Level, and the search buttons) stays visible no matter which sub-tab is active (except Manual, which has its own separate controls entirely - see 5.6). Basic Constraints itself further splits into its own mini-tabs - Basic, Armor Constraints, and Weapon Constraints (sections 5.2-5.4 below) - rather than those being separate top-level sub-tabs.</p>
+    <p>This is where you search a master equipment database for the best gear for your character. It's organized into three inner sub-tabs: Basic Constraints, Bank Build, and Manual. Basic Constraints itself further splits into its own mini-tabs - Basic, Armor Constraints, and Weapon Constraints (sections 5.2-5.4 below) - rather than those being separate top-level sub-tabs. Min/Max/Specific Level and the search buttons (5.7) live inside Basic Constraints' own Wanted Spells column, so they're only visible there - Bank Build has its own per-character Find Best Bank Build button instead, and Manual has its own separate controls entirely (see 5.6).</p>
 
     <h3>5.1 Master Database File</h3>
     <ul>
@@ -214,7 +214,7 @@
     <p><b>Wanted Sigils</b> - pick one or more Sigil types (Cold/Earth/Fire/Lightning/Pain/Shock/Water) and the search actively favors armor carrying them, the same way it does for Wanted Spells - useful since many armor pieces carry a Sigil but no Spell at all. Unlike spells, sigils don't need to be exclusive to one slot - multiple slots can each independently carry a wanted Sigil, and a Wanted Spell always outranks a Wanted Sigil for the same slot. Separately, whenever two candidates for a slot are otherwise exactly tied, the search prefers whichever one's Sigil isn't already used elsewhere in the build - a last-resort tie-break only, never able to override a genuinely better item. Each chip also has two circles for a firmer ask than that passive preference: <b>red</b> requires one piece of gear carrying that sigil AND any Wanted/Priority spell; <b>blue</b> instead requires that sigil AND a matching Protect spell (that element's own, or the generic Elemental Protect), independent of the Wanted Spells list entirely. The two are mutually exclusive per sigil, and both are enforced even if it means leaving some other slot empty.</p>
     <p><b>Priority</b> - pick a spell and a tier (including "(any)"), then click the <b>+</b> button. Tier "(any)" always actively searches for that spell (not just preferred among items that already matched something else). A specific tier instead pairs that spell with that tier, so the search targets exactly it, even over a higher tier that's available elsewhere.</p>
     <p><b>Required Items</b> - type a specific item's name under <b>Require Item:</b> and click <b>Add to Build</b>. It's looked up by exact match first, falling back to a spelling-tolerant fuzzy search that asks you to confirm the closest match if there's no exact hit. Once added it's forced into its slot on every future search, with the rest of the build calculated around it.</p>
-    <p><b>Class Items</b> dropdown - lists every item excluded for being in the "Class" area, formatted as <i>Item-MOB-Spell</i> and sorted by Mob (Mob shown in bold caps). Selecting one and clicking <b>Add to Build</b> forces it into Required Items - the one deliberate way an otherwise-excluded item can still end up in a build.</p>
+    <p><b>Class Items</b> - a typeable field listing every item excluded for being in the "Class" area, formatted as <i>Item-MOB-Spell</i> and sorted by Mob (Mob shown in bold caps). Click or focus it to see the full list in a suggestion popup, or type to filter it by substring (same autocomplete style as the Area Items tab); pick an entry from the popup, then click <b>Add to Build</b> to force it into Required Items - the one deliberate way an otherwise-excluded item can still end up in a build.</p>
     <p><b>Level Filtering</b> - Min Level / Max Level restrict to a range; Specific Level restricts to an exact level (mutually exclusive with Min/Max). Leave all three blank for no restriction.</p>
     <p><b>If no match at Specific Level</b> (only enabled once Specific Level has a value) controls what Find Optimal Build does when nothing matches a wanted spell at exactly that level/tier:</p>
     <ul>
@@ -275,11 +275,12 @@
       <li>Click any column header in the results table to sort by it; click again to reverse.</li>
     </ul>
 
-    <h3>5.7 Shared Search Controls</h3>
+    <h3>5.7 Search Controls</h3>
+    <p>Min/Max/Specific Level, the "If no match at Specific Level" fallback options, and the three buttons below sit in the Wanted Spells column, right below <b>Clear All</b>. Since they're part of Basic Constraints' own layout, they're only visible while Basic Constraints is the selected sub-tab - not on Bank Build (which has its own per-character Find Best Bank Build button instead) or Manual (which has its own separate controls entirely - see 5.6).</p>
     <ul>
-      <li><b>🎯 Find Optimal Build</b> - exact search across every slot at once for the combination covering as many wanted spells as possible under your constraints. Hidden while the Bank Build sub-tab is selected, since it has its own per-character Find Best Bank Build button instead (see 5.5).</li>
-      <li><b>📋 Show All Matches</b> - lists every item matching your filters, without narrowing to one per slot. Also hidden on Bank Build for the same reason.</li>
-      <li><b>🎲 Generate multiple build options</b> - also generates up to 10 alternate full builds by swapping in equally-good tied items slot by slot. Stays visible on every sub-tab, including Bank Build.</li>
+      <li><b>🎯 Find Optimal Build</b> - exact search across every slot at once for the combination covering as many wanted spells as possible under your constraints.</li>
+      <li><b>📋 Show All Matches</b> - lists every item matching your filters, without narrowing to one per slot.</li>
+      <li><b>🎲 Generate multiple build options</b> - also generates up to 10 alternate full builds by swapping in equally-good tied items slot by slot.</li>
     </ul>
 
     <h2 id="results">6. Results Tab</h2>

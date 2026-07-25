@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.6.1"
+VERSION = "5.6.2"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -5111,15 +5111,24 @@ class App(tk.Tk):
         ttk.Label(blocked_area_input_frame, text="Class Items:").pack(anchor='w')
         self.blocked_area_var = tk.StringVar(value='')
         self.blocked_area_items_by_display = {}
-        self.blocked_area_combo = ttk.Combobox(blocked_area_input_frame, textvariable=self.blocked_area_var,
-                                               state='readonly', width=24)
-        self.blocked_area_combo.pack(side='left', padx=(0,4), pady=(2,0))
-        # The closed box stays a fixed, narrow width, but its dropdown list
-        # widens to fit the longest "Item-Mob-Spell" entry - otherwise every
-        # value would be truncated in the popup too (see
-        # _setup_combobox_dropdown_widen for why this has to hook the
-        # popdown window itself, not just a click/keypress on the combo).
-        self._setup_combobox_dropdown_widen(self.blocked_area_combo)
+        self._all_blocked_area_displays = []
+        # A typeable Entry with its own live-filtering suggestion popup,
+        # same pattern as the Area Items tab's autocomplete (see
+        # _show_area_suggestions's own comment for why this is a
+        # self-managed popup rather than a real ttk.Combobox's built-in
+        # dropdown) - lets the list be searched by typing instead of only
+        # scrolling through every excluded item.
+        self.blocked_area_entry = ttk.Entry(blocked_area_input_frame, textvariable=self.blocked_area_var, width=24)
+        self.blocked_area_entry.pack(side='left', padx=(0,4), pady=(2,0))
+        self.blocked_area_entry.bind('<KeyRelease>', self._on_blocked_area_type)
+        self.blocked_area_entry.bind('<Down>', self._blocked_area_suggest_focus_listbox)
+        self.blocked_area_entry.bind('<Return>', self._on_blocked_area_enter)
+        self.blocked_area_entry.bind('<Escape>', self._hide_blocked_area_suggestions)
+        self.blocked_area_entry.bind('<FocusOut>', self._on_blocked_area_entry_focus_out)
+        self.blocked_area_entry.bind('<FocusIn>', self._update_blocked_area_suggestions)
+        self.blocked_area_entry.bind('<Button-1>', self._update_blocked_area_suggestions)
+        self._blocked_area_suggest_popup = None
+        self._blocked_area_suggest_listbox = None
         ttk.Button(blocked_area_input_frame, text="Add to Build",
                   command=self._add_blocked_area_required_item).pack(side='left', padx=4, pady=(2,0))
 
@@ -6381,13 +6390,15 @@ class App(tk.Tk):
         self.manual_added_items = []
 
         # Shared controls - Min/Max/Specific Level and the search buttons -
-        # packed under the sub-notebook rather than inside any one sub-tab,
-        # so they stay visible and usable no matter which of Basic
-        # Constraints/Armor Constraints/Weapon Constraints is selected.
-        # Packed with the default side='top' (not 'bottom') so it stacks
-        # directly beneath the notebook's actual content, rather than being
-        # pinned to the bottom of the whole tab with a gap in between.
-        shared_controls_frame = ttk.Frame(self.tab_build, padding=(0,8,0,0))
+        # now packed inside wanted_block (Wanted Spells' own column, right
+        # below its "Clear All" button) instead of under the whole build
+        # sub-notebook. Still visible no matter which of the Build
+        # Constraints mini-tabs (Basic/Armor Constraints/Weapon Constraints)
+        # is selected, since wanted_block sits outside that mini-notebook -
+        # only no longer visible while Bank Build/Manual is the selected
+        # top-level sub-tab, same as the search buttons here were already
+        # hidden on those two anyway (see _on_build_subtab_changed).
+        shared_controls_frame = ttk.Frame(wanted_block, padding=(0,8,0,0))
         shared_controls_frame.pack(fill='x')
 
         shared_level_frame = ttk.Frame(shared_controls_frame)
@@ -7807,12 +7818,13 @@ class App(tk.Tk):
         self._render_required_item_chips()
 
     def _refresh_blocked_area_dropdown(self):
-        """Repopulate the Class Items dropdown from self.blocked_area_items
-        (set at master database load time - see _load_master_for_search),
-        formatted "Item-MOB-Spell" per entry, sorted by Mob (sorted on the
-        real value, not the displayed all-caps/bold one). The Mob segment
-        is upper-cased and rendered in (best-effort Unicode) bold via
-        _unicode_bold, to set it apart from the Item/Spell either side."""
+        """Repopulate the Class Items autocomplete list from
+        self.blocked_area_items (set at master database load time - see
+        _load_master_for_search), formatted "Item-MOB-Spell" per entry,
+        sorted by Mob (sorted on the real value, not the displayed
+        all-caps/bold one). The Mob segment is upper-cased and rendered in
+        (best-effort Unicode) bold via _unicode_bold, to set it apart from
+        the Item/Spell either side."""
         display_strings = []
         self.blocked_area_items_by_display = {}
         sorted_items = sorted(self.blocked_area_items, key=lambda it: (it.get('Mob') or '').strip().lower())
@@ -7821,43 +7833,122 @@ class App(tk.Tk):
             display = f"{item.get('Item', '')}-{mob_display}-{item.get('Spell', '')}"
             display_strings.append(display)
             self.blocked_area_items_by_display[display] = item
-        self.blocked_area_combo['values'] = display_strings
+        self._all_blocked_area_displays = display_strings
         self.blocked_area_var.set('')
 
-    def _setup_combobox_dropdown_widen(self, combo):
-        """Make a ttk.Combobox's dropdown list widen to fit its longest
-        value while the closed box itself stays whatever fixed width it
-        was given. Setting the popdown's inner listbox -width alone has no
-        visible effect - ttk's own Tcl-level Post procedure (which runs on
-        every click/Down-arrow open) always resets the popdown toplevel's
-        geometry to match the combobox's own (narrow) width right before
-        showing it, overriding anything set beforehand. So instead this
-        hooks <Map> on the popdown toplevel itself (fires the instant it
-        actually becomes visible, i.e. right after Post's resize already
-        happened) and re-widens the toplevel's geometry at that moment -
-        recomputed fresh every time, so it always matches whatever values
-        are currently loaded. PopdownWindow creates the popdown toplevel
-        immediately if it doesn't exist yet, so this only needs to run
-        once, right after the combobox itself is created."""
-        popdown = combo.tk.call('ttk::combobox::PopdownWindow', combo)
+    def _on_blocked_area_type(self, event):
+        """Type-ahead: narrow the suggestion popup to Class Items whose
+        display string contains what's been typed so far (case-
+        insensitive), updated on every keystroke. Navigation keys are left
+        to their own handlers so this doesn't fight them."""
+        if event.keysym in ('Up', 'Down', 'Return', 'Escape', 'Tab'):
+            return
+        self._update_blocked_area_suggestions()
 
-        def on_map():
-            values = combo['values']
-            if not values:
-                return
-            try:
-                font = tkfont.Font(font=combo.cget('font') or 'TkDefaultFont')
-                max_px = max(font.measure(str(v)) for v in values) + 30  # scrollbar/border slack
-                geo = combo.tk.call('wm', 'geometry', popdown)
-                m = re.match(r'\d+x(\d+)([+-]\d+[+-]\d+)', geo)
-                if m:
-                    height, pos = m.groups()
-                    combo.tk.call('wm', 'geometry', popdown, f'{max_px}x{height}{pos}')
-            except tk.TclError:
-                pass
+    def _update_blocked_area_suggestions(self, event=None):
+        """Refresh the suggestion popup from whatever's currently typed -
+        the full Mob-sorted list when the field is empty (e.g. on first
+        click/focus, same as opening an ordinary dropdown), narrowed to
+        matching entries once something's typed. Shared by the typing,
+        click, and focus-in handlers so all three show the same thing."""
+        typed = self.blocked_area_var.get().strip().lower()
+        matches = ([d for d in self._all_blocked_area_displays if typed in d.lower()]
+                   if typed else list(self._all_blocked_area_displays))
+        if matches:
+            self._show_blocked_area_suggestions(matches)
+        else:
+            self._hide_blocked_area_suggestions()
 
-        funcid = combo.register(on_map)
-        combo.tk.call('bind', popdown, '<Map>', funcid)
+    def _show_blocked_area_suggestions(self, matches):
+        """Create (on first use) and fill the suggestion popup - a plain
+        undecorated Toplevel holding a Listbox, positioned right under the
+        Class Items entry. Same self-managed-popup approach as the Area
+        Items tab's own autocomplete (see _show_area_suggestions) - a real
+        ttk.Combobox's built-in dropdown can't be kept open while the entry
+        itself keeps typing focus."""
+        if self._blocked_area_suggest_popup is None:
+            popup = tk.Toplevel(self)
+            popup.withdraw()
+            popup.overrideredirect(True)
+            popup.attributes('-topmost', True)
+            listbox = tk.Listbox(popup, height=8, activestyle='dotbox', exportselection=False)
+            scrollbar = ttk.Scrollbar(popup, orient='vertical', command=listbox.yview)
+            listbox.configure(yscrollcommand=scrollbar.set)
+            listbox.pack(side='left', fill='both', expand=True)
+            scrollbar.pack(side='right', fill='y')
+            listbox.bind('<Return>', self._on_blocked_area_suggest_pick)
+            listbox.bind('<Double-Button-1>', self._on_blocked_area_suggest_pick)
+            listbox.bind('<Escape>', self._hide_blocked_area_suggestions)
+            self._blocked_area_suggest_popup = popup
+            self._blocked_area_suggest_listbox = listbox
+
+        listbox = self._blocked_area_suggest_listbox
+        listbox.delete(0, tk.END)
+        for name in matches:
+            listbox.insert(tk.END, name)
+
+        x = self.blocked_area_entry.winfo_rootx()
+        y = self.blocked_area_entry.winfo_rooty() + self.blocked_area_entry.winfo_height()
+        # Wide enough for the longest "Item-MOB-Spell" entry, not just the
+        # entry box's own narrow width - otherwise every value would be
+        # truncated in the popup too.
+        font = tkfont.Font(font=self.blocked_area_entry.cget('font') or 'TkDefaultFont')
+        width = max(self.blocked_area_entry.winfo_width(),
+                    max((font.measure(str(m)) for m in matches), default=200) + 40)
+        self._blocked_area_suggest_popup.geometry(f"{width}x160+{x}+{y}")
+        self._blocked_area_suggest_popup.deiconify()
+
+    def _hide_blocked_area_suggestions(self, event=None):
+        if self._blocked_area_suggest_popup is not None:
+            self._blocked_area_suggest_popup.withdraw()
+
+    def _blocked_area_suggest_focus_listbox(self, event):
+        """Down arrow in the entry moves focus into the suggestion list (if
+        showing) so its usual arrow-key/Enter navigation takes over."""
+        if self._blocked_area_suggest_popup is None or not self._blocked_area_suggest_popup.winfo_viewable():
+            return
+        listbox = self._blocked_area_suggest_listbox
+        listbox.focus_set()
+        if listbox.size() > 0:
+            listbox.selection_set(0)
+            listbox.activate(0)
+        return 'break'
+
+    def _on_blocked_area_suggest_pick(self, event):
+        """Enter or double-click on a suggestion - use it, same as picking
+        it would with the old dropdown."""
+        listbox = self._blocked_area_suggest_listbox
+        selection = listbox.curselection()
+        if not selection:
+            return
+        value = listbox.get(selection[0])
+        self.blocked_area_var.set(value)
+        self._hide_blocked_area_suggestions()
+        self.blocked_area_entry.focus_set()
+
+    def _on_blocked_area_entry_focus_out(self, event):
+        """Hide the suggestion popup once focus has settled somewhere that
+        isn't the entry or the popup's own listbox - deferred slightly
+        since FocusOut fires before the listbox actually gains focus when
+        the user arrows down into it."""
+        self.after(150, self._hide_blocked_area_suggestions_if_unfocused)
+
+    def _hide_blocked_area_suggestions_if_unfocused(self):
+        if self._blocked_area_suggest_popup is None:
+            return
+        focused = self.focus_get()
+        if focused not in (self.blocked_area_entry, self._blocked_area_suggest_listbox):
+            self._hide_blocked_area_suggestions()
+
+    def _on_blocked_area_enter(self, event):
+        """Enter in the entry itself (not the suggestion list) - if what's
+        typed exactly matches a Class Item's display string, keep it and
+        close the popup (matching Return-to-pick from the suggestion list)."""
+        typed = self.blocked_area_var.get().strip()
+        match = next((d for d in self._all_blocked_area_displays if d.lower() == typed.lower()), None)
+        if match:
+            self.blocked_area_var.set(match)
+            self._hide_blocked_area_suggestions()
 
     def _add_blocked_area_required_item(self):
         """Add the Class Items dropdown's current selection to Required

@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.6.1 (Current)
+### v5.6.2 (Current)
+- Class Items is now a typeable field with a live-filtering suggestion popup (same autocomplete style as the Area Items tab), instead of a plain dropdown you could only scroll through
+- Moved Min/Max/Specific Level, the "If no match at Specific Level" fallback options, and the Find Optimal Build/Show All Matches/Generate multiple build options buttons into the Wanted Spells column (right below Clear All), filling space that used to sit empty there. These now only show while Basic Constraints is the selected sub-tab, rather than staying visible on Bank Build/Manual too
+
+### v5.6.1
 - Parse tab's PvP section: "Your Kills" and "Participated" each now show a Total RP (realm points) field and a count field (Kills/Participations) next to their Search button, filled in automatically whenever that search runs
 
 ### v5.6.0
