@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.5.0"
+VERSION = "5.5.1"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -5781,10 +5781,24 @@ class App(tk.Tk):
         manual_slot_col.grid(row=0, column=1, sticky='n')
         self.manual_slot_defense_controls = {}
         self.manual_slot_sigil_vars = {}
+        # One checkbox per armor slot, before its label - restricts the
+        # results list to the union of whichever slots are checked (none
+        # checked means no restriction from this row, same opt-in pattern
+        # as everything else in Manual). Independent of the broader
+        # Armor/Weapons/Jewel checkboxes above the spell dropdowns - this
+        # is a finer-grained "just this specific piece" narrowing on top
+        # of whatever those already allow.
+        self.manual_slot_only_vars = {}
         for slot, label in [('head', 'Head'), ('cloak', 'Cloak'), ('body', 'Body'),
                             ('hands', 'Hands'), ('legs', 'Legs'), ('feet', 'Feet')]:
             slot_row = ttk.Frame(manual_slot_col)
             slot_row.pack(fill='x', pady=2)
+
+            only_var = tk.BooleanVar(value=False)
+            self.manual_slot_only_vars[slot] = only_var
+            ttk.Checkbutton(slot_row, variable=only_var,
+                           command=self._refresh_manual_lookup_results).pack(side='left', padx=(0,2))
+
             ttk.Label(slot_row, text=f"{label}:", width=8).pack(side='left')
 
             use_var = tk.BooleanVar(value=False)
@@ -5881,7 +5895,7 @@ class App(tk.Tk):
                     values=WEAPON_DAMAGE_TYPES, state='readonly', width=10)
         self.manual_two_handed_damage_combo.pack(side='left')
         self.manual_two_handed_style_var.trace_add('write',
-            lambda *args: self._update_manual_two_handed_damage_state())
+            lambda *args: (self._update_manual_two_handed_damage_state(), self._refresh_manual_lookup_results()))
 
         manual_claw_frame = ttk.Frame(manual_weapon_block, style='WeaponRow.TFrame', padding=(6,4))
         manual_claw_frame.pack(fill='x', pady=2)
@@ -5999,6 +6013,19 @@ class App(tk.Tk):
                            command=self._refresh_manual_lookup_results, **kwargs).pack(side='left', padx=(12,0))
         self.manual_shield_sigil_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
         self.manual_shield_defense_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+
+        # Jewel tab - jewel items have no armor material/Defense concept,
+        # so a Sigil dropdown is the only meaningful filter for them.
+        manual_jewel_block = ttk.Frame(manual_gear_notebook, padding=8)
+        manual_gear_notebook.add(manual_jewel_block, text="Jewel")
+
+        manual_jewel_sigil_row = ttk.Frame(manual_jewel_block)
+        manual_jewel_sigil_row.pack(anchor='w', pady=2)
+        ttk.Label(manual_jewel_sigil_row, text="Sigil:").pack(side='left', padx=(0,4))
+        self.manual_jewel_sigil_var = tk.StringVar(value='Any')
+        ttk.Combobox(manual_jewel_sigil_row, textvariable=self.manual_jewel_sigil_var,
+                    values=['Any'] + SIGIL_TYPES, state='readonly', width=11).pack(side='left')
+        self.manual_jewel_sigil_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
 
         manual_chip_frame = ttk.Frame(manual_tab)
         manual_chip_frame.pack(fill='x', pady=(6,0))
@@ -6886,26 +6913,24 @@ class App(tk.Tk):
 
     def _refresh_manual_lookup_results(self):
         """Repopulates the Manual tab's results list - every item in the
-        currently loaded master database whose Spell exactly matches one of
-        self.manual_lookup_spells (base + exact tier only, no "this tier or
-        higher" fallback - a precise lookup, not a build search). Every
-        filter here is Manual's own independent copy (manual_*-prefixed
-        vars, built in the Manual tab itself) - never shared with the real
-        Basic/Armor/Weapon Constraints tabs, only ever affecting this tab's
-        own results."""
+        currently loaded master database matching all of Manual's currently
+        active constraints. Wanted Spell chips are entirely optional here,
+        not required for the list to appear at all - with none added, every
+        item matching the other active constraints (Only Found In, Armor
+        Type, Weapon, Melee/Shield, Level, Armor/Weapons/Jewel) is shown;
+        adding one or more chips narrows that down further to just items
+        whose Spell exactly matches one of them (base + exact tier only, no
+        "this tier or higher" fallback - a precise lookup, not a build
+        search). Every filter here is Manual's own independent copy
+        (manual_*-prefixed vars, built in the Manual tab itself) - never
+        shared with the real Basic/Armor/Weapon Constraints tabs, only ever
+        affecting this tab's own results."""
         self.manual_results_tv.delete(*self.manual_results_tv.get_children())
         self._manual_lookup_matches = []
 
-        # While Weapons is checked, weapon/shield items don't need a
-        # matching Wanted Spell chip at all to show up (see the checkbox's
-        # own comment) - so an empty chip list only blocks the whole list
-        # from appearing when Weapons isn't checked.
         weapons_checked = self.manual_weapons_only_var.get()
         self._set_manual_results_columns(weapons_checked)
 
-        if not self.manual_lookup_spells and not weapons_checked:
-            self.manual_results_status.config(text="Add a spell/tier above to see matching items")
-            return
         if not self.master_data:
             self.manual_results_status.config(text="Load a master database first")
             return
@@ -6936,6 +6961,11 @@ class App(tk.Tk):
         # Constraints tab's per-slot breakdown. No checkboxes checked means
         # no restriction (same opt-in pattern as everything else in Manual).
         checked_materials = [m for m, var in self.manual_armor_type_vars.items() if var.get()]
+
+        # Per-slot "only this piece" checkboxes (Head/Cloak/Body/Hands/
+        # Legs/Feet) - restricts to the union of whichever are checked;
+        # none checked means no restriction from this row.
+        checked_slots_only = [slot for slot, var in self.manual_slot_only_vars.items() if var.get()]
 
         selected_realms = ([] if self.manual_realm_filter_all_var.get()
                            else [realm for realm, var in self.manual_realm_filters.items() if var.get()])
@@ -7014,13 +7044,15 @@ class App(tk.Tk):
         manual_shield_defense = self.manual_shield_defense_var.get()
         manual_shield_materials = [m for m, var in self.manual_shield_armor_checks.items() if var.get()]
 
+        # Jewel tab - hard filter, same reasoning as above.
+        manual_jewel_sigil = self.manual_jewel_sigil_var.get()
+
         matches = []
         for item in self.master_data:
             item_spell = (item.get('Spell') or '').lower()
             item_slot = (item.get('Slot') or '').lower()
             item_type = (item.get('Type') or '').lower()
             is_claw_item = item_slot == 'weapon' and 'claw' in item_type
-            is_weapon_or_shield = item_slot in ('weapon', 'shield')
 
             if queries:
                 if not item_spell:
@@ -7030,12 +7062,9 @@ class App(tk.Tk):
                 if not any(item_base == qbase and (qtier == 0 or item_tier_rank == qtier)
                            for qbase, qtier in queries):
                     continue
-            elif not (weapons_checked and is_weapon_or_shield):
-                # No Wanted Spell chips at all - only weapon/shield items
-                # get through, and only while Weapons is checked (see the
-                # checkbox's own comment); everything else still needs a
-                # chip to match against.
-                continue
+            # No Wanted Spell chips at all - Spell isn't checked, every item
+            # is a candidate here (subject to every other active
+            # constraint below); adding a chip is what narrows this down.
 
             item_realm = (item.get('Realm') or '').strip()
 
@@ -7128,6 +7157,11 @@ class App(tk.Tk):
                 if manual_shield_materials and not any(m in item_type for m in manual_shield_materials):
                     continue
 
+            # Jewel tab - hard filter.
+            if item_slot == 'jewel':
+                if manual_jewel_sigil != 'Any' and (item.get('Sigil') or '').strip().lower() != manual_jewel_sigil.lower():
+                    continue
+
             if 'crafted' in item_realm.lower() and not self.manual_realm_filters['Crafted'].get():
                 continue
             if self.manual_exclude_kaid_var.get() and 'kaid' in item_realm.lower():
@@ -7162,6 +7196,9 @@ class App(tk.Tk):
             if item_slot in ARMOR_SIGIL_SLOTS and checked_materials:
                 if not any(m in item_type for m in checked_materials):
                     continue
+
+            if item_slot in ARMOR_SIGIL_SLOTS and checked_slots_only and item_slot not in checked_slots_only:
+                continue
 
             # Per-slot Defense/Sigil - hard filters here (unlike the real
             # Armor Constraints tab, where both are only ever a soft

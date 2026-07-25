@@ -134,7 +134,13 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.5.0 (Current)
+### v5.5.1 (Current)
+- Manual tab: Wanted Spell chips are now optional, not required for the results list to appear at all - with none added, every item matching the other active constraints (Only Found In, Armor Type, Weapon, Melee/Shield, Level, Armor/Weapons/Jewel) shows up; adding one or more chips narrows that down further
+- Manual tab's Armor Type sub-tab: added a checkbox before each of Head/Cloak/Body/Hands/Legs/Feet - checking one or more restricts the list to just those specific armor pieces, on top of whatever the broader Armor/Weapons/Jewel checkboxes already allow
+- Added a "Jewel" sub-tab alongside Armor Type/Weapon/Melee-Shield in Manual's Gear Constraints area, with a Sigil dropdown for jewel items
+- Fixed the Weapon sub-tab's "Two-Handed" Style dropdown (Melee/Direct/Parry/Fired) not refreshing Manual's results list when changed - it was only updating its own Damage Type field's enabled state
+
+### v5.5.0
 - Added an "Events" tab next to "Only Found In" in Basic Constraints - one checkbox per specific event (e.g. "Halloween 2020", "Christmas 2023"), automatically populated from whatever's in the loaded database. Works additively alongside the existing broad "Event" checkbox: checking a specific event lets its items through even when "Event" itself is unchecked
 - Added a new "Manual" tab to the Build section (after Bank Build) - a standalone spell/tier database lookup, separate from the actual build search. Pick a spell category + exact tier and add it to a small list; every matching item in the loaded database shows up immediately below, right-click any result to add it into the Results tab (multiple items can go into the same slot here, e.g. 3 different body pieces, since it's just a flat list you're curating by hand, not a real build)
   - Has its own independent copy of Only Found In (Realms + Events), Armor Type (a simplified Cloth/Leather/Studded/Plate checklist plus per-slot Defense/Sigil), Weapon (Two-Handed/Dual-Wield/1h-Shield/2h-Shield/Claws/Fired), and Melee/Shield Constraints - none of it touches or is affected by the real Basic/Armor/Weapon Constraints tabs

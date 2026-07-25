@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v5.5.0</p>
+    <p class="tagline">Full usage guide - v5.5.1</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -263,10 +263,11 @@
     <h3>5.6 Manual</h3>
     <p>A standalone spell/tier database lookup, completely separate from the actual build search - nothing picked here ever feeds into Find Optimal Build/Show All Matches, and nothing from Basic/Armor/Weapon Constraints feeds into it either.</p>
     <ul>
-      <li>Pick a spell from a category dropdown, an <b>exact</b> tier (no "any tier or higher" fallback - this is a precise lookup, not a build search), and click <b>Add to List</b>. Every item in the loaded database matching that exact spell+tier appears immediately in the table below; add more than one spell/tier to see the combined (union) results.</li>
-      <li><b>Armor</b> / <b>Weapons</b> / <b>Jewel</b> checkboxes restrict the list to just the checked slot categories (checking none or all three means no restriction). Checking <b>Weapons</b> also does two extra things: it drops the requirement to have any spell picked at all (most real weapons carry no Spell, so items would otherwise never show up), and it adds Weight/Fumble/Damage/Timer/Accuracy columns to the results table.</li>
+      <li>Wanted Spell chips here are entirely optional - with none added, every item matching the other active constraints below shows up already; picking a spell from a category dropdown, an <b>exact</b> tier (no "any tier or higher" fallback - this is a precise lookup, not a build search), and clicking <b>Add to List</b> just narrows that down further to items whose Spell exactly matches. Add more than one spell/tier to see the combined (union) results.</li>
+      <li><b>Armor</b> / <b>Weapons</b> / <b>Jewel</b> checkboxes restrict the list to just the checked slot categories (checking none or all three means no restriction). Checking <b>Weapons</b> also adds Weight/Fumble/Damage/Timer/Accuracy columns to the results table.</li>
       <li>A <b>Level</b> range (min/max, blank side unbounded) - its own independent filter, separate from Basic Constraints' Level fields.</li>
-      <li><b>Only Found In</b> and <b>Armor Type</b>/<b>Weapon</b>/<b>Melee/Shield</b> mini-notebooks sit beside the spell dropdowns - each is an independent copy of the same-named controls elsewhere (Only Found In's Realms+Events, Armor Constraints' per-slot Defense/Sigil plus a simplified Cloth/Leather/Studded/Plate checklist, Weapon Constraints' Weapon Types/Combo's, and Melee Weapon/Shield Constraints). None of it is shared with the real tabs - it only ever affects Manual's own results.</li>
+      <li><b>Only Found In</b> and <b>Armor Type</b>/<b>Weapon</b>/<b>Melee/Shield</b>/<b>Jewel</b> mini-notebooks sit beside the spell dropdowns - each is an independent copy of the same-named controls elsewhere (Only Found In's Realms+Events, Armor Constraints' per-slot Defense/Sigil plus a simplified Cloth/Leather/Studded/Plate checklist, Weapon Constraints' Weapon Types/Combo's, Melee Weapon/Shield Constraints, and a Sigil dropdown for jewels). None of it is shared with the real tabs - it only ever affects Manual's own results.</li>
+      <li>Armor Type's per-slot rows (Head/Cloak/Body/Hands/Legs/Feet) each have their own checkbox before the label too - checking one or more restricts the list to just those specific pieces, on top of whatever the broader Armor/Weapons/Jewel checkboxes above already allow.</li>
       <li>Right-click any row in the results table for <b>Add to Results Tab</b> - unlike a real build, more than one item can go into the same slot this way (e.g. 3 different body pieces), since this is a flat list you're curating by hand, not a computed build. Adding an item stays on the Manual tab rather than switching away. Once something's been added this way, right-click a row in the Results tab itself for <b>Remove from list</b>.</li>
       <li>Click any column header in the results table to sort by it; click again to reverse.</li>
     </ul>
