@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.34 (Current)
+### v5.4.35 (Current)
+- Auto-updater: the relaunched exe now starts from a sanitized environment instead of inheriting the old (about-to-exit) process's own - PyInstaller's bootloader sets variables like `TCL_LIBRARY`/`TK_LIBRARY` pointing at its own extraction folder, and those were being inherited down through the update batch script into the freshly-relaunched exe, which could then try to load Tcl/Tk or the Python DLL from the OLD process's (now-deleted) extraction folder instead of its own. A plain manual double-click was never affected since Explorer's own environment was never touched by any PyInstaller process to begin with
+
+### v5.4.34
 - Auto-updater: removed the "clear stale extraction folders" step added in v5.4.31 (developer-diagnostics builds only) - direct evidence has since shown every "Failed to load Python DLL" report points at a genuinely fresh extraction folder, not a reused stale one, disproving the theory that step was based on. Worse, it could take 20+ seconds right before the critical relaunch moment on a machine with many old folders to clean up, which is exactly the kind of disk activity burst that could interfere with the new extraction about to happen
 
 ### v5.4.33

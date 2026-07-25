@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.34"
+VERSION = "5.4.35"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -33,6 +33,30 @@ def _is_folder_build():
     if not getattr(sys, 'frozen', False):
         return False
     return os.path.isdir(os.path.join(os.path.dirname(os.path.abspath(sys.executable)), '_internal'))
+
+# PyInstaller's own bootloader/runtime hooks set several environment
+# variables pointing at THIS process's own extraction folder (_MEIPASS)
+# - notably TCL_LIBRARY/TK_LIBRARY (for tkinter's bundled Tcl/Tk data),
+# and internal onefile bookkeeping like _MEIPASS2. Environment variables
+# are inherited by child processes by default - the update batch script
+# is spawned as a child of THIS (about to exit) process, which in turn
+# launches the freshly-updated exe as ITS OWN child via `start`, so
+# without this, the new process would inherit variables pointing at the
+# OLD process's extraction folder, which no longer exists once it exits.
+# That's a plausible, direct explanation for "Failed to load Python
+# DLL"/"Tcl data directory not found" happening specifically through the
+# auto-updater's relaunch and not through a plain manual double-click
+# (which was never touched by any PyInstaller process's own environment
+# to begin with). Used when spawning the update batch script so its own
+# child (the relaunched exe) starts from a clean slate instead.
+_PYINSTALLER_ENV_VARS_TO_STRIP = ('TCL_LIBRARY', 'TK_LIBRARY', 'PYTHONHOME', 'PYTHONPATH')
+
+def _clean_relaunch_env():
+    env = dict(os.environ)
+    for key in list(env):
+        if key in _PYINSTALLER_ENV_VARS_TO_STRIP or key.startswith('_MEI'):
+            del env[key]
+    return env
 
 # ── DEBUG LOG (test_launcher_debug.py / OlmranItemBuilder_TEST_DEBUG.exe,
 # and automatically on this developer's own machine on ANY build - see
@@ -2672,7 +2696,8 @@ class App(tk.Tk):
                 f.write(''.join(lines))
             subprocess.Popen(['cmd', '/c', bat_path],
                              creationflags=(subprocess.CREATE_NEW_CONSOLE if verbose
-                                           else subprocess.CREATE_NO_WINDOW))
+                                           else subprocess.CREATE_NO_WINDOW),
+                             env=_clean_relaunch_env())
             # From here on, everything happens in the batch script, a
             # separate process this log can't see into directly - non-
             # verbose mode's own copy of the same steps lands in
