@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.4.38"
+VERSION = "5.5.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -1356,6 +1356,39 @@ def _bank_owned_match(item_key, owned_keys):
     )
 
 
+def _sort_treeview_column(tv, col, reverse):
+    """Generic click-to-sort for any Treeview's column headings - a plain
+    module-level function (not an App method) so it works the same for
+    App's own tables (Saved Items' Main/character tabs, Manual tab's
+    results list, Area Items) and the standalone read-only search/snapshot
+    dialog classes below. A column whose value parses as a number (on the
+    clicked column's own cells) sorts numerically, falling back to case-
+    insensitive string sort for anything non-numeric (e.g. a blank cell);
+    every other column just sorts as text. Re-clicking the same header
+    flips direction; the sort is purely a display order - it's reset back
+    to whatever order the underlying data has next time the treeview is
+    refreshed/repopulated.
+
+    Deliberately NOT wired to the Results tab (divider rows between
+    stacked build variants, plus right-click Remove/Rebuild logic keyed to
+    row position - see App._on_results_right_click), the Fields tab (row
+    order there IS the persisted export order, curated via its own Move
+    Up/Down buttons), or the Parse tab's file list (its own Remove button
+    maps a click back to self.files by treeview position)."""
+    def sort_key(iid):
+        val = tv.set(iid, col)
+        try:
+            return (0, float(val))
+        except ValueError:
+            return (1, val.lower())
+
+    rows = sorted(tv.get_children(''), key=sort_key, reverse=reverse)
+    for index, iid in enumerate(rows):
+        tv.move(iid, '', index)
+
+    tv.heading(col, command=lambda: _sort_treeview_column(tv, col, not reverse))
+
+
 CREDITS = [
     ("Gnawbie", "Majority of Content"),
     ("Claude", "Programming"),
@@ -1479,7 +1512,7 @@ class SnapshotViewer(tk.Toplevel):
 
         tv = ttk.Treeview(frame, columns=cols, show='headings', height=22)
         for c in cols:
-            tv.heading(c, text=c)
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(tv, c, False))
             tv.column(c, width=max(80, len(c) * 9), stretch=True)
 
         vsb = ttk.Scrollbar(frame, orient='vertical',   command=tv.yview)
@@ -1519,7 +1552,7 @@ class LogSearchViewer(tk.Toplevel):
         tv = ttk.Treeview(frame, columns=cols, show='headings', height=22)
         widths = {'File': 220, 'Line #': 70, 'Timestamp': 90, 'Text': 700}
         for c in cols:
-            tv.heading(c, text=c)
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(tv, c, False))
             tv.column(c, width=widths[c], anchor='center' if c == 'Line #' else 'w')
 
         vsb = ttk.Scrollbar(frame, orient='vertical',   command=tv.yview)
@@ -1583,7 +1616,7 @@ class DropSnapshotViewer(tk.Toplevel):
         self.tv = ttk.Treeview(list_frame, columns=cols, show='headings', height=12)
         widths = {'File': 220, 'Timestamp': 90, 'Item': 320, 'Mob': 220}
         for c in cols:
-            self.tv.heading(c, text=c)
+            self.tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(self.tv, c, False))
             self.tv.column(c, width=widths[c], anchor='center' if c == 'Timestamp' else 'w')
 
         vsb = ttk.Scrollbar(list_frame, orient='vertical', command=self.tv.yview)
@@ -1783,7 +1816,7 @@ class PvpResultViewer(tk.Toplevel):
         tv = ttk.Treeview(frame, columns=cols, show='headings', height=22)
         widths = {'File': 200, 'Line #': 70, 'Timestamp': 90, 'Label': 160, line_col_label: 480}
         for c in cols:
-            tv.heading(c, text=c)
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(tv, c, False))
             tv.column(c, width=widths[c], anchor='center' if c == 'Line #' else 'w')
 
         vsb = ttk.Scrollbar(frame, orient='vertical', command=tv.yview)
@@ -1916,7 +1949,9 @@ class App(tk.Tk):
         # the shared Min/Max/Specific Level + search buttons under the Build
         # tab were cut off below the visible window on first launch. 836 is
         # the confirmed comfortable height (measured from a live test run).
-        self.geometry("1350x836")
+        # Width widened to 1425 (measured from the running exe, resized to
+        # comfortably fit Manual tab's 3-tab Gear Constraints mini-notebook).
+        self.geometry("1425x836")
         self.minsize(1150, 750)
         self.resizable(True, True)
         self._set_app_icon()
@@ -4385,6 +4420,15 @@ class App(tk.Tk):
         self.build_bank_subtab = ttk.Frame(self.build_sub_notebook, padding=8)
         self.build_sub_notebook.add(self.build_bank_subtab, text='Bank Build')
 
+        # Manual - a spell/tier database lookup, not a build tool. Its own
+        # category/tier dropdowns (see the Manual tab's own construction
+        # further below) are completely independent of Basic Constraints'
+        # actual Wanted Spells - picking one here never affects a real
+        # build search, it just lists whatever in the loaded database
+        # exactly matches.
+        self.build_manual_subtab = ttk.Frame(self.build_sub_notebook, padding=8)
+        self.build_sub_notebook.add(self.build_manual_subtab, text='Manual')
+
         # Armor type constraints - built now (into the Armor Constraints
         # sub-tab above) even though the rest of the Search sub-tab's
         # widgets are constructed further below; order of construction
@@ -5092,8 +5136,31 @@ class App(tk.Tk):
 
         # Realm filter (Only Found In) - placed in the empty space to the right
         # of the spell dropdowns, in the row frame set up alongside spell_block.
-        realm_block = ttk.LabelFrame(spell_and_realm_frame, text="Only Found In", padding=8)
-        realm_block.pack(side='left', anchor='n', padx=(20, 0))
+        # A small two-tab notebook rather than a single LabelFrame - "Only
+        # Found In" holds everything that lived here before (unchanged, same
+        # variable name so none of the checkbox-building code below needed to
+        # change), "Events" is a second tab next to it for per-event-area
+        # refinement (see _refresh_event_area_checkboxes) - added without
+        # moving or resizing this panel's own anchored position in the row.
+        realm_outer = ttk.Frame(spell_and_realm_frame)
+        realm_outer.pack(side='left', anchor='n', padx=(20, 0))
+        # Own style (not the shared "TNotebook.Tab") so this small mini-tab's
+        # headers aren't bold like the app's main-level tabs.
+        ttk.Style().configure('RealmMini.TNotebook.Tab', font=('Arial', 10, 'normal'), padding=[12, 6])
+        realm_notebook = ttk.Notebook(realm_outer, style='RealmMini.TNotebook')
+        realm_notebook.pack()
+        realm_block = ttk.Frame(realm_notebook, padding=8)
+        realm_notebook.add(realm_block, text="Only Found In")
+        self.events_tab_frame = ttk.Frame(realm_notebook, padding=8)
+        realm_notebook.add(self.events_tab_frame, text="Events")
+        # One checkbox per distinct Area seen on an Event-realm item in the
+        # currently loaded master database (see _refresh_event_area_checkboxes,
+        # called whenever a master database loads) - keyed by that exact Area
+        # string. Additive alongside the plain "Event" checkbox above: checking
+        # a specific event here includes that event's items even when the
+        # broad "Event" box is unchecked (see the Only Found In realm-filter
+        # check in _find_optimal_build/_show_all_matches).
+        self.event_area_vars = {}
 
         self.realm_filters = {}
         # Every individual Only Found In checkbox across both places it's
@@ -5439,7 +5506,7 @@ class App(tk.Tk):
         for col in saved_cols:
             heading_anchor = 'w' if col == 'Item' else 'center'
             self.bank_saved_tv.heading(col, text=saved_col_headings.get(col, col), anchor=heading_anchor,
-                                       command=lambda c=col: self._sort_saved_treeview(self.bank_saved_tv, c, False))
+                                       command=lambda c=col: _sort_treeview_column(self.bank_saved_tv, c, False))
             self.bank_saved_tv.column(col, width=saved_col_widths[col], stretch=False,
                                       anchor=('w' if col == 'Item' else 'center'))
         self.bank_saved_tv.bind('<Button-1>', self._on_saved_tv_click)
@@ -5529,6 +5596,476 @@ class App(tk.Tk):
         if real_tabs:
             self.bank_lockers_sub_notebook.select(real_tabs[0])
         self.bank_lockers_sub_notebook.bind('<<NotebookTabChanged>>', self._on_lockers_tab_changed)
+
+        # ── Manual tab ──
+        # Same category+tier dropdown rows as Basic Constraints' Wanted
+        # Spells, but its own independent chip list (self.manual_lookup_spells)
+        # feeding a live, exact-tier database lookup instead of a build
+        # search - see _refresh_manual_lookup_results.
+        manual_tab = self.build_manual_subtab
+        manual_top_row = ttk.Frame(manual_tab)
+        manual_top_row.pack(fill='x')
+
+        manual_spell_block = ttk.Frame(manual_top_row)
+        manual_spell_block.pack(side='left', anchor='n')
+
+        self.manual_category_spell_vars = {}
+        self.manual_category_tier_vars = {}
+        self.manual_category_tier_combos = {}
+
+        for category, spells in SPELL_CATEGORIES.items():
+            manual_row = ttk.Frame(manual_spell_block)
+            manual_row.pack(fill='x', pady=2)
+            ttk.Label(manual_row, text=f"{category}:", width=12).pack(side='left')
+
+            spell_var = tk.StringVar(value='')
+            self.manual_category_spell_vars[category] = spell_var
+            spell_combo = ttk.Combobox(manual_row, textvariable=spell_var,
+                                       values=spells, state='readonly', width=22)
+            spell_combo.pack(side='left', padx=4)
+
+            tier_var = tk.StringVar(value=SPELL_TIERS[0])
+            self.manual_category_tier_vars[category] = tier_var
+            tier_combo = ttk.Combobox(manual_row, textvariable=tier_var,
+                        values=SPELL_TIERS, state='readonly', width=6)
+            tier_combo.pack(side='left', padx=4)
+            self.manual_category_tier_combos[category] = tier_combo
+
+            spell_var.trace_add('write', lambda *args, c=category: self._update_manual_tier_options(c))
+
+            ttk.Button(manual_row, text="Add to List",
+                      command=lambda c=category: self._add_manual_lookup_spell(c)).pack(side='left', padx=4)
+
+            if not spells:
+                ttk.Label(manual_row, text="(list coming soon)",
+                         font=('Arial', 8, 'italic'), foreground='#888').pack(side='left', padx=4)
+
+        # Armor/Weapons/Jewel - restricts the results list to the union of
+        # whichever of these 3 slot categories are checked. None checked
+        # (the default) means no restriction at all; checking all 3
+        # cancels out the same way (nothing left to exclude), same as
+        # leaving all unchecked - only a partial subset (1 or 2 checked)
+        # actually narrows anything. "Armor" uses the app's existing
+        # armor-slot definition (ARMOR_SIGIL_SLOTS); "Weapons" covers the
+        # weapon slot (includes claws, stored as Slot=weapon/Type=claw) and
+        # shield; "Jewel" covers the jewel slot. Weapons has one extra
+        # effect of its own: while it's checked, a matching Wanted Spell
+        # chip isn't required at all for weapon/shield items to show up
+        # (see _refresh_manual_lookup_results) - most real weapons carry no
+        # Spell, same as the real search's "always fill this slot" policy.
+        manual_slot_filter_row = ttk.Frame(manual_spell_block)
+        manual_slot_filter_row.pack(fill='x', pady=(6,0))
+        self.manual_armor_only_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_slot_filter_row, text="Armor", variable=self.manual_armor_only_var,
+                       command=self._refresh_manual_lookup_results).pack(side='left', padx=(0,12))
+        self.manual_weapons_only_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_slot_filter_row, text="Weapons", variable=self.manual_weapons_only_var,
+                       command=self._refresh_manual_lookup_results).pack(side='left', padx=(0,12))
+        self.manual_jewel_only_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_slot_filter_row, text="Jewel", variable=self.manual_jewel_only_var,
+                       command=self._refresh_manual_lookup_results).pack(side='left')
+
+        # Level - Manual's own independent min/max range (blank side is
+        # unbounded), separate from Basic Constraints' Min/Max/Specific
+        # Level fields - only ever affects this tab's own results, same
+        # independence as everything else here.
+        manual_level_row = ttk.Frame(manual_spell_block)
+        manual_level_row.pack(fill='x', pady=(6,0))
+        ttk.Label(manual_level_row, text="Level:").pack(side='left', padx=(0,4))
+        self.manual_min_level_var = tk.StringVar(value='')
+        ttk.Entry(manual_level_row, textvariable=self.manual_min_level_var, width=6).pack(side='left')
+        ttk.Label(manual_level_row, text=" to ").pack(side='left')
+        self.manual_max_level_var = tk.StringVar(value='')
+        ttk.Entry(manual_level_row, textvariable=self.manual_max_level_var, width=6).pack(side='left')
+        self.manual_min_level_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+        self.manual_max_level_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+
+        # Only Found In - its own fully independent set of vars (self.
+        # manual_realm_filters/manual_exclude_kaid_var/manual_exclude_event_var/
+        # manual_realm_filter_all_var/manual_event_area_vars), separate from
+        # Basic Constraints' copy - these only ever affect this tab's own
+        # results list, never an actual build search (same independence as
+        # self.manual_lookup_spells vs. self.wanted_spells_data).
+        manual_realm_outer = ttk.Frame(manual_top_row)
+        manual_realm_outer.pack(side='left', anchor='n', padx=(20, 0))
+        manual_realm_notebook = ttk.Notebook(manual_realm_outer, style='RealmMini.TNotebook')
+        manual_realm_notebook.pack()
+        manual_realm_block = ttk.Frame(manual_realm_notebook, padding=8)
+        manual_realm_notebook.add(manual_realm_block, text="Only Found In")
+        self.manual_events_tab_frame = ttk.Frame(manual_realm_notebook, padding=8)
+        manual_realm_notebook.add(self.manual_events_tab_frame, text="Events")
+
+        self.manual_realm_filters = {}
+        self.manual_realm_filter_checkbuttons = []
+        self.manual_event_area_vars = {}
+
+        realm_options = ['Evil', 'Glory Bea', 'Good', 'Event', 'Chaos', 'Crafted']
+        cols = 2
+        for i, realm in enumerate(realm_options):
+            var = tk.BooleanVar(value=False)
+            self.manual_realm_filters[realm] = var
+            cb = ttk.Checkbutton(manual_realm_block, text=realm, variable=var,
+                                 command=self._on_manual_realm_checkbox_changed)
+            cb.grid(row=i // cols, column=i % cols, sticky='w', padx=4, pady=2)
+            self.manual_realm_filter_checkbuttons.append(cb)
+
+        manual_kaid_all_var = tk.BooleanVar(value=False)
+        self.manual_realm_filters['Kaid'] = manual_kaid_all_var
+        self.manual_kaid_all_checkbutton = ttk.Checkbutton(manual_realm_block, text="Kaid All",
+                                                           variable=manual_kaid_all_var,
+                                                           command=self._on_manual_kaid_checkbox_changed)
+        self.manual_kaid_all_checkbutton.grid(row=0, column=2, sticky='w', padx=(16,4), pady=2)
+        self.manual_realm_filter_checkbuttons.append(self.manual_kaid_all_checkbutton)
+
+        self.manual_kaid_color_checkbuttons = []
+        for i, color in enumerate(['Kaid White', 'Kaid Green', 'Kaid Red', 'Kaid Purple'], start=1):
+            var = tk.BooleanVar(value=False)
+            self.manual_realm_filters[color] = var
+            cb = ttk.Checkbutton(manual_realm_block, text=color, variable=var,
+                                 command=self._on_manual_kaid_checkbox_changed)
+            cb.grid(row=i, column=2, sticky='w', padx=(16,4), pady=2)
+            self.manual_kaid_color_checkbuttons.append(cb)
+            self.manual_realm_filter_checkbuttons.append(cb)
+
+        self.manual_exclude_kaid_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_realm_block, text="Non-Kaid", variable=self.manual_exclude_kaid_var,
+                       command=self._refresh_manual_lookup_results).grid(
+            row=3, column=0, sticky='w', padx=4, pady=2)
+        self.manual_exclude_event_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_realm_block, text="Non-Event", variable=self.manual_exclude_event_var,
+                       command=self._refresh_manual_lookup_results).grid(
+            row=3, column=1, sticky='w', padx=4, pady=2)
+
+        self.manual_realm_filter_all_var = tk.BooleanVar(value=False)
+        self.manual_realm_filter_all_checkbuttons = []
+        manual_all_cb = ttk.Checkbutton(manual_realm_block, text="All", variable=self.manual_realm_filter_all_var,
+                                        command=self._on_manual_realm_checkbox_changed)
+        manual_all_cb.grid(row=4, column=0, sticky='w', padx=4, pady=2)
+        self.manual_realm_filter_all_checkbuttons.append(manual_all_cb)
+
+        # Gear Constraints - a 3-tab mini-notebook standing in for Armor
+        # Constraints/Weapon Constraints, entirely independent of the real
+        # ones (opt-in/blank means no restriction everywhere here, same
+        # pattern as Only Found In above). Manual has no build/scoring
+        # concept to softly prioritize within, so every field that's a soft
+        # preference on the real tabs becomes a hard filter here instead
+        # when set away from its default.
+        manual_gear_outer = ttk.Frame(manual_top_row)
+        # before=manual_realm_outer puts Gear Constraints immediately to
+        # its left, swapping the pair's on-screen order without needing to
+        # move either block's own construction code.
+        manual_gear_outer.pack(side='left', anchor='n', padx=(20, 0), before=manual_realm_outer)
+        manual_gear_notebook = ttk.Notebook(manual_gear_outer, style='RealmMini.TNotebook')
+        manual_gear_notebook.pack()
+
+        # Armor Type tab - the real Armor Constraints tab's per-slot grid,
+        # with two modifications: no Max Lvl, and the per-slot Cloth/
+        # Leather/Studded/Plate checkboxes are replaced by one vertical
+        # checkbox list per material (left column) that applies uniformly
+        # across every armor slot at once, instead of needing to be set
+        # separately per slot. Per-slot Defense/Sigil are kept, one row per
+        # slot, in their own column to the right.
+        manual_armor_type_block = ttk.Frame(manual_gear_notebook, padding=8)
+        manual_gear_notebook.add(manual_armor_type_block, text="Armor Type")
+
+        manual_material_col = ttk.Frame(manual_armor_type_block)
+        manual_material_col.grid(row=0, column=0, sticky='n', padx=(0,16))
+        self.manual_armor_type_vars = {}
+        for material in ('cloth', 'leather', 'studded', 'plate'):
+            var = tk.BooleanVar(value=False)
+            self.manual_armor_type_vars[material] = var
+            ttk.Checkbutton(manual_material_col, text=material.title(), variable=var,
+                           command=self._refresh_manual_lookup_results).pack(anchor='w', pady=2)
+
+        manual_slot_col = ttk.Frame(manual_armor_type_block)
+        manual_slot_col.grid(row=0, column=1, sticky='n')
+        self.manual_slot_defense_controls = {}
+        self.manual_slot_sigil_vars = {}
+        for slot, label in [('head', 'Head'), ('cloak', 'Cloak'), ('body', 'Body'),
+                            ('hands', 'Hands'), ('legs', 'Legs'), ('feet', 'Feet')]:
+            slot_row = ttk.Frame(manual_slot_col)
+            slot_row.pack(fill='x', pady=2)
+            ttk.Label(slot_row, text=f"{label}:", width=8).pack(side='left')
+
+            use_var = tk.BooleanVar(value=False)
+            min_var = tk.StringVar(value='normal')
+            max_var = tk.StringVar(value=DEFENSE_LEVELS[-1])
+            self.manual_slot_defense_controls[slot] = {'use': use_var, 'min': min_var, 'max': max_var}
+
+            ttk.Checkbutton(slot_row, text="Defense:", variable=use_var,
+                           command=self._refresh_manual_lookup_results).pack(side='left', padx=(0,4))
+            ttk.Combobox(slot_row, textvariable=min_var, values=DEFENSE_LEVELS,
+                        state='readonly', width=11).pack(side='left', padx=(0,4))
+            ttk.Label(slot_row, text="to").pack(side='left', padx=(0,4))
+            ttk.Combobox(slot_row, textvariable=max_var, values=DEFENSE_LEVELS,
+                        state='readonly', width=11).pack(side='left', padx=(0,8))
+
+            sigil_var = tk.StringVar(value='Any')
+            self.manual_slot_sigil_vars[slot] = sigil_var
+            ttk.Label(slot_row, text="Sigil:").pack(side='left', padx=(0,4))
+            ttk.Combobox(slot_row, textvariable=sigil_var, values=['Any'] + SIGIL_TYPES,
+                        state='readonly', width=11).pack(side='left')
+
+            min_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+            max_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+            sigil_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+
+        # Weapon tab - a copy of the real Weapon Constraints tab's "Weapon
+        # Types/Combo's" box, same combos/dropdowns, independent vars
+        # (manual_* prefixed). Unlike the real one (which always fills the
+        # weapon/shield slot regardless of a spell match), a checked combo
+        # here is a hard filter on Manual's flat results list: no combo
+        # checked at all means no restriction; any checked means only
+        # weapon/shield/claw items matching one of the checked combos show.
+        manual_weapon_block = ttk.Frame(manual_gear_notebook, padding=8)
+        manual_gear_notebook.add(manual_weapon_block, text="Weapon")
+
+        combo_header = ttk.Label(manual_weapon_block, text="Weapon Types/Combo's", font=('Arial', 9, 'bold'))
+        combo_header.pack(anchor='w', pady=(0,4))
+
+        manual_dual_wield_frame = ttk.Frame(manual_weapon_block, style='WeaponRow.TFrame', padding=(6,4))
+        manual_dual_wield_frame.pack(fill='x', pady=2)
+        self.manual_dual_wield_1h_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_dual_wield_frame, text="Dual-Wield 1h",
+                       variable=self.manual_dual_wield_1h_var, width=14,
+                       command=self._refresh_manual_lookup_results).pack(side='left')
+        ttk.Label(manual_dual_wield_frame, text="Main:").pack(side='left', padx=(8,4))
+        self.manual_dual_wield_1h_main_var = tk.StringVar(value='Any')
+        ttk.Combobox(manual_dual_wield_frame, textvariable=self.manual_dual_wield_1h_main_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+        ttk.Label(manual_dual_wield_frame, text="Off-Hand:").pack(side='left', padx=(8,4))
+        self.manual_dual_wield_1h_off_var = tk.StringVar(value='Any')
+        ttk.Combobox(manual_dual_wield_frame, textvariable=self.manual_dual_wield_1h_off_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+
+        manual_combo_1h_shield_frame = ttk.Frame(manual_weapon_block, style='WeaponRowAlt.TFrame', padding=(6,4))
+        manual_combo_1h_shield_frame.pack(fill='x', pady=2)
+        self.manual_combo_1h_shield_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_combo_1h_shield_frame, text="1h/Shield",
+                       variable=self.manual_combo_1h_shield_var, width=14,
+                       command=self._refresh_manual_lookup_results).pack(side='left')
+        ttk.Label(manual_combo_1h_shield_frame, text="Style:").pack(side='left', padx=(8,4))
+        self.manual_combo_1h_shield_style_var = tk.StringVar(value='Melee')
+        ttk.Combobox(manual_combo_1h_shield_frame, textvariable=self.manual_combo_1h_shield_style_var,
+                    values=['Melee', 'Direct'], state='readonly', width=8).pack(side='left')
+        ttk.Label(manual_combo_1h_shield_frame, text="Damage Type:").pack(side='left', padx=(8,4))
+        self.manual_combo_1h_shield_damage_var = tk.StringVar(value='Any')
+        ttk.Combobox(manual_combo_1h_shield_frame, textvariable=self.manual_combo_1h_shield_damage_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+
+        manual_combo_2h_shield_frame = ttk.Frame(manual_weapon_block, style='WeaponRow.TFrame', padding=(6,4))
+        manual_combo_2h_shield_frame.pack(fill='x', pady=2)
+        self.manual_combo_2h_shield_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_combo_2h_shield_frame, text="2h/Shield",
+                       variable=self.manual_combo_2h_shield_var, width=14,
+                       command=self._refresh_manual_lookup_results).pack(side='left')
+        ttk.Label(manual_combo_2h_shield_frame, text="Damage Type:").pack(side='left', padx=(8,4))
+        self.manual_combo_2h_shield_damage_var = tk.StringVar(value='Any')
+        ttk.Combobox(manual_combo_2h_shield_frame, textvariable=self.manual_combo_2h_shield_damage_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10).pack(side='left')
+
+        manual_two_handed_frame = ttk.Frame(manual_weapon_block, style='WeaponRowAlt.TFrame', padding=(6,4))
+        manual_two_handed_frame.pack(fill='x', pady=2)
+        self.manual_two_handed_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_two_handed_frame, text="Two-Handed",
+                       variable=self.manual_two_handed_var, width=14,
+                       command=self._refresh_manual_lookup_results).pack(side='left')
+        ttk.Label(manual_two_handed_frame, text="Style:").pack(side='left', padx=(8,4))
+        self.manual_two_handed_style_var = tk.StringVar(value='Melee')
+        ttk.Combobox(manual_two_handed_frame, textvariable=self.manual_two_handed_style_var,
+                    values=['Melee', 'Direct', 'Parry', 'Fired'], state='readonly', width=8).pack(side='left')
+        ttk.Label(manual_two_handed_frame, text="Damage Type:").pack(side='left', padx=(8,4))
+        self.manual_two_handed_damage_var = tk.StringVar(value='Any')
+        self.manual_two_handed_damage_combo = ttk.Combobox(manual_two_handed_frame,
+                    textvariable=self.manual_two_handed_damage_var,
+                    values=WEAPON_DAMAGE_TYPES, state='readonly', width=10)
+        self.manual_two_handed_damage_combo.pack(side='left')
+        self.manual_two_handed_style_var.trace_add('write',
+            lambda *args: self._update_manual_two_handed_damage_state())
+
+        manual_claw_frame = ttk.Frame(manual_weapon_block, style='WeaponRow.TFrame', padding=(6,4))
+        manual_claw_frame.pack(fill='x', pady=2)
+        self.manual_claw_1_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_claw_frame, text="1 Claw", variable=self.manual_claw_1_var,
+                       command=self._refresh_manual_lookup_results).pack(side='left', padx=(0,4))
+        self.manual_claw_2_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_claw_frame, text="2 Claw", variable=self.manual_claw_2_var,
+                       command=self._refresh_manual_lookup_results).pack(side='left', padx=(0,12))
+
+        ttk.Label(manual_claw_frame, text="Sigil (1st):").pack(side='left', padx=(0,4))
+        self.manual_claw_1_sigil_var = tk.StringVar(value='Any')
+        ttk.Combobox(manual_claw_frame, textvariable=self.manual_claw_1_sigil_var, values=['Any'] + SIGIL_TYPES,
+                    state='readonly', width=10).pack(side='left', padx=(0,12))
+
+        ttk.Label(manual_claw_frame, text="Sigil (2nd):").pack(side='left', padx=(0,4))
+        self.manual_claw_2_sigil_var = tk.StringVar(value='Any')
+        ttk.Combobox(manual_claw_frame, textvariable=self.manual_claw_2_sigil_var, values=['Any'] + SIGIL_TYPES,
+                    state='readonly', width=10).pack(side='left')
+
+        manual_combo_fired_1h_shield_frame = ttk.Frame(manual_weapon_block, style='WeaponRowAlt.TFrame', padding=(6,4))
+        manual_combo_fired_1h_shield_frame.pack(fill='x', pady=2)
+        self.manual_combo_fired_1h_shield_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_combo_fired_1h_shield_frame, text="Fired 1h/Shield",
+                       variable=self.manual_combo_fired_1h_shield_var,
+                       command=self._refresh_manual_lookup_results).pack(side='left')
+
+        ttk.Label(manual_weapon_block, text="Fired direct not factored in at this time",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w', pady=(6,0))
+
+        for combo_var in (self.manual_dual_wield_1h_main_var, self.manual_dual_wield_1h_off_var,
+                          self.manual_combo_1h_shield_style_var, self.manual_combo_1h_shield_damage_var,
+                          self.manual_combo_2h_shield_damage_var, self.manual_two_handed_damage_var,
+                          self.manual_claw_1_sigil_var, self.manual_claw_2_sigil_var):
+            combo_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+
+        # Melee/Shield tab - a copy of the real Weapon Constraints tab's
+        # Melee Weapon Constraints and Shield Constraints boxes. No
+        # Priority checkboxes here (a scoring/tie-break concept that has no
+        # meaning on Manual's flat, unranked results list) - each dropdown
+        # is instead a direct hard filter the moment it's set away from
+        # 'Any'. Weight keeps its own explicit Hard Filter checkbox exactly
+        # like the real one (still opt-in, off by default).
+        manual_melee_shield_block = ttk.Frame(manual_gear_notebook, padding=8)
+        manual_gear_notebook.add(manual_melee_shield_block, text="Melee/Shield")
+
+        manual_melee_label = ttk.Frame(manual_melee_shield_block)
+        ttk.Label(manual_melee_label, text="Melee Weapon Constraints").pack(side='left')
+        ttk.Label(manual_melee_label, text="  (Applies to Direct, Parry and Fired weapons as well)",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(side='left')
+        manual_melee_box = ttk.LabelFrame(manual_melee_shield_block, labelwidget=manual_melee_label, padding=8)
+        manual_melee_box.pack(anchor='n', fill='x')
+
+        self.manual_melee_damage_var = tk.StringVar(value='Any')
+        self.manual_melee_timer_var = tk.StringVar(value='Any')
+        self.manual_melee_fumble_var = tk.StringVar(value='Any')
+        self.manual_melee_accuracy_var = tk.StringVar(value='Any')
+        self.manual_melee_sigil_var = tk.StringVar(value='Any')
+
+        for label, var, values in [
+                ('Damage:', self.manual_melee_damage_var, MELEE_DAMAGE_LEVELS),
+                ('Timer:', self.manual_melee_timer_var, MELEE_TIMER_VALUES),
+                ('Fumble:', self.manual_melee_fumble_var, MELEE_FUMBLE_VALUES),
+                ('Accuracy:', self.manual_melee_accuracy_var, MELEE_ACCURACY_VALUES),
+                ('Sigil:', self.manual_melee_sigil_var, MELEE_SIGIL_VALUES)]:
+            melee_row = ttk.Frame(manual_melee_box)
+            melee_row.pack(fill='x', pady=2)
+            ttk.Label(melee_row, text=label, width=10).pack(side='left')
+            ttk.Combobox(melee_row, textvariable=var, values=values, state='readonly', width=14).pack(side='left')
+            var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+
+        manual_weight_row = ttk.Frame(manual_melee_box)
+        manual_weight_row.pack(fill='x', pady=2)
+        ttk.Label(manual_weight_row, text="Weight:", width=10).pack(side='left')
+        self.manual_weapon_weight_min_var = tk.StringVar(value='')
+        ttk.Entry(manual_weight_row, textvariable=self.manual_weapon_weight_min_var, width=6).pack(side='left')
+        ttk.Label(manual_weight_row, text=" to ").pack(side='left')
+        self.manual_weapon_weight_max_var = tk.StringVar(value='')
+        ttk.Entry(manual_weight_row, textvariable=self.manual_weapon_weight_max_var, width=6).pack(side='left')
+        self.manual_weapon_weight_hard_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(manual_weight_row, text="Hard Filter", variable=self.manual_weapon_weight_hard_var,
+                       command=self._refresh_manual_lookup_results).pack(side='left', padx=(8,0))
+        self.manual_weapon_weight_min_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+        self.manual_weapon_weight_max_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+
+        manual_shield_box = ttk.LabelFrame(manual_melee_shield_block, text="Shield Constraints", padding=8)
+        manual_shield_box.pack(anchor='n', fill='x', pady=(10,0))
+
+        self.manual_shield_defense_var = tk.StringVar(value='Any')
+        self.manual_shield_sigil_var = tk.StringVar(value='Any')
+        self.manual_shield_armor_checks = {}
+
+        manual_shield_sigil_row = ttk.Frame(manual_shield_box)
+        manual_shield_sigil_row.pack(fill='x', pady=1)
+        ttk.Label(manual_shield_sigil_row, text="Sigil:", width=10).pack(side='left')
+        ttk.Combobox(manual_shield_sigil_row, textvariable=self.manual_shield_sigil_var,
+                    values=SHIELD_SIGIL_VALUES, state='readonly', width=14).pack(side='left')
+        first_col_width = 9
+        manual_shield_leather_var = tk.BooleanVar(value=False)
+        self.manual_shield_armor_checks['leather'] = manual_shield_leather_var
+        ttk.Checkbutton(manual_shield_sigil_row, text="Leather", variable=manual_shield_leather_var,
+                       width=first_col_width, command=self._refresh_manual_lookup_results).pack(
+            side='left', padx=(12,0))
+
+        manual_shield_defense_row = ttk.Frame(manual_shield_box)
+        manual_shield_defense_row.pack(fill='x', pady=1)
+        ttk.Label(manual_shield_defense_row, text="Defense:", width=10).pack(side='left')
+        ttk.Combobox(manual_shield_defense_row, textvariable=self.manual_shield_defense_var,
+                    values=SHIELD_DEFENSE_LEVELS, state='readonly', width=14).pack(side='left')
+        for armor_type in ('studded', 'plate'):
+            var = tk.BooleanVar(value=False)
+            self.manual_shield_armor_checks[armor_type] = var
+            kwargs = {'width': first_col_width} if armor_type == 'studded' else {}
+            ttk.Checkbutton(manual_shield_defense_row, text=armor_type.title(), variable=var,
+                           command=self._refresh_manual_lookup_results, **kwargs).pack(side='left', padx=(12,0))
+        self.manual_shield_sigil_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+        self.manual_shield_defense_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+
+        manual_chip_frame = ttk.Frame(manual_tab)
+        manual_chip_frame.pack(fill='x', pady=(6,0))
+        ttk.Label(manual_chip_frame, text="Looking Up:").pack(anchor='w')
+        manual_chip_scroll_frame = ttk.Frame(manual_chip_frame)
+        manual_chip_scroll_frame.pack(fill='x')
+
+        self.manual_lookup_spells = []
+        self.manual_chips_text = tk.Text(manual_chip_scroll_frame, height=3, width=70, wrap='word',
+                                         cursor='arrow', state='disabled')
+        manual_chip_scroll = ttk.Scrollbar(manual_chip_scroll_frame, orient='vertical',
+                                          command=self.manual_chips_text.yview)
+        self.manual_chips_text.configure(yscrollcommand=manual_chip_scroll.set)
+        self.manual_chips_text.pack(side='left', fill='both', expand=True)
+        manual_chip_scroll.pack(side='right', fill='y')
+
+        manual_chip_btn_row = ttk.Frame(manual_chip_frame)
+        manual_chip_btn_row.pack(anchor='w', pady=(2,0))
+        ttk.Button(manual_chip_btn_row, text="Clear All",
+                  command=self._clear_manual_lookup_spells).pack(side='left')
+        # Only chip add/remove/clear and a master database (re)load trigger
+        # an automatic refresh - a realm/armor/level constraint changed
+        # elsewhere needs this to pick it up without re-touching any chip.
+        ttk.Button(manual_chip_btn_row, text="🔄 Refresh",
+                  command=self._refresh_manual_lookup_results).pack(side='left', padx=(6,0))
+
+        self.manual_results_status = ttk.Label(manual_tab, foreground='#666',
+                                               text="Add a spell/tier above to see matching items")
+        self.manual_results_status.pack(anchor='w', pady=(8,4))
+
+        manual_tree_frame = ttk.Frame(manual_tab)
+        manual_tree_frame.pack(fill='both', expand=True)
+        manual_cols = ('Realm', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
+        # Weight/Fumble/Damage/Timer/Accuracy only get appended while
+        # Weapons is checked (see _set_manual_results_columns) - they're
+        # meaningless for armor/jewel rows and would just sit blank.
+        self._manual_base_cols = manual_cols
+        self._manual_weapon_extra_cols = ('Weight', 'Fumble', 'Damage', 'Timer', 'Accuracy')
+        self._manual_col_widths = {'Realm': 70, 'Mob': 140, 'Item': 220, 'Slot': 55, 'Type': 110,
+                             'Spell': 110, 'Sigil': 60, 'Level': 45, 'Area': 120,
+                             'Weight': 55, 'Fumble': 70, 'Damage': 70, 'Timer': 55, 'Accuracy': 70}
+        self.manual_results_tv = ttk.Treeview(manual_tree_frame, columns=manual_cols,
+                                              show='headings', height=14)
+        for col in manual_cols:
+            self.manual_results_tv.heading(col, text=col, anchor='center',
+                                           command=lambda c=col: _sort_treeview_column(self.manual_results_tv, c, False))
+            self.manual_results_tv.column(col, width=self._manual_col_widths[col], stretch=False)
+
+        manual_vsb = ttk.Scrollbar(manual_tree_frame, orient='vertical',
+                                   command=self.manual_results_tv.yview)
+        manual_hsb = ttk.Scrollbar(manual_tree_frame, orient='horizontal',
+                                   command=self.manual_results_tv.xview)
+        self.manual_results_tv.configure(yscrollcommand=manual_vsb.set, xscrollcommand=manual_hsb.set)
+
+        self.manual_results_tv.grid(row=0, column=0, sticky='nsew')
+        manual_vsb.grid(row=0, column=1, sticky='ns')
+        manual_hsb.grid(row=1, column=0, sticky='ew')
+        manual_tree_frame.rowconfigure(0, weight=1)
+        manual_tree_frame.columnconfigure(0, weight=1)
+
+        # Right-click a matching item to add it to the Results tab - see
+        # _on_manual_results_right_click/_add_manual_item_to_results. Unlike
+        # a real build, more than one of the same slot is allowed (e.g. 3
+        # different body pieces) - this is a flat, user-curated list, not a
+        # slot-keyed build.
+        self.manual_results_tv.bind('<Button-3>', self._on_manual_results_right_click)
+        self.manual_added_items = []
 
         # Shared controls - Min/Max/Specific Level and the search buttons -
         # packed under the sub-notebook rather than inside any one sub-tab,
@@ -5630,11 +6167,11 @@ class App(tk.Tk):
         default left a large blank gap under any shorter tab (Basic/Armor/
         Weapon Constraints) once Bank Build's Saved Items grew tall.
 
-        Also hides Find Optimal Build/Show All Matches while Bank Build is
-        selected - they'd run against only Basic/Armor/Weapon Constraints
-        with no bank context, redundant now that every character tab has
-        its own Find Best Bank Build. "Generate multiple build options"
-        stays visible either way since it's not Bank-Build-specific."""
+        Also hides Find Optimal Build/Show All Matches while Bank Build or
+        Manual is selected - Bank Build has its own Find Best Bank Build per
+        character tab, and Manual is a live spell/tier lookup with no
+        "build" concept of its own. "Generate multiple build options" stays
+        visible either way since it's not specific to either of those."""
         try:
             selected = self.build_sub_notebook.nametowidget(self.build_sub_notebook.select())
         except (tk.TclError, KeyError):
@@ -5642,7 +6179,7 @@ class App(tk.Tk):
         selected.update_idletasks()
         self.build_sub_notebook.configure(height=selected.winfo_reqheight())
 
-        if selected is self.build_bank_subtab:
+        if selected in (self.build_bank_subtab, self.build_manual_subtab):
             self.shared_search_buttons_frame.pack_forget()
         else:
             self.shared_search_buttons_frame.pack(side='left', before=self.generate_multi_builds_checkbox)
@@ -5946,7 +6483,8 @@ class App(tk.Tk):
                      'Spell': 110, 'Sigil': 60, 'Level': 45}
         self.area_items_tv = ttk.Treeview(tree_frame, columns=cols, show='headings', height=20)
         for col in cols:
-            self.area_items_tv.heading(col, text=col, anchor='center')
+            self.area_items_tv.heading(col, text=col, anchor='center',
+                                       command=lambda c=col: _sort_treeview_column(self.area_items_tv, c, False))
             self.area_items_tv.column(col, width=col_widths[col], stretch=False)
 
         vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=self.area_items_tv.yview)
@@ -5958,6 +6496,58 @@ class App(tk.Tk):
         hsb.grid(row=1, column=0, sticky='ew')
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
+
+    def _refresh_event_area_checkboxes(self):
+        """Rebuilds the Only Found In panel's "Events" tab, and separately
+        Manual's own "Events" tab (self.manual_events_tab_frame/
+        manual_event_area_vars - its own independent vars, not shared with
+        Basic Constraints - see Manual tab's construction), from whatever
+        Event-realm items are currently in self.master_data - one checkbox
+        per distinct Area value seen on an item whose Realm contains "event"
+        (e.g. "Thanksgiving 2024 & 2025", "Christmas 2023"), so this never
+        needs a hand-maintained list and picks up new event drops the
+        moment a database containing them loads. Called wherever
+        _refresh_area_items_dropdown already is (every master database
+        load, including the silent startup one).
+
+        Previously-checked areas stay checked (independently per copy)
+        across a reload as long as that exact Area string still exists in
+        the new database - anything that no longer appears is simply
+        dropped (nothing left to filter by), rather than erroring or
+        leaving a stale, unreachable checkbox around."""
+        areas = sorted({
+            (item.get('Area') or '').strip() for item in self.master_data
+            if 'event' in (item.get('Realm') or '').strip().lower()
+        } - {''})
+
+        previously_checked = {name for name, var in self.event_area_vars.items() if var.get()}
+        manual_previously_checked = {name for name, var in self.manual_event_area_vars.items() if var.get()}
+
+        for child in self.events_tab_frame.winfo_children():
+            child.destroy()
+        for child in self.manual_events_tab_frame.winfo_children():
+            child.destroy()
+        self.event_area_vars = {}
+        self.manual_event_area_vars = {}
+
+        if not areas:
+            for frame in (self.events_tab_frame, self.manual_events_tab_frame):
+                ttk.Label(frame, text="(no Event-realm items in the loaded database)",
+                         font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w')
+            return
+
+        cols = 2
+        for i, area in enumerate(areas):
+            var = tk.BooleanVar(value=area in previously_checked)
+            self.event_area_vars[area] = var
+            cb = ttk.Checkbutton(self.events_tab_frame, text=area, variable=var)
+            cb.grid(row=i // cols, column=i % cols, sticky='w', padx=4, pady=2)
+
+            manual_var = tk.BooleanVar(value=area in manual_previously_checked)
+            self.manual_event_area_vars[area] = manual_var
+            manual_cb = ttk.Checkbutton(self.manual_events_tab_frame, text=area, variable=manual_var,
+                                        command=self._refresh_manual_lookup_results)
+            manual_cb.grid(row=i // cols, column=i % cols, sticky='w', padx=4, pady=2)
 
     def _refresh_area_items_dropdown(self):
         """Repopulate the Area Items autocomplete list from whatever's
@@ -6219,6 +6809,456 @@ class App(tk.Tk):
             text.insert(tk.END, ' ')
         text.config(state='disabled')
         self._refresh_priority_spell_options()
+
+    def _update_manual_tier_options(self, category):
+        """Same as _update_tier_options, but for the Manual tab's own
+        independent category dropdowns."""
+        spell = self.manual_category_spell_vars[category].get().strip().lower()
+        allowed = SPELL_TIER_RESTRICTIONS.get(spell, SPELL_TIERS)
+        combo = self.manual_category_tier_combos[category]
+        combo['values'] = allowed
+        if self.manual_category_tier_vars[category].get() not in allowed:
+            self.manual_category_tier_vars[category].set(allowed[0])
+
+    def _add_manual_lookup_spell(self, category):
+        """Add the spell selected in a Manual tab category dropdown (plus
+        tier) to its own independent lookup list - never touches
+        self.wanted_spells_data, see the Manual tab's own comment."""
+        spell = self.manual_category_spell_vars[category].get().strip()
+        if not spell:
+            return
+
+        combined = SPELL_VALUE_OVERRIDES.get(spell.lower(), spell.lower())
+        tier = self.manual_category_tier_vars[category].get()
+        tier = PROTECT_TIER_TO_SUFFIX.get(tier, tier)
+        if tier and tier != '(any)':
+            combined = f"{combined}.{tier}"
+
+        if combined not in [s.lower() for s in self.manual_lookup_spells]:
+            self.manual_lookup_spells.append(combined)
+            self._render_manual_chips()
+            self._refresh_manual_lookup_results()
+
+    def _remove_manual_lookup_spell(self, spell_value):
+        """Remove one Manual tab lookup chip (called by a chip's own ✕ button)"""
+        if spell_value in self.manual_lookup_spells:
+            self.manual_lookup_spells.remove(spell_value)
+            self._render_manual_chips()
+            self._refresh_manual_lookup_results()
+
+    def _clear_manual_lookup_spells(self):
+        """Clear every Manual tab lookup chip"""
+        self.manual_lookup_spells = []
+        self._render_manual_chips()
+        self._refresh_manual_lookup_results()
+
+    def _render_manual_chips(self):
+        """Redraw the Manual tab's "Looking Up" chips - same flow-and-wrap
+        style as _render_spell_chips."""
+        text = self.manual_chips_text
+        text.config(state='normal')
+        text.delete('1.0', tk.END)
+        for spell in self.manual_lookup_spells:
+            chip = ttk.Frame(text, relief='raised', borderwidth=1)
+            ttk.Label(chip, text=spell, padding=(4, 1)).pack(side='left')
+            remove_lbl = ttk.Label(chip, text='✕', padding=(4, 1),
+                                   foreground='#a33', cursor='hand2')
+            remove_lbl.pack(side='left')
+            remove_lbl.bind('<Button-1>', lambda e, s=spell: self._remove_manual_lookup_spell(s))
+            text.window_create(tk.END, window=chip)
+            text.insert(tk.END, ' ')
+        text.config(state='disabled')
+
+    def _set_manual_results_columns(self, show_weapon_cols):
+        """Appends Weight/Fumble/Damage/Timer/Accuracy to the Manual tab's
+        results columns while Weapons is checked (these are meaningless
+        for armor/jewel rows otherwise) - a no-op if already in the
+        requested state, so this can be called on every refresh without
+        needlessly rebuilding headings/widths each time."""
+        cols = self._manual_base_cols + (self._manual_weapon_extra_cols if show_weapon_cols else ())
+        if tuple(self.manual_results_tv['columns']) == cols:
+            return
+        self.manual_results_tv['columns'] = cols
+        for col in cols:
+            self.manual_results_tv.heading(col, text=col, anchor='center',
+                                           command=lambda c=col: _sort_treeview_column(self.manual_results_tv, c, False))
+            self.manual_results_tv.column(col, width=self._manual_col_widths[col], stretch=False)
+
+    def _refresh_manual_lookup_results(self):
+        """Repopulates the Manual tab's results list - every item in the
+        currently loaded master database whose Spell exactly matches one of
+        self.manual_lookup_spells (base + exact tier only, no "this tier or
+        higher" fallback - a precise lookup, not a build search). Every
+        filter here is Manual's own independent copy (manual_*-prefixed
+        vars, built in the Manual tab itself) - never shared with the real
+        Basic/Armor/Weapon Constraints tabs, only ever affecting this tab's
+        own results."""
+        self.manual_results_tv.delete(*self.manual_results_tv.get_children())
+        self._manual_lookup_matches = []
+
+        # While Weapons is checked, weapon/shield items don't need a
+        # matching Wanted Spell chip at all to show up (see the checkbox's
+        # own comment) - so an empty chip list only blocks the whole list
+        # from appearing when Weapons isn't checked.
+        weapons_checked = self.manual_weapons_only_var.get()
+        self._set_manual_results_columns(weapons_checked)
+
+        if not self.manual_lookup_spells and not weapons_checked:
+            self.manual_results_status.config(text="Add a spell/tier above to see matching items")
+            return
+        if not self.master_data:
+            self.manual_results_status.config(text="Load a master database first")
+            return
+
+        queries = [(_spell_base(s), _spell_tier_rank(s)) for s in self.manual_lookup_spells]
+
+        # Level range - Manual's own independent min/max (blank side is
+        # unbounded), silently ignored if invalid rather than popping a
+        # warning dialog, since this tab has no explicit "search" click to
+        # hang that off.
+        min_level = max_level = None
+        min_level_str = self.manual_min_level_var.get().strip()
+        if min_level_str:
+            try:
+                min_level = int(min_level_str)
+            except ValueError:
+                pass
+        max_level_str = self.manual_max_level_var.get().strip()
+        if max_level_str:
+            try:
+                max_level = int(max_level_str)
+            except ValueError:
+                pass
+
+        # Armor Type - Manual's own independent, uniform material filter
+        # (self.manual_armor_type_vars), applying the same checked
+        # materials across every armor slot at once, unlike the real Armor
+        # Constraints tab's per-slot breakdown. No checkboxes checked means
+        # no restriction (same opt-in pattern as everything else in Manual).
+        checked_materials = [m for m, var in self.manual_armor_type_vars.items() if var.get()]
+
+        selected_realms = ([] if self.manual_realm_filter_all_var.get()
+                           else [realm for realm, var in self.manual_realm_filters.items() if var.get()])
+
+        # Armor/Weapons/Jewel slot-category restriction - restricts to the
+        # union of whichever categories are checked; checking none or all
+        # 3 means no restriction (see the checkboxes' own comment).
+        checked_categories = []
+        if self.manual_armor_only_var.get():
+            checked_categories.append('armor')
+        if weapons_checked:
+            checked_categories.append('weapons')
+        if self.manual_jewel_only_var.get():
+            checked_categories.append('jewel')
+        category_restriction_active = 0 < len(checked_categories) < 3
+        allowed_category_slots = set()
+        if 'armor' in checked_categories:
+            allowed_category_slots.update(ARMOR_SIGIL_SLOTS)
+        if 'weapons' in checked_categories:
+            allowed_category_slots.update(('weapon', 'shield'))
+        if 'jewel' in checked_categories:
+            allowed_category_slots.add('jewel')
+
+        # Weapon Types/Combo's - Manual's own independent copy (manual_*
+        # vars). Reuses the exact same pure matching helpers
+        # (_two_handed_matches/_weapon_style_matches/_weapon_damage_matches)
+        # the real search does, just against Manual's own checked combos -
+        # no combo checked at all means no restriction (every weapon/shield/
+        # claw item passes); any checked means only items matching one of
+        # them do.
+        manual_wants_two_handed = self.manual_two_handed_var.get()
+        manual_two_handed_style = self.manual_two_handed_style_var.get()
+        manual_two_handed_damage = self.manual_two_handed_damage_var.get()
+        manual_wants_claw_1 = self.manual_claw_1_var.get()
+        manual_wants_claw_2 = self.manual_claw_2_var.get()
+        manual_wants_dual_wield_1h = self.manual_dual_wield_1h_var.get()
+        manual_dual_wield_1h_main = self.manual_dual_wield_1h_main_var.get()
+        manual_dual_wield_1h_off = self.manual_dual_wield_1h_off_var.get()
+        manual_wants_1h_shield = self.manual_combo_1h_shield_var.get()
+        manual_combo_1h_shield_style = self.manual_combo_1h_shield_style_var.get()
+        manual_combo_1h_shield_damage = self.manual_combo_1h_shield_damage_var.get()
+        manual_wants_2h_shield = self.manual_combo_2h_shield_var.get()
+        manual_combo_2h_shield_damage = self.manual_combo_2h_shield_damage_var.get()
+        manual_wants_fired_1h_shield = self.manual_combo_fired_1h_shield_var.get()
+        manual_any_weapon_combo = (manual_wants_two_handed or manual_wants_dual_wield_1h
+                                   or manual_wants_1h_shield or manual_wants_2h_shield
+                                   or manual_wants_fired_1h_shield)
+        manual_any_claw_combo = manual_wants_claw_1 or manual_wants_claw_2
+        manual_claw_sigils = {s.strip().lower() for s in
+                              (self.manual_claw_1_sigil_var.get(), self.manual_claw_2_sigil_var.get())
+                              if s != 'Any'}
+
+        # Melee Weapon Constraints - hard filters here (see the tab's own
+        # comment for why), applied to every weapon-style item (Melee/
+        # Direct/Parry/Fired/claws all share these columns).
+        manual_melee_fields = [
+            (self.manual_melee_damage_var.get(), 'Damage'),
+            (self.manual_melee_timer_var.get(), 'Timer'),
+            (self.manual_melee_fumble_var.get(), 'Fumble'),
+            (self.manual_melee_accuracy_var.get(), 'Accuracy'),
+            (self.manual_melee_sigil_var.get(), 'Sigil'),
+        ]
+        manual_weight_min = manual_weight_max = None
+        try:
+            manual_weight_min = int(self.manual_weapon_weight_min_var.get().strip())
+        except ValueError:
+            pass
+        try:
+            manual_weight_max = int(self.manual_weapon_weight_max_var.get().strip())
+        except ValueError:
+            pass
+        manual_weight_hard = self.manual_weapon_weight_hard_var.get()
+
+        # Shield Constraints - hard filters, same reasoning as above.
+        manual_shield_sigil = self.manual_shield_sigil_var.get()
+        manual_shield_defense = self.manual_shield_defense_var.get()
+        manual_shield_materials = [m for m, var in self.manual_shield_armor_checks.items() if var.get()]
+
+        matches = []
+        for item in self.master_data:
+            item_spell = (item.get('Spell') or '').lower()
+            item_slot = (item.get('Slot') or '').lower()
+            item_type = (item.get('Type') or '').lower()
+            is_claw_item = item_slot == 'weapon' and 'claw' in item_type
+            is_weapon_or_shield = item_slot in ('weapon', 'shield')
+
+            if queries:
+                if not item_spell:
+                    continue
+                item_base = _spell_base(item_spell)
+                item_tier_rank = _item_tier_rank(item_spell)
+                if not any(item_base == qbase and (qtier == 0 or item_tier_rank == qtier)
+                           for qbase, qtier in queries):
+                    continue
+            elif not (weapons_checked and is_weapon_or_shield):
+                # No Wanted Spell chips at all - only weapon/shield items
+                # get through, and only while Weapons is checked (see the
+                # checkbox's own comment); everything else still needs a
+                # chip to match against.
+                continue
+
+            item_realm = (item.get('Realm') or '').strip()
+
+            if category_restriction_active and item_slot not in allowed_category_slots:
+                continue
+
+            # Weapon Types/Combo's - only restricts weapon/shield/claw
+            # items; everything else (armor, jewel) is untouched regardless.
+            # Any checkbox in this panel (weapon-shape combo OR a claw
+            # checkbox) narrows the WHOLE weapon/shield/claw pool at once -
+            # checking only "1 Claw", for instance, excludes plain weapons
+            # and shields too, same as checking only "Two-Handed" excludes
+            # claws and 1h weapons.
+            manual_any_gear_combo = manual_any_weapon_combo or manual_any_claw_combo
+            if is_claw_item:
+                if manual_any_gear_combo and not manual_any_claw_combo:
+                    continue
+            elif item_slot == 'weapon' and manual_any_gear_combo:
+                slot_accepted = False
+                is_offhand = 'offhand' in item_type
+                is_1h = '1h' in item_type
+                is_2h = '2h' in item_type
+                is_fired = 'fired' in item_type
+                if manual_wants_two_handed and _two_handed_matches(
+                        item_type, item_spell, manual_two_handed_style, manual_two_handed_damage):
+                    slot_accepted = True
+                if (manual_wants_dual_wield_1h and is_1h and not is_offhand
+                        and _weapon_damage_matches(item_type, manual_dual_wield_1h_main)):
+                    slot_accepted = True
+                if (manual_wants_dual_wield_1h and is_1h and is_offhand
+                        and _weapon_damage_matches(item_type, manual_dual_wield_1h_off)):
+                    slot_accepted = True
+                if (manual_wants_1h_shield and is_1h and not is_offhand
+                        and _weapon_style_matches(item_type, manual_combo_1h_shield_style)
+                        and (manual_combo_1h_shield_style != 'Direct' or _direct_weapon_eligible(item_spell))
+                        and _weapon_damage_matches(item_type, manual_combo_1h_shield_damage)):
+                    slot_accepted = True
+                if manual_wants_2h_shield and is_2h and _weapon_damage_matches(item_type, manual_combo_2h_shield_damage):
+                    slot_accepted = True
+                if manual_wants_fired_1h_shield and is_fired and is_1h and not is_offhand:
+                    slot_accepted = True
+                if not slot_accepted:
+                    continue
+            elif item_slot == 'shield' and manual_any_gear_combo:
+                if not (manual_wants_1h_shield or manual_wants_2h_shield or manual_wants_fired_1h_shield):
+                    continue
+
+            # Melee Weapon Constraints - hard filters on weapon-style items
+            # (claws included, same columns).
+            if item_slot == 'weapon':
+                melee_fields_ok = True
+                for value, column in manual_melee_fields:
+                    if value == 'Any':
+                        continue
+                    item_value = str(item.get(column) or '').strip()
+                    if column == 'Sigil' and value == 'None':
+                        if item_value:
+                            melee_fields_ok = False
+                            break
+                    elif item_value.lower() != value.lower():
+                        melee_fields_ok = False
+                        break
+                if not melee_fields_ok:
+                    continue
+
+                # Claw Sigil (1st)/(2nd) - only meaningfully applies to
+                # claw items; a non-claw weapon is never gated by it.
+                if is_claw_item and manual_claw_sigils and not any(
+                        (item.get('Sigil') or '').strip().lower() == s for s in manual_claw_sigils):
+                    continue
+
+                if manual_weight_hard and (manual_weight_min is not None or manual_weight_max is not None):
+                    try:
+                        item_weight = int(item.get('Weight') or '')
+                    except (ValueError, TypeError):
+                        continue
+                    if manual_weight_min is not None and item_weight < manual_weight_min:
+                        continue
+                    if manual_weight_max is not None and item_weight > manual_weight_max:
+                        continue
+
+            # Shield Constraints - hard filters.
+            if item_slot == 'shield':
+                if manual_shield_sigil != 'Any' and (item.get('Sigil') or '').strip().lower() != manual_shield_sigil.lower():
+                    continue
+                if manual_shield_defense != 'Any':
+                    item_defense_rank = DEFENSE_RANK.get((item.get('Defense') or '').strip().lower())
+                    if item_defense_rank != DEFENSE_RANK.get(manual_shield_defense.lower()):
+                        continue
+                if manual_shield_materials and not any(m in item_type for m in manual_shield_materials):
+                    continue
+
+            if 'crafted' in item_realm.lower() and not self.manual_realm_filters['Crafted'].get():
+                continue
+            if self.manual_exclude_kaid_var.get() and 'kaid' in item_realm.lower():
+                continue
+            if self.manual_exclude_event_var.get() and (
+                    'event' in item_realm.lower() or 'glory bea' in item_realm.lower()):
+                continue
+
+            if selected_realms:
+                realm_match = any(selected.lower() in item_realm.lower() for selected in selected_realms)
+                if not realm_match and 'event' in item_realm.lower():
+                    item_area = (item.get('Area') or '').strip()
+                    if any(item_area == area and var.get()
+                           for area, var in self.manual_event_area_vars.items()):
+                        realm_match = True
+                if not realm_match:
+                    continue
+
+            if min_level is not None or max_level is not None:
+                item_level_str = item.get('Level', '')
+                if not item_level_str:
+                    continue
+                try:
+                    item_level = int(item_level_str)
+                except ValueError:
+                    continue
+                if min_level is not None and item_level < min_level:
+                    continue
+                if max_level is not None and item_level > max_level:
+                    continue
+
+            if item_slot in ARMOR_SIGIL_SLOTS and checked_materials:
+                if not any(m in item_type for m in checked_materials):
+                    continue
+
+            # Per-slot Defense/Sigil - hard filters here (unlike the real
+            # Armor Constraints tab, where both are only ever a soft
+            # priority bonus) since Manual has no build/scoring concept to
+            # softly prioritize within - opt-in per slot, blank/unchecked
+            # means no restriction for that slot.
+            if item_slot in self.manual_slot_defense_controls:
+                controls = self.manual_slot_defense_controls[item_slot]
+                if controls['use'].get():
+                    item_defense_rank = DEFENSE_RANK.get((item.get('Defense') or '').strip().lower())
+                    min_rank = DEFENSE_RANK[controls['min'].get()]
+                    max_rank = DEFENSE_RANK[controls['max'].get()]
+                    if item_defense_rank is None or not (min_rank <= item_defense_rank <= max_rank):
+                        continue
+
+            if item_slot in self.manual_slot_sigil_vars:
+                wanted_sigil = self.manual_slot_sigil_vars[item_slot].get()
+                if wanted_sigil != 'Any':
+                    if (item.get('Sigil') or '').strip().lower() != wanted_sigil.strip().lower():
+                        continue
+
+            matches.append(item)
+
+        matches.sort(key=lambda i: (
+            (i.get('Realm') or '').strip().lower(), (i.get('Item') or '').strip().lower()))
+
+        # Kept in the same order as the rows below, so a right-click can
+        # resolve a clicked row back to its underlying item dict purely by
+        # position - so a right-click can resolve a clicked row back to its
+        # underlying item dict via int(iid), immune to whatever order a
+        # column-header sort has since put the rows in (see
+        # _on_manual_results_right_click and _sort_treeview_column).
+        self._manual_lookup_matches = matches
+
+        for i, item in enumerate(matches):
+            row = [item.get('Realm', ''), item.get('Mob', ''), item.get('Item', ''),
+                   item.get('Slot', ''), item.get('Type', ''), item.get('Spell', ''),
+                   item.get('Sigil', ''), item.get('Level', ''), item.get('Area', '')]
+            if weapons_checked:
+                row += [item.get('Weight', ''), item.get('Fumble', ''), item.get('Damage', ''),
+                       item.get('Timer', ''), item.get('Accuracy', '')]
+            self.manual_results_tv.insert('', 'end', iid=str(i), values=row)
+
+        self.manual_results_status.config(
+            text=f"{len(matches)} matching item{'s' if len(matches) != 1 else ''} found")
+
+    def _on_manual_results_right_click(self, event):
+        """Right-click a row in the Manual tab's matching-items list -
+        offers "Add to Results Tab" (see _add_manual_item_to_results).
+        Resolves the clicked row back to its item dict via the row's own
+        iid (assigned as its original position in self._manual_lookup_matches
+        at insert time - see _refresh_manual_lookup_results), NOT via
+        current display position, so this still resolves correctly no
+        matter what order a column-header sort has since put the rows in."""
+        iid = self.manual_results_tv.identify_row(event.y)
+        if not iid:
+            return
+        try:
+            row_index = int(iid)
+        except ValueError:
+            return
+        matches = getattr(self, '_manual_lookup_matches', [])
+        if row_index >= len(matches):
+            return
+        item = matches[row_index]
+
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label=f"Add '{item.get('Item', '')}' to Results Tab",
+                         command=lambda: self._add_manual_item_to_results(item))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _add_manual_item_to_results(self, item):
+        """Appends one item to self.manual_added_items - a flat, user-
+        curated list (not a slot-keyed build), so the same slot can appear
+        more than once (e.g. 3 different body pieces). Switches the
+        Results tab into its own 'manual' display mode (see
+        _render_manual_added_results/_on_results_right_click's branch for
+        it) without switching to it - stays on the Manual tab so more
+        items can keep being added without navigating back and forth."""
+        self.manual_added_items.append(item)
+        self.results_display_mode.set('manual')
+        self._render_manual_added_results()
+
+    def _render_manual_added_results(self):
+        """Redraw the Results tab from self.manual_added_items. Bank/
+        Locker/Div/Alt Options stay blank - none of those concepts apply to
+        a manually assembled list rather than a real computed build."""
+        self.search_results_tv.delete(*self.search_results_tv.get_children())
+        for item in self.manual_added_items:
+            self.search_results_tv.insert('', 'end', values=(
+                '', '', item.get('Slot', ''), item.get('Item', ''), item.get('Type', ''),
+                item.get('Spell', ''), item.get('Sigil', ''), item.get('Level', ''),
+                item.get('Mob', ''), item.get('Area', ''), '', ''))
+        self._autosize_results_columns()
 
     def _add_wanted_sigil(self):
         """Add the sigil selected in Armor Constraints' dropdown to the wanted sigils list"""
@@ -6724,7 +7764,9 @@ class App(tk.Tk):
                 status_text += f" ({len(self.blocked_area_items)} Class-area items excluded)"
             self.search_status.config(text=status_text)
             self._refresh_area_items_dropdown()
+            self._refresh_event_area_checkboxes()
             self._refresh_blocked_area_dropdown()
+            self._refresh_manual_lookup_results()
             if hasattr(self, 'bank_saved_tv'):
                 self._refresh_bank_saved_tab()
                 for _char in self.bank_character_widgets:
@@ -6815,6 +7857,17 @@ class App(tk.Tk):
             self.two_handed_damage_combo.config(values=WEAPON_DAMAGE_TYPES, state='readonly')
             if self.two_handed_damage_var.get() == 'Fired':
                 self.two_handed_damage_var.set('Any')
+
+    def _update_manual_two_handed_damage_state(self):
+        """Same as _update_two_handed_damage_state, but for Manual's own
+        independent Two-Handed Style/Damage Type dropdowns."""
+        if self.manual_two_handed_style_var.get() == 'Fired':
+            self.manual_two_handed_damage_combo.config(values=['Fired'], state='disabled')
+            self.manual_two_handed_damage_var.set('Fired')
+        else:
+            self.manual_two_handed_damage_combo.config(values=WEAPON_DAMAGE_TYPES, state='readonly')
+            if self.manual_two_handed_damage_var.get() == 'Fired':
+                self.manual_two_handed_damage_var.set('Any')
 
     def _update_melee_priority_cap(self):
         """At most 3 of the 5 Melee Weapon Constraints can be marked Priority
@@ -7087,6 +8140,36 @@ class App(tk.Tk):
             cb.config(state='disabled' if any_individual_checked else 'normal')
         for cb in self.realm_filter_checkbuttons:
             cb.config(state='disabled' if all_checked else 'normal')
+
+    def _on_manual_realm_checkbox_changed(self):
+        """Command for the Manual tab's own Only Found In/All checkboxes -
+        same disable-only exclusivity pattern as _update_realm_all_exclusivity,
+        but scoped entirely to Manual's own independent vars/widgets, plus a
+        live refresh of Manual's own results list."""
+        all_checked = self.manual_realm_filter_all_var.get()
+        any_individual_checked = any(var.get() for var in self.manual_realm_filters.values())
+
+        for cb in self.manual_realm_filter_all_checkbuttons:
+            cb.config(state='disabled' if any_individual_checked else 'normal')
+        for cb in self.manual_realm_filter_checkbuttons:
+            cb.config(state='disabled' if all_checked else 'normal')
+
+        self._refresh_manual_lookup_results()
+
+    def _on_manual_kaid_checkbox_changed(self):
+        """Command for the Manual tab's own Kaid All/color checkboxes -
+        same disable-only exclusivity pattern as _update_kaid_exclusivity,
+        but scoped entirely to Manual's own independent vars/widgets, plus a
+        live refresh of Manual's own results list."""
+        kaid_all_checked = self.manual_realm_filters['Kaid'].get()
+        any_color_checked = any(self.manual_realm_filters[c].get()
+                                for c in ('Kaid White', 'Kaid Green', 'Kaid Red', 'Kaid Purple'))
+
+        self.manual_kaid_all_checkbutton.config(state='disabled' if any_color_checked else 'normal')
+        for cb in self.manual_kaid_color_checkbuttons:
+            cb.config(state='disabled' if kaid_all_checked else 'normal')
+
+        self._on_manual_realm_checkbox_changed()
 
     def _update_level_fields(self):
         """Enable/disable level fields based on which one is being used"""
@@ -8029,7 +9112,7 @@ class App(tk.Tk):
         for col in saved_cols:
             heading_anchor = 'w' if col == 'Item' else 'center'
             tv.heading(col, text=saved_col_headings.get(col, col), anchor=heading_anchor,
-                      command=lambda c=col, t=tv: self._sort_saved_treeview(t, c, False))
+                      command=lambda c=col, t=tv: _sort_treeview_column(t, c, False))
             tv.column(col, width=saved_col_widths[col], stretch=False, anchor=('w' if col == 'Item' else 'center'))
         tv.bind('<Button-1>', self._on_saved_tv_click)
         vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tv.yview)
@@ -8262,7 +9345,15 @@ class App(tk.Tk):
         search of the whole database that still favors owned items
         wherever it can without sacrificing coverage, for when Saved Items
         alone leaves too many gaps and Saved Items First's fixed two-pass
-        split isn't finding the fewest possible "need to acquire" slots)."""
+        split isn't finding the fewest possible "need to acquire" slots).
+
+        A third mode, 'manual' (set by _add_manual_item_to_results), shows
+        a flat, user-curated list from the Manual tab instead of a real
+        build - handled entirely separately, see
+        _on_manual_mode_results_right_click."""
+        if self.results_display_mode.get() == 'manual':
+            self._on_manual_mode_results_right_click(event)
+            return
         if self.results_display_mode.get() != 'optimal' or not self.build_variants:
             return
         iid = self.search_results_tv.identify_row(event.y)
@@ -8408,6 +9499,39 @@ class App(tk.Tk):
             self.search_results_tv.insert('', 'end', values=row)
         self._autosize_results_columns()
         self._update_rebuild_buttons_visibility()
+
+    def _on_manual_mode_results_right_click(self, event):
+        """Right-click handler for the Results tab while it's showing a
+        Manual-tab-curated list (self.manual_added_items) instead of a real
+        build - no slot concept here (the same slot can appear more than
+        once, e.g. 3 different body pieces), and nothing to exclude from a
+        future search either, so this just drops the exact row that was
+        clicked, unlike a real build's "Remove" (_remove_item_from_build)."""
+        iid = self.search_results_tv.identify_row(event.y)
+        if not iid:
+            return
+        try:
+            row_index = self.search_results_tv.index(iid)
+        except tk.TclError:
+            return
+        if row_index >= len(self.manual_added_items):
+            return
+        item = self.manual_added_items[row_index]
+
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label=f"Remove '{item.get('Item', '')}' from list",
+                         command=lambda: self._remove_manual_added_item(row_index))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _remove_manual_added_item(self, index):
+        """Drops one row (by position) from self.manual_added_items and
+        redraws - see _on_manual_mode_results_right_click."""
+        if 0 <= index < len(self.manual_added_items):
+            del self.manual_added_items[index]
+            self._render_manual_added_results()
 
     def _rebuild_full_database(self):
         """Results tab "Rebuild (Full Database)" button - re-runs a normal,
@@ -8618,6 +9742,13 @@ class App(tk.Tk):
         self._autosize_results_columns()
         self._update_rebuild_buttons_visibility()
 
+        unmet_sigils = self._unmet_wanted_sigils(variants[0])
+        if unmet_sigils:
+            self.search_status.config(
+                text=f"Wanted Sigil requirement(s) unmet: {', '.join(unmet_sigils)}.")
+        else:
+            self.search_status.config(text="")
+
     def _bank_sigil_requirements_unmet(self, build):
         """Whether an active Wanted Sigils circle requirement (see
         _toggle_wanted_sigil_required/_toggle_wanted_sigil_protect_
@@ -8651,6 +9782,37 @@ class App(tk.Tk):
                        for i in build.values()):
                 return True
         return False
+
+    def _unmet_wanted_sigils(self, build):
+        """Same match criteria as _bank_sigil_requirements_unmet, but
+        returns a human-readable description of every active Wanted
+        Sigils circle requirement that isn't satisfied anywhere in
+        `build`, instead of just True/False - for warning the user which
+        specific sigil(s) went unmet, rather than silently skipping them
+        with no indication why (the sigil-carrying candidate might
+        conflict with a Required Item occupying its only eligible slot,
+        or nothing meeting both the sigil and the armor/level/realm
+        constraints might exist at all)."""
+        unmet = []
+        wanted_bases = {_spell_base(w) for w in self.wanted_spells_data}
+        wanted_bases.update(self.priority_spells_data)
+
+        for sigil in self.wanted_sigils_required:
+            sigil_lower = sigil.strip().lower()
+            if not any((i.get('Sigil') or '').strip().lower() == sigil_lower
+                       and any(b in (i.get('Spell') or '').lower() for b in wanted_bases)
+                       for i in build.values()):
+                unmet.append(f"{sigil.strip().capitalize()} (sigil + Wanted Spell)")
+        for sigil in self.wanted_sigils_protect_required:
+            sigil_lower = sigil.strip().lower()
+            own_protect = f"{sigil_lower}.protect"
+            if not any((i.get('Sigil') or '').strip().lower() == sigil_lower
+                       and (('elemental.protect' in (i.get('Spell') or '').lower())
+                            or (own_protect in PROTECT_SPELLS
+                                and own_protect in (i.get('Spell') or '').lower()))
+                       for i in build.values()):
+                unmet.append(f"{sigil.strip().capitalize()} (sigil + Protect spell)")
+        return unmet
 
     def _rebuild_saved_items_first(self):
         """Results tab "Rebuild (Saved Items First)" button - the PvP-gear
@@ -8877,6 +10039,9 @@ class App(tk.Tk):
         else:
             status = ("Full gear set assembled - 📦 marks what's already in your Saved Items; "
                       "everything else needs to be acquired.")
+        unmet_sigils = self._unmet_wanted_sigils(base_build)
+        if unmet_sigils:
+            status += f" Wanted Sigil requirement(s) unmet: {', '.join(unmet_sigils)}."
         self.search_status.config(text=status)
 
     def _on_find_optimal_build_clicked(self):
@@ -9250,31 +10415,6 @@ class App(tk.Tk):
         else:
             status = "Re-searched missing slot(s) - all filled."
         self.search_status.config(text=status)
-
-    def _sort_saved_treeview(self, tv, col, reverse):
-        """Click-to-sort for a Saved Items treeview's column headings (the
-        Main aggregate tab and every character tab share this). Level
-        sorts numerically (falling back to string sort for anything
-        non-numeric, e.g. a blank cell when no master_data match was
-        found); every other column sorts case-insensitively as text.
-        Re-clicking the same header flips direction; the sort is purely a
-        display order - it's reset back to the persisted order the next
-        time this treeview is refreshed (adding/importing/clearing items),
-        same as any other Treeview sort-by-column in this app."""
-        def sort_key(iid):
-            val = tv.set(iid, col)
-            if col == 'Level':
-                try:
-                    return (0, float(val))
-                except ValueError:
-                    return (1, val.lower())
-            return (0, val.lower())
-
-        rows = sorted(tv.get_children(''), key=sort_key, reverse=reverse)
-        for index, iid in enumerate(rows):
-            tv.move(iid, '', index)
-
-        tv.heading(col, command=lambda: self._sort_saved_treeview(tv, col, not reverse))
 
     def _on_saved_tv_click(self, event):
         """Click handler shared by every Saved Items treeview (Main and
@@ -10173,6 +11313,16 @@ class App(tk.Tk):
                     if selected.lower() in item_realm.lower():
                         realm_match = True
                         break
+                # Additive on top of the plain "Event" checkbox, not a
+                # replacement for it - a specifically-checked event Area
+                # (Only Found In's own "Events" tab) still counts even when
+                # broad realm selections above didn't include this item,
+                # same as owning an item makes its realm moot elsewhere.
+                if not realm_match and 'event' in item_realm.lower():
+                    item_area = (item.get('Area') or '').strip()
+                    if any(item_area == area and var.get()
+                           for area, var in self.event_area_vars.items()):
+                        realm_match = True
                 if not realm_match:
                     continue
 
@@ -11170,6 +12320,18 @@ class App(tk.Tk):
         # of an interrupting popup.
         if uncovered:
             status += f" | No items found for: {', '.join(uncovered)}"
+        # A required Wanted Sigils circle can go unmet even when every
+        # Wanted Spell is fully covered (nothing above would ever catch
+        # it, since it isn't tracked as its own "wanted base") - e.g. the
+        # only sigil-carrying item that also matches a Wanted Spell might
+        # share its only eligible slot with a Required Item, or nothing
+        # meeting both the sigil and the armor/level/realm constraints
+        # might exist at all. Previously this was silently skipped with
+        # no indication why - surfaced here the same way an uncovered
+        # Wanted Spell already is.
+        unmet_sigils = self._unmet_wanted_sigils(build)
+        if unmet_sigils:
+            status += f" | Wanted Sigil requirement(s) unmet: {', '.join(unmet_sigils)}"
         self.search_status.config(text=status)
 
         # Warn about any Priority Tier that couldn't actually be honored - the
@@ -11397,6 +12559,16 @@ class App(tk.Tk):
                     if selected.lower() in item_realm.lower():
                         realm_match = True
                         break
+                # Additive on top of the plain "Event" checkbox, not a
+                # replacement for it - a specifically-checked event Area
+                # (Only Found In's own "Events" tab) still counts even when
+                # broad realm selections above didn't include this item,
+                # same as owning an item makes its realm moot elsewhere.
+                if not realm_match and 'event' in item_realm.lower():
+                    item_area = (item.get('Area') or '').strip()
+                    if any(item_area == area and var.get()
+                           for area, var in self.event_area_vars.items()):
+                        realm_match = True
                 if not realm_match:
                     continue
 

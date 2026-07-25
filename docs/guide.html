@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v5.4.38</p>
+    <p class="tagline">Full usage guide - v5.5.0</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -189,7 +189,7 @@
     </ul>
 
     <h2 id="build">5. Build Tab</h2>
-    <p>This is where you search a master equipment database for the best gear for your character. It's organized into four inner sub-tabs: Basic Constraints, Armor Constraints, Weapon Constraints, and Bank Build. A shared control area at the bottom (Min/Max/Specific Level, and the search buttons) stays visible no matter which sub-tab is active.</p>
+    <p>This is where you search a master equipment database for the best gear for your character. It's organized into five inner sub-tabs: Basic Constraints, Armor Constraints, Weapon Constraints, Bank Build, and Manual. A shared control area at the bottom (Min/Max/Specific Level, and the search buttons) stays visible no matter which sub-tab is active (except Manual, which has its own separate controls entirely - see 5.6).</p>
 
     <h3>5.1 Master Database File</h3>
     <ul>
@@ -222,7 +222,7 @@
       <li><b>Both</b> - relax level and tier together, preferring the closest combination</li>
       <li><b>Don't populate slot</b> (default) - no fallback; the slot is left empty</li>
     </ul>
-    <p><b>Only Found In</b> (realm filter) - check any combination of Evil, Chaos, Good, Glory Bea, Crafted, Event, or Kaid to restrict results to those realms. Leave everything unchecked (or check <b>All</b>) to search every realm except Crafted. Kaid has its own column: <b>Kaid All</b> matches any Kaid sub-realm, or check specific colors (White/Green/Red/Purple) instead - mutually exclusive with Kaid All. <b>Crafted items never appear unless the Crafted checkbox is checked</b>, and a build can include at most one Crafted-realm item even then. Below Crafted are two independent hard exclusions that apply no matter what else is selected above: <b>Non-Kaid</b> (excludes every Kaid realm) and <b>Non-Event</b> (excludes both Event and Glory Bea items).</p>
+    <p><b>Only Found In</b> (realm filter) - a small two-tab area: the "Only Found In" tab holds Evil, Chaos, Good, Glory Bea, Crafted, Event, or Kaid checkboxes to restrict results to those realms. Leave everything unchecked (or check <b>All</b>) to search every realm except Crafted. Kaid has its own column: <b>Kaid All</b> matches any Kaid sub-realm, or check specific colors (White/Green/Red/Purple) instead - mutually exclusive with Kaid All. <b>Crafted items never appear unless the Crafted checkbox is checked</b>, and a build can include at most one Crafted-realm item even then. Below Crafted are two independent hard exclusions that apply no matter what else is selected above: <b>Non-Kaid</b> (excludes every Kaid realm) and <b>Non-Event</b> (excludes both Event and Glory Bea items). The second tab, <b>Events</b>, lists one checkbox per specific event found in the loaded database (e.g. "Halloween 2020", "Christmas 2023") - checking one lets that event's items through even when the broad Event checkbox above is left unchecked; both work together additively.</p>
     <p><b>Save Constraints</b> (to the right of Only Found In, above Required Items) - names and saves a full snapshot of every current Basic, Armor, and Weapon Constraints selection at once. Saved sets are listed below the button with <b>Load</b>, <b>Rename</b>, and <b>Delete</b> buttons - selecting an entry only highlights it, so an explicit Load click is needed to actually apply it (protecting against accidentally overwriting constraints you're still setting up). Saving under a name that already exists asks to confirm before overwriting it. Persists across closing and reopening the program.</p>
 
     <h3>5.3 Armor Constraints</h3>
@@ -260,7 +260,18 @@
     <p>Each character's list reconciles by <b>content type</b> - bank listing vs. inventory/equipped listing - rather than which content was pasted most recently. Updating just a bank paste never wipes out that character's inventory-sourced items, and vice versa; a paste containing both kinds updates both. A second (or further) copy of the same item is listed at the bottom of a list, prefixed "::extra::". Everything persists across closing and reopening the program.</p>
     <p>The 📦 Bank icon appears in the leftmost column of every search's results (Find Optimal Build, Show All Matches, everywhere) whenever an item matches something saved anywhere - any character, or the older Main-only leftover data. If the item instead came from a Locker, that column shows a bold "L" and the Results tab's Locker column (see 6) shows which one.</p>
 
-    <h3>5.6 Shared Search Controls</h3>
+    <h3>5.6 Manual</h3>
+    <p>A standalone spell/tier database lookup, completely separate from the actual build search - nothing picked here ever feeds into Find Optimal Build/Show All Matches, and nothing from Basic/Armor/Weapon Constraints feeds into it either.</p>
+    <ul>
+      <li>Pick a spell from a category dropdown, an <b>exact</b> tier (no "any tier or higher" fallback - this is a precise lookup, not a build search), and click <b>Add to List</b>. Every item in the loaded database matching that exact spell+tier appears immediately in the table below; add more than one spell/tier to see the combined (union) results.</li>
+      <li><b>Armor</b> / <b>Weapons</b> / <b>Jewel</b> checkboxes restrict the list to just the checked slot categories (checking none or all three means no restriction). Checking <b>Weapons</b> also does two extra things: it drops the requirement to have any spell picked at all (most real weapons carry no Spell, so items would otherwise never show up), and it adds Weight/Fumble/Damage/Timer/Accuracy columns to the results table.</li>
+      <li>A <b>Level</b> range (min/max, blank side unbounded) - its own independent filter, separate from Basic Constraints' Level fields.</li>
+      <li><b>Only Found In</b> and <b>Armor Type</b>/<b>Weapon</b>/<b>Melee/Shield</b> mini-notebooks sit beside the spell dropdowns - each is an independent copy of the same-named controls elsewhere (Only Found In's Realms+Events, Armor Constraints' per-slot Defense/Sigil plus a simplified Cloth/Leather/Studded/Plate checklist, Weapon Constraints' Weapon Types/Combo's, and Melee Weapon/Shield Constraints). None of it is shared with the real tabs - it only ever affects Manual's own results.</li>
+      <li>Right-click any row in the results table for <b>Add to Results Tab</b> - unlike a real build, more than one item can go into the same slot this way (e.g. 3 different body pieces), since this is a flat list you're curating by hand, not a computed build. Adding an item stays on the Manual tab rather than switching away. Once something's been added this way, right-click a row in the Results tab itself for <b>Remove from list</b>.</li>
+      <li>Click any column header in the results table to sort by it; click again to reverse.</li>
+    </ul>
+
+    <h3>5.7 Shared Search Controls</h3>
     <ul>
       <li><b>🎯 Find Optimal Build</b> - exact search across every slot at once for the combination covering as many wanted spells as possible under your constraints. Hidden while the Bank Build sub-tab is selected, since it has its own per-character Find Best Bank Build button instead (see 5.5).</li>
       <li><b>📋 Show All Matches</b> - lists every item matching your filters, without narrowing to one per slot. Also hidden on Bank Build for the same reason.</li>
@@ -301,7 +312,7 @@
     <ul>
       <li>Pick an Area and browse every item droppable there, straight from the loaded master database.</li>
       <li>The Area field is typeable - type a few letters to narrow the list, or click/tab into it to see the full alphabetical list right away.</li>
-      <li>Results are sorted by slot: armor first (Plate, Studded, Leather, Cloth), then Jewel, Shield, Weapon.</li>
+      <li>Results are sorted by slot: armor first (Plate, Studded, Leather, Cloth), then Jewel, Shield, Weapon. Click any column header to sort by that column instead; click again to reverse.</li>
     </ul>
 
     <h2 id="tips">9. Tips and Example Builds</h2>

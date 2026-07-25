@@ -134,7 +134,16 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.4.38 (Current)
+### v5.5.0 (Current)
+- Added an "Events" tab next to "Only Found In" in Basic Constraints - one checkbox per specific event (e.g. "Halloween 2020", "Christmas 2023"), automatically populated from whatever's in the loaded database. Works additively alongside the existing broad "Event" checkbox: checking a specific event lets its items through even when "Event" itself is unchecked
+- Added a new "Manual" tab to the Build section (after Bank Build) - a standalone spell/tier database lookup, separate from the actual build search. Pick a spell category + exact tier and add it to a small list; every matching item in the loaded database shows up immediately below, right-click any result to add it into the Results tab (multiple items can go into the same slot here, e.g. 3 different body pieces, since it's just a flat list you're curating by hand, not a real build)
+  - Has its own independent copy of Only Found In (Realms + Events), Armor Type (a simplified Cloth/Leather/Studded/Plate checklist plus per-slot Defense/Sigil), Weapon (Two-Handed/Dual-Wield/1h-Shield/2h-Shield/Claws/Fired), and Melee/Shield Constraints - none of it touches or is affected by the real Basic/Armor/Weapon Constraints tabs
+  - Armor/Weapons/Jewel checkboxes restrict the list to just one or two of those slot categories; checking Weapons also drops the requirement to have any spell picked at all (most real weapons carry no spell) and adds Weight/Fumble/Damage/Timer/Accuracy columns to the results table
+  - Has its own independent Level range filter, separate from Basic Constraints' Level fields
+- Added click-to-sort column headers to Manual's results list, the Area Items tab, and every read-only search/snapshot dialog (log search, drop search, action/chat snapshot viewers) - click a header to sort by that column, click again to reverse. Deliberately left off the Results tab (row order there matters for Remove/Rebuild) and the Fields tab/Parse tab's file list (row order there is meaningful, curated data)
+- Widened the app's default startup window size
+
+### v5.4.38
 - Fixed the v5.4.37 "reopen it yourself" message sometimes stopping the update from actually installing at all - it was shown right as the app was closing, but the swap step in the background only waits about a minute for the app to release its own file, and that clock started ticking the moment the message appeared rather than when it was dismissed. Taking longer than that to click OK could let the swap give up entirely before the app ever actually closed. The message now shows (and needs to be dismissed) before the swap starts, not after
 
 ### v5.4.37
