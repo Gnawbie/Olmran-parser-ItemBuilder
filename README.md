@@ -134,7 +134,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.6.2 (Current)
+### v5.6.3 (Current)
+- Saved Builds is now a Notebook - each saved build is its own renamable, removable sub-tab instead of a stacked, scrollable row, so having many saves just adds more tabs rather than a taller page
+- Added a "Load" button to each Saved Builds sub-tab - copies that build's rows straight into the Results tab and jumps there
+
+### v5.6.2
 - Class Items is now a typeable field with a live-filtering suggestion popup (same autocomplete style as the Area Items tab), instead of a plain dropdown you could only scroll through
 - Moved Min/Max/Specific Level, the "If no match at Specific Level" fallback options, and the Find Optimal Build/Show All Matches/Generate multiple build options buttons into the Wanted Spells column (right below Clear All), filling space that used to sit empty there. These now only show while Basic Constraints is the selected sub-tab, rather than staying visible on Bank Build/Manual too
 

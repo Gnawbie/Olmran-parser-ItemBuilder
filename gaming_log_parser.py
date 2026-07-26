@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.6.2"
+VERSION = "5.6.3"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -6641,29 +6641,22 @@ class App(tk.Tk):
     # ── SAVED BUILDS TAB ──────────────────────────────────────
     def _build_saved_builds_tab(self):
         """One permanent tab that holds every saved build as its own
-        (renamable, removable) panel, rather than spawning a new tab per save."""
+        (renamable, removable) sub-tab of a Notebook, rather than stacking
+        them as rows in one scrollable list - more saved builds just means
+        more tabs to switch between, not a taller page."""
         outer = self.tab_saved
         ttk.Label(outer, text="Saved Builds",
                   font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0,10))
 
-        canvas = tk.Canvas(outer, highlightthickness=0)
-        vsb = ttk.Scrollbar(outer, orient='vertical', command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        canvas.pack(side='left', fill='both', expand=True)
-        vsb.pack(side='right', fill='y')
+        self.saved_builds_notebook = ttk.Notebook(outer)
+        self.saved_builds_notebook.pack(fill='both', expand=True)
 
-        self.saved_builds_frame = ttk.Frame(canvas)
-        saved_canvas_window = canvas.create_window((0, 0), window=self.saved_builds_frame, anchor='nw')
-
-        def _on_frame_configure(event):
-            canvas.configure(scrollregion=canvas.bbox('all'))
-        self.saved_builds_frame.bind('<Configure>', _on_frame_configure)
-
-        def _on_canvas_configure(event):
-            canvas.itemconfig(saved_canvas_window, width=event.width)
-        canvas.bind('<Configure>', _on_canvas_configure)
-
-        self._register_scroll_canvas(canvas)
+        # Shown instead of the (empty) notebook when there's nothing saved
+        # yet - packed/forgotten by _render_saved_builds, since an empty
+        # Notebook has no page of its own to display a message on.
+        self.saved_builds_empty_label = ttk.Label(outer,
+            text="No builds saved yet - use \"Save Build\" from the Results tab.",
+            foreground='#666')
 
         # list of {'name': tk.StringVar, 'headers': [...], 'rows': [...]} -
         # restored from the config file so saved builds survive closing and
@@ -6678,7 +6671,7 @@ class App(tk.Tk):
         self._render_saved_builds()
 
     def _save_current_results(self):
-        """Add the currently displayed results as a new panel in the one
+        """Add the currently displayed results as a new sub-tab in the one
         Saved Builds tab."""
         if not self.search_results_tv.get_children():
             messagebox.showwarning("No Results", "No build results to save. Run a search first.")
@@ -6704,6 +6697,9 @@ class App(tk.Tk):
         })
         self._render_saved_builds()
         self.notebook.select(self.tab_saved)
+        # Jump straight to the newly added sub-tab too, not just the outer
+        # Saved Builds tab - it's always the last one right after a render.
+        self.saved_builds_notebook.select(self.saved_builds_notebook.tabs()[-1])
         self._save_config()
 
     def _remove_saved_build(self, index):
@@ -6712,32 +6708,73 @@ class App(tk.Tk):
             self._render_saved_builds()
             self._save_config()
 
+    def _load_saved_build_to_results(self, index):
+        """Saved Builds sub-tab's own "Load" button - copies that build's
+        rows into the Results tab exactly as they were saved, then jumps
+        there so they're immediately visible. Switches Results into 'all'
+        display mode (same as Show All Matches) rather than 'optimal',
+        since right-click Remove/Rebuild there depends on a freshly
+        computed self.build_variants that a loaded snapshot doesn't have -
+        'all' mode has no right-click action at all, which is the correct,
+        safe behavior for viewing a past save."""
+        if not (0 <= index < len(self.saved_builds)):
+            return
+        save = self.saved_builds[index]
+        self.results_display_mode.set('all')
+        self.search_results_tv.delete(*self.search_results_tv.get_children())
+        for row in save['rows']:
+            self.search_results_tv.insert('', 'end', values=row)
+        self._autosize_results_columns()
+        self.notebook.select(self.tab_results)
+
+    def _update_saved_build_tab_label(self, index):
+        """Keep a saved build's own Notebook tab label in sync with its
+        Name field as it's typed - tabs() is rebuilt in the same order as
+        self.saved_builds every render, so position lines up directly."""
+        if not (0 <= index < len(self.saved_builds)):
+            return
+        tab_ids = self.saved_builds_notebook.tabs()
+        if index >= len(tab_ids):
+            return
+        name = self.saved_builds[index]['name'].get().strip() or f"Save {index + 1}"
+        self.saved_builds_notebook.tab(tab_ids[index], text=name)
+
     def _render_saved_builds(self):
-        """Redraw every saved-build panel in order. Each panel has its own
-        renamable name field, its own results table, and a Remove button."""
-        for child in self.saved_builds_frame.winfo_children():
-            child.destroy()
+        """Rebuild every saved-build sub-tab in order. Each sub-tab has its
+        own renamable name field (mirrored into the tab label itself), its
+        own results table, and Load/Export/Remove buttons."""
+        for tab_id in self.saved_builds_notebook.tabs():
+            self.saved_builds_notebook.forget(tab_id)
 
         if not self.saved_builds:
-            ttk.Label(self.saved_builds_frame,
-                     text="No builds saved yet - use \"Save Build\" from the Results tab.",
-                     foreground='#666').pack(anchor='w', pady=20)
+            self.saved_builds_notebook.pack_forget()
+            self.saved_builds_empty_label.pack(anchor='w', pady=20)
             return
+        self.saved_builds_empty_label.pack_forget()
+        self.saved_builds_notebook.pack(fill='both', expand=True)
 
         for index, save in enumerate(self.saved_builds):
-            panel = ttk.LabelFrame(self.saved_builds_frame, padding=10)
-            panel.pack(fill='x', pady=(0,12), padx=(0,4))
+            tab_frame = ttk.Frame(self.saved_builds_notebook, padding=10)
+            tab_label = save['name'].get().strip() or f"Save {index + 1}"
+            self.saved_builds_notebook.add(tab_frame, text=tab_label)
 
-            header_frame = ttk.Frame(panel)
+            header_frame = ttk.Frame(tab_frame)
             header_frame.pack(fill='x', pady=(0,8))
             ttk.Label(header_frame, text="Name:").pack(side='left', padx=(0,4))
-            ttk.Entry(header_frame, textvariable=save['name'], width=30).pack(side='left', padx=(0,8))
+            name_entry = ttk.Entry(header_frame, textvariable=save['name'], width=30)
+            name_entry.pack(side='left', padx=(0,8))
+            # Bound to the widget (recreated fresh every render), not a
+            # trace on the persistent StringVar - a var-level trace would
+            # keep stacking a duplicate callback on every re-render instead.
+            name_entry.bind('<KeyRelease>', lambda e, i=index: self._update_saved_build_tab_label(i))
             ttk.Button(header_frame, text="✕ Remove",
                       command=lambda i=index: self._remove_saved_build(i)).pack(side='right')
             ttk.Button(header_frame, text="📤 Export As...",
                       command=lambda i=index: self._export_saved_build(i)).pack(side='right', padx=(0,6))
+            ttk.Button(header_frame, text="📥 Load",
+                      command=lambda i=index: self._load_saved_build_to_results(i)).pack(side='right', padx=(0,6))
 
-            tree_frame = ttk.Frame(panel)
+            tree_frame = ttk.Frame(tab_frame)
             tree_frame.pack(fill='both', expand=True)
 
             cols = save['headers']
