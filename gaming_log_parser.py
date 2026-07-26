@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.6.3"
+VERSION = "5.6.4"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -7310,14 +7310,26 @@ class App(tk.Tk):
 
         # Armor/Weapons/Jewel slot-category restriction - restricts to the
         # union of whichever categories are checked; checking none or all
-        # 3 means no restriction (see the checkboxes' own comment).
-        checked_categories = []
-        if self.manual_armor_only_var.get():
-            checked_categories.append('armor')
+        # 3 means no restriction (see the checkboxes' own comment). Also
+        # implicitly counts as "Armor" checked whenever anything on the
+        # Armor Type mini-tab is actually narrowing armor items (a
+        # material, a per-slot "only this piece" checkbox, a per-slot
+        # Defense range, or a per-slot Sigil) - otherwise those controls
+        # only ever narrowed WHICH armor items show, never actually
+        # excluding weapons/jewels/shields from the list at all, which
+        # read as those filters silently doing nothing for non-armor slots.
+        armor_type_tab_active = (
+            bool(checked_materials) or bool(checked_slots_only)
+            or any(c['use'].get() for c in self.manual_slot_defense_controls.values())
+            or any(v.get() != 'Any' for v in self.manual_slot_sigil_vars.values())
+        )
+        checked_categories = set()
+        if self.manual_armor_only_var.get() or armor_type_tab_active:
+            checked_categories.add('armor')
         if weapons_checked:
-            checked_categories.append('weapons')
+            checked_categories.add('weapons')
         if self.manual_jewel_only_var.get():
-            checked_categories.append('jewel')
+            checked_categories.add('jewel')
         category_restriction_active = 0 < len(checked_categories) < 3
         allowed_category_slots = set()
         if 'armor' in checked_categories:

@@ -134,7 +134,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.6.3 (Current)
+### v5.6.4 (Current)
+- Fixed Manual tab's Armor Type filters (material checkboxes, per-slot "only this piece" checkboxes, per-slot Defense, per-slot Sigil) not actually excluding weapons/jewels/shields from the results list - they only ever narrowed which armor items showed, silently doing nothing for non-armor slots unless the separate top-row "Armor" checkbox was also checked. Any of those Armor Type controls being actively set now implicitly restricts to armor items too
+
+### v5.6.3
 - Saved Builds is now a Notebook - each saved build is its own renamable, removable sub-tab instead of a stacked, scrollable row, so having many saves just adds more tabs rather than a taller page
 - Added a "Load" button to each Saved Builds sub-tab - copies that build's rows straight into the Results tab and jumps there
 
