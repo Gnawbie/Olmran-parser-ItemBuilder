@@ -134,7 +134,16 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v5.6.4 (Current)
+### v6.0.0 (Current)
+- Added an **Edibles** mini-tab to Build Constraints - covers consumable items (Type='edible' in the master database), which a build can use any number of at once. Has its own Available Spells whitelist (built from a data-driven dropdown reflecting whatever edible spells/tiers actually exist in the loaded database), an "Add edibles to the build" checkbox (off by default), and a Max Edibles Used slider (1-13). Used edibles show up as extra "Stomach" rows in the Results tab, and count toward real Wanted Spell coverage just like armor/weapons
+- Fixed Wanted Sigils awarding its scoring bonus to every slot carrying that sigil independently, which could stack the same sigil across several slots when only one was ever intended - now only the first use of a given sigil type counts, with reuse allowed only when it's the sole way to cover a genuine Wanted Spell
+- Fixed a related bug where an item picked purely for a Wanted Sigil could still redundantly restate an already-covered Wanted Spell at a different tier (e.g. wisdom.ii showing up in a build where wisdom.iii was already covered elsewhere, including by an Edible) - no wanted spell can stack across two places in a build now, regardless of sigil
+- Empty slots ("No suitable item found") now always show in the Results tab, even when every wanted spell happens to be covered elsewhere - previously they were silently hidden in that case, which no longer reflects reality now that the sigil/redundancy fixes above can legitimately leave a checked slot empty
+- Manual tab's "Add to Results Tab" now inserts into whichever Results view is currently showing (Best Per Slot or All Matches), not just its own separate list - it fills a matching empty slot first if one's available, otherwise groups as an extra row at that slot's normal position. Manually-added gear now survives Remove/Rebuild/Search Missing Slots elsewhere in the build (previously it could be wiped out entirely by an unrelated action), and can be removed via right-click same as before
+- Saved Constraints now also captures the Edibles tab's settings and specific Event checkboxes (previously only the general "Event" realm checkbox was saved, silently losing specific event selections on load)
+- Moved the "Download Page"/"Check for Update" buttons to sit in the same row as the top-level tabs instead of their own separate row above them, and trimmed their background so it doesn't cover the tab strip's border
+
+### v5.6.4
 - Fixed Manual tab's Armor Type filters (material checkboxes, per-slot "only this piece" checkboxes, per-slot Defense, per-slot Sigil) not actually excluding weapons/jewels/shields from the results list - they only ever narrowed which armor items showed, silently doing nothing for non-armor slots unless the separate top-row "Armor" checkbox was also checked. Any of those Armor Type controls being actively set now implicitly restricts to armor items too
 
 ### v5.6.3

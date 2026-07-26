@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "5.6.4"
+VERSION = "6.0.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -980,6 +980,11 @@ MAX_CRAFTED_ITEMS = 1
 # options" will produce (in addition to the primary optimal build).
 MAX_BUILD_VARIANTS = 10
 
+# Highest value the Edibles tab's slider allows for "Max Edibles Used" -
+# also how many edible_N slot keys _build_dict_to_rows/_find_optimal_build
+# reserve, since a build can never use more than this many at once.
+MAX_EDIBLES = 13
+
 # Spells (lowercase) whose underlying spell-column value differs from the
 # display name itself, e.g. Evade is stored as "evade.enhance".
 SPELL_VALUE_OVERRIDES = {
@@ -987,6 +992,7 @@ SPELL_VALUE_OVERRIDES = {
 }
 
 _TIER_RANK = {'i': 1, 'ii': 2, 'iii': 3, 'iv': 4}
+_RANK_TO_TIER = {rank: tier for tier, rank in _TIER_RANK.items()}
 
 # Items whose Area is one of these are excluded from self.master_data
 # entirely at load time (see _load_master_for_search), so every search -
@@ -2197,13 +2203,19 @@ class App(tk.Tk):
     # GitHub's Releases API what the latest tag is, compares it to VERSION)
     # and, only if the user then clicks the resulting "Download & Update"
     # button, the actual download-and-replace (see _start_self_update).
-    def _build_update_bar(self):
-        """Small bar above the main scrollable area (so it's visible no
-        matter which tab is selected) holding "Download Page" and "Check
-        for Update" side by side in one row, with the check's status
-        message on its own row underneath."""
-        bar = ttk.Frame(self, padding=(8,4))
-        bar.pack(fill='x', side='top')
+    def _build_update_bar(self, nb):
+        """"Download Page" and "Check for Update", side by side, with the
+        check's status message underneath - placed (not packed) so it
+        overlaps the Notebook's own tab strip at its top-right corner,
+        landing in the same row as the top-level tabs (Parse/Fields/
+        Export/...) instead of a separate row above them. Same horizontal
+        position as before (anchored to the right edge) - only the
+        vertical position moved. Still scrolls away with everything else
+        (its parent is self._scroll_content, same as the Notebook itself -
+        see _build_scrollable_root), it just visually rides along with
+        wherever the tab strip currently is rather than being its own
+        fixed-height row."""
+        bar = ttk.Frame(self._scroll_content, padding=(8,0))
 
         button_row = ttk.Frame(bar)
         button_row.pack(side='top', anchor='e')
@@ -2213,11 +2225,29 @@ class App(tk.Tk):
                                               command=self._check_for_update)
         self.update_check_button.pack(side='left')
 
+        # Not packed by default - only shown (see _set_update_status) while
+        # there's actual status text, so the bar's background is normally
+        # just as tall as the button row itself and never reaches down far
+        # enough to cover the Notebook's own border line below the tab
+        # strip it's overlapping.
         self.update_status_label = ttk.Label(bar, text="", foreground='#666')
-        self.update_status_label.pack(side='top', anchor='e', pady=(2,0))
+
+        bar.place(in_=nb, relx=1.0, x=-4, y=-10, anchor='ne')
 
         self._pending_update_url = None
         self._pending_update_version = None
+
+    def _set_update_status(self, text, foreground='#666'):
+        """Sets the update-check status message, showing/hiding the label
+        itself based on whether there's actually anything to say - see
+        the comment where it's created (_build_update_bar) for why this
+        matters (keeps the overlapping button bar's own background from
+        growing tall enough to cover the border line below it)."""
+        self.update_status_label.config(text=text, foreground=foreground)
+        if text:
+            self.update_status_label.pack(side='top', anchor='e', pady=(2,0))
+        else:
+            self.update_status_label.pack_forget()
 
     def _open_download_page(self):
         """"Download Page" button - opens the project's GitHub Pages
@@ -2242,7 +2272,7 @@ class App(tk.Tk):
         for the latest tag (see _check_for_update_worker), so the UI never
         freezes waiting on the network."""
         self.update_check_button.config(state='disabled', text="Checking...")
-        self.update_status_label.config(text="", foreground='#666')
+        self._set_update_status("")
         threading.Thread(target=self._check_for_update_worker, daemon=True).start()
 
     def _check_for_update_worker(self):
@@ -2280,7 +2310,7 @@ class App(tk.Tk):
         if error is not None or not latest_version:
             _debug_log(f'Update check done: check failed (error={error!r})')
             self.update_check_button.config(state='normal', text="Check for Update")
-            self.update_status_label.config(text="Check failed - no internet?", foreground='#a33')
+            self._set_update_status("Check failed - no internet?", foreground='#a33')
             return
 
         if self._version_tuple(latest_version) > self._version_tuple(VERSION):
@@ -2289,8 +2319,8 @@ class App(tk.Tk):
                 # (release still being prepared) - nothing to offer yet.
                 _debug_log(f'Update check done: v{latest_version} exists but no matching asset attached yet')
                 self.update_check_button.config(state='normal', text="Check for Update")
-                self.update_status_label.config(
-                    text=f"v{latest_version.lstrip('vV')} is out, but no download is attached yet",
+                self._set_update_status(
+                    f"v{latest_version.lstrip('vV')} is out, but no download is attached yet",
                     foreground='#a33')
                 return
             self._pending_update_url = download_url
@@ -2301,11 +2331,11 @@ class App(tk.Tk):
             self.update_check_button.config(
                 state='normal', text=f"⬇ Download & Update to v{self._pending_update_version}",
                 command=self._start_self_update)
-            self.update_status_label.config(text="", foreground='#666')
+            self._set_update_status("")
         else:
             _debug_log(f'Update check done: already on latest version ({VERSION})')
             self.update_check_button.config(state='normal', text="Check for Update")
-            self.update_status_label.config(text="You're on the latest version", foreground='#2a2')
+            self._set_update_status("You're on the latest version", foreground='#2a2')
 
     def _start_self_update(self):
         """"Download & Update" button (only shown once a newer version was
@@ -2340,7 +2370,7 @@ class App(tk.Tk):
             return
 
         self.update_check_button.config(state='disabled', text="Downloading...")
-        self.update_status_label.config(text="", foreground='#666')
+        self._set_update_status("")
         threading.Thread(target=self._download_update_worker,
                          args=(self._pending_update_url, version, self._pending_update_size),
                          daemon=True).start()
@@ -2443,7 +2473,7 @@ class App(tk.Tk):
         self.update_check_button.config(
             state='normal', text=f"⬇ Download & Update to v{self._pending_update_version}",
             command=self._start_self_update)
-        self.update_status_label.config(text=f"Download failed: {error}", foreground='#a33')
+        self._set_update_status(f"Download failed: {error}", foreground='#a33')
 
     def _finish_self_update(self, current_exe, new_exe_path, expected_size,
                              is_folder=False, staging_dir=None, downloaded_zip_path=None):
@@ -2718,7 +2748,12 @@ class App(tk.Tk):
         area - it can be reached by dragging the scrollbar or scrolling the
         mouse wheel. Entirely transparent to every tab built afterward
         (they're built into self._scroll_content exactly as if it were
-        `self`).
+        `self`). The update bar (Download Page/Check for Update - see
+        _build_update_bar) is ALSO built inside self._scroll_content, as
+        the very first thing in it, rather than pinned above this canvas
+        as separate fixed chrome - scrolling down treats it like anything
+        else, scrolling it away entirely rather than permanently reserving
+        blank space for it at the top of the window.
 
         Mouse wheel scrolling is also bound app-wide (bind_all), ONE
         single handler for the whole app's lifetime, as a convenience:
@@ -2811,11 +2846,15 @@ class App(tk.Tk):
         style.configure('WeaponRow.TFrame', borderwidth=1, relief='solid', bordercolor='#888888')
         style.configure('WeaponRowAlt.TFrame', borderwidth=1, relief='solid', bordercolor='#bbbbbb')
 
-        self._build_update_bar()
         self._build_scrollable_root()
 
         nb = ttk.Notebook(self._scroll_content)
         nb.pack(fill='both', expand=True, padx=8, pady=8)
+
+        # Built after the Notebook exists (placed overlapping its own tab
+        # strip - see _build_update_bar), not pinned above it as separate
+        # fixed chrome.
+        self._build_update_bar(nb)
 
         self.tab_parse  = ttk.Frame(nb, padding=12)
         self.tab_fields = ttk.Frame(nb, padding=12)
@@ -4986,6 +5025,8 @@ class App(tk.Tk):
         basic_gear_notebook.add(basic_armor_tab_frame, text="Armor Constraints")
         basic_weapon_tab_frame = ttk.Frame(basic_gear_notebook, padding=8)
         basic_gear_notebook.add(basic_weapon_tab_frame, text="Weapon Constraints")
+        basic_edibles_tab_frame = ttk.Frame(basic_gear_notebook, padding=8)
+        basic_gear_notebook.add(basic_edibles_tab_frame, text="Edibles")
 
         spell_block = ttk.Frame(basic_tab_frame)
         spell_block.pack(side='left', anchor='n')
@@ -5061,6 +5102,10 @@ class App(tk.Tk):
         self.spell_chips_text.configure(yscrollcommand=spell_scroll.set)
         self.spell_chips_text.pack(side='left', fill='x', expand=True)
         spell_scroll.pack(side='right', fill='y')
+        # Every widget that needs to redraw when Wanted Spells changes -
+        # normally just the box above, but the Edibles mini-tab (see its own
+        # comment) adds a second, duplicate display bound to this same data.
+        self.spell_chips_texts = [self.spell_chips_text]
 
         ttk.Button(wanted_block, text="Clear All",
                   command=self._clear_spell_list).pack(anchor='w', pady=(2,0))
@@ -5570,6 +5615,79 @@ class App(tk.Tk):
             for cs in getattr(self, '_persisted_constraint_sets', [])
         ]
         self._refresh_constraint_sets_listbox()
+
+        # Edibles - consumable items (Type='edible' in the master database)
+        # a build can carry any number of at once, unlike every other slot
+        # here which holds exactly one item. The Available Spells list below
+        # is its OWN independent list (self.edible_allowed_spells), separate
+        # from the real Wanted Spells - it's a whitelist of which edible
+        # spells are allowed to be used at all, not a coverage requirement:
+        # empty means every edible (within Min/Max/Specific Level etc.) is
+        # eligible, non-empty means only edibles matching a listed entry are.
+        #
+        # Spell dropdown - values generated from whatever Type='edible' items
+        # are actually in the currently loaded master database (see
+        # _refresh_edible_spell_options, called on every master database
+        # load), not a fixed SPELL_CATEGORIES-style list, since edibles
+        # aren't a curated category the way the dropdowns above are. The
+        # tier dropdown is restricted the same way, to just the tiers
+        # actually present among edible items carrying that spell - no
+        # "(any)" option, an Available Spells entry always targets one
+        # specific tier. Placed above the display box below, same order as
+        # picking a spell before it shows up in the chip list.
+        self._edible_spell_tiers = {}
+        edible_add_row = ttk.Frame(basic_edibles_tab_frame)
+        edible_add_row.pack(fill='x', pady=2)
+        ttk.Label(edible_add_row, text="Spell:", width=8).pack(side='left')
+        self.edible_spell_var = tk.StringVar(value='')
+        self.edible_spell_combo = ttk.Combobox(edible_add_row, textvariable=self.edible_spell_var,
+                                               values=[], state='readonly', width=20)
+        self.edible_spell_combo.pack(side='left', padx=4)
+        self.edible_spell_var.trace_add('write', lambda *a: self._update_edible_tier_options())
+
+        self.edible_tier_var = tk.StringVar(value='')
+        self.edible_tier_combo = ttk.Combobox(edible_add_row, textvariable=self.edible_tier_var,
+                                              values=[], state='readonly', width=6)
+        self.edible_tier_combo.pack(side='left', padx=4)
+
+        ttk.Button(edible_add_row, text="Add to List",
+                  command=self._add_edible_allowed_spell).pack(side='left', padx=4)
+
+        # Opt-in - unchecked by default, same convention as every other
+        # optional restriction in this app (unchecked/blank = no effect on
+        # a real search).
+        self.edibles_enabled_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(basic_edibles_tab_frame, text="Add edibles to the build",
+                       variable=self.edibles_enabled_var).pack(anchor='w', pady=(8,2))
+
+        # Slider caps how many edibles a build search will actually use - a
+        # player can carry/eat any number of consumables (no structural
+        # one-per-slot limit the way armor/weapons have), so this is a
+        # user-chosen practical limit, not modeling an actual game rule.
+        edible_slider_row = ttk.Frame(basic_edibles_tab_frame)
+        edible_slider_row.pack(fill='x', pady=(4,0))
+        ttk.Label(edible_slider_row, text="Max Edibles Used:").pack(side='left')
+        self.edibles_max_var = tk.IntVar(value=13)
+        self.edibles_max_label = ttk.Label(edible_slider_row, text="13", width=3)
+        self.edibles_max_scale = ttk.Scale(edible_slider_row, from_=1, to=13, orient='horizontal',
+                                           length=140, command=self._on_edibles_max_slide)
+        self.edibles_max_scale.set(13)
+        self.edibles_max_scale.pack(side='left', padx=6)
+        self.edibles_max_label.pack(side='left')
+
+        ttk.Label(basic_edibles_tab_frame, text="Available Spells:").pack(anchor='w', pady=(8,0))
+        edible_spell_scroll_frame = ttk.Frame(basic_edibles_tab_frame)
+        edible_spell_scroll_frame.pack(fill='x', expand=True)
+        self.edible_allowed_spells = []
+        self.edible_allowed_spells_text = tk.Text(edible_spell_scroll_frame, height=4, width=40, wrap='word',
+                                                  cursor='arrow', state='disabled')
+        edible_spell_scroll = ttk.Scrollbar(edible_spell_scroll_frame, orient='vertical',
+                                            command=self.edible_allowed_spells_text.yview)
+        self.edible_allowed_spells_text.configure(yscrollcommand=edible_spell_scroll.set)
+        self.edible_allowed_spells_text.pack(side='left', fill='x', expand=True)
+        edible_spell_scroll.pack(side='right', fill='y')
+        ttk.Button(basic_edibles_tab_frame, text="Clear All",
+                  command=self._clear_edible_allowed_spells).pack(anchor='w', pady=(2,8))
 
         # Find Optimal Build/Show All Matches/Generate multiple build options
         # moved out to shared_controls_frame below (see the comment at the
@@ -6388,6 +6506,16 @@ class App(tk.Tk):
         # slot-keyed build.
         self.manual_results_tv.bind('<Button-3>', self._on_manual_results_right_click)
         self.manual_added_items = []
+        # Items added via the Manual tab while Best Per Slot/All Matches was
+        # showing (see _add_manual_item_to_results) - unlike manual_added_
+        # items above (its own always-separate 'manual' display mode),
+        # these get merged into self.last_optimal_results/last_all_results
+        # every time those get recomputed from a real search/rebuild (see
+        # _apply_manual_items_to_rows), so a manual addition survives
+        # Remove/Rebuild/Search Missing Slots instead of only lasting until
+        # the next one of those actions overwrites it.
+        self.manual_optimal_items = []
+        self.manual_all_items = []
 
         # Shared controls - Min/Max/Specific Level and the search buttons -
         # now packed inside wanted_block (Wanted Spells' own column, right
@@ -7080,7 +7208,20 @@ class App(tk.Tk):
             row for row in self.last_all_results
             if area_filter not in (row[area_idx] or '').lower()
         ]
-        
+        # Also drop any matching entries from the persistent manual-item
+        # tracking lists (see _add_manual_item_to_results) - otherwise a
+        # manually-added item removed here by area would silently
+        # reappear the next time something else (Remove elsewhere,
+        # Rebuild, etc.) re-applies those lists onto a fresh row list.
+        self.manual_optimal_items = [
+            item for item in self.manual_optimal_items
+            if area_filter not in (item.get('Area') or '').lower()
+        ]
+        self.manual_all_items = [
+            item for item in self.manual_all_items
+            if area_filter not in (item.get('Area') or '').lower()
+        ]
+
         # Refresh display
         self._refresh_results_display()
         
@@ -7159,21 +7300,177 @@ class App(tk.Tk):
 
     def _render_spell_chips(self):
         """Redraw the Wanted Spells area as chips that flow horizontally and
-        wrap to new lines, instead of one spell per vertical row."""
-        text = self.spell_chips_text
+        wrap to new lines, instead of one spell per vertical row. Draws into
+        every widget in self.spell_chips_texts - normally just
+        self.spell_chips_text, but the Edibles mini-tab adds a second,
+        duplicate Wanted Spells box bound to this same data, so both need
+        to redraw together whenever it changes."""
+        for text in self.spell_chips_texts:
+            text.config(state='normal')
+            text.delete('1.0', tk.END)
+            for spell in self.wanted_spells_data:
+                chip = ttk.Frame(text, relief='raised', borderwidth=1)
+                ttk.Label(chip, text=spell, padding=(4, 1)).pack(side='left')
+                remove_lbl = ttk.Label(chip, text='✕', padding=(4, 1),
+                                       foreground='#a33', cursor='hand2')
+                remove_lbl.pack(side='left')
+                remove_lbl.bind('<Button-1>', lambda e, s=spell: self._remove_wanted_spell(s))
+                text.window_create(tk.END, window=chip)
+                text.insert(tk.END, ' ')
+            text.config(state='disabled')
+        self._refresh_priority_spell_options()
+
+    def _refresh_edible_spell_options(self):
+        """Rebuild the Edibles tab's spell dropdown from every base spell
+        found on a Type='edible' item in the currently loaded master
+        database, along with which tiers each one actually has
+        (self._edible_spell_tiers, read by _update_edible_tier_options) -
+        entirely data-driven, unlike every other spell dropdown in the app
+        (SPELL_CATEGORIES is a fixed, hand-maintained list; this one
+        reflects whatever's actually in the loaded item list). Called on
+        every master database load."""
+        if not hasattr(self, 'edible_spell_combo'):
+            return
+        tiers_by_base = {}
+        for item in getattr(self, 'master_data', []):
+            if (item.get('Type') or '').strip().lower() != 'edible':
+                continue
+            spell = (item.get('Spell') or '').strip().lower()
+            if not spell:
+                continue
+            base = _spell_base(spell)
+            tiers_by_base.setdefault(base, set())
+            rank = _item_tier_rank(spell)
+            if rank:
+                tiers_by_base[base].add(_RANK_TO_TIER[rank])
+        self._edible_spell_tiers = tiers_by_base
+        values = sorted(tiers_by_base)
+        self.edible_spell_combo['values'] = values
+        if self.edible_spell_var.get() not in values:
+            self.edible_spell_var.set(values[0] if values else '')
+        self._update_edible_tier_options()
+
+    def _update_edible_tier_options(self):
+        """Restrict the Edibles tab's tier dropdown to just the tiers
+        actually present among edible items carrying the selected spell -
+        the data-driven equivalent of _update_tier_options. No "(any)"
+        option here (unlike every other tier dropdown in the app) - an
+        Available Spells entry always targets one specific tier. A base
+        with no tiered items at all (rare) leaves the dropdown empty and
+        _add_edible_allowed_spell falls back to adding it bare."""
+        base = self.edible_spell_var.get().strip().lower()
+        tiers = sorted(self._edible_spell_tiers.get(base, set()), key=lambda t: _TIER_RANK[t])
+        self.edible_tier_combo['values'] = tiers
+        if tiers:
+            if self.edible_tier_var.get() not in tiers:
+                self.edible_tier_var.set(tiers[0])
+        else:
+            self.edible_tier_var.set('')
+
+    def _add_edible_allowed_spell(self):
+        """Add the spell+tier selected in the Edibles tab to its own
+        independent self.edible_allowed_spells list - a whitelist of which
+        edible spells are allowed to be used at all (see _edible_candidates),
+        never shared with the real Wanted Spells list."""
+        spell = self.edible_spell_var.get().strip()
+        if not spell:
+            return
+        combined = spell.lower()
+        tier = self.edible_tier_var.get().strip()
+        if tier:
+            combined = f"{combined}.{tier}"
+        if combined not in [s.lower() for s in self.edible_allowed_spells]:
+            self.edible_allowed_spells.append(combined)
+            self._render_edible_allowed_chips()
+
+    def _remove_edible_allowed_spell(self, spell_value):
+        """Remove one Available Spells chip (called by a chip's own ✕ button)"""
+        if spell_value in self.edible_allowed_spells:
+            self.edible_allowed_spells.remove(spell_value)
+            self._render_edible_allowed_chips()
+
+    def _clear_edible_allowed_spells(self):
+        """Clear every Available Spells chip - an empty list means every
+        edible is eligible again (see _edible_candidates)."""
+        self.edible_allowed_spells = []
+        self._render_edible_allowed_chips()
+
+    def _render_edible_allowed_chips(self):
+        """Redraw the Edibles tab's Available Spells area as chips, same
+        flow-and-wrap style as _render_spell_chips."""
+        text = self.edible_allowed_spells_text
         text.config(state='normal')
         text.delete('1.0', tk.END)
-        for spell in self.wanted_spells_data:
+        for spell in self.edible_allowed_spells:
             chip = ttk.Frame(text, relief='raised', borderwidth=1)
             ttk.Label(chip, text=spell, padding=(4, 1)).pack(side='left')
             remove_lbl = ttk.Label(chip, text='✕', padding=(4, 1),
                                    foreground='#a33', cursor='hand2')
             remove_lbl.pack(side='left')
-            remove_lbl.bind('<Button-1>', lambda e, s=spell: self._remove_wanted_spell(s))
+            remove_lbl.bind('<Button-1>', lambda e, s=spell: self._remove_edible_allowed_spell(s))
             text.window_create(tk.END, window=chip)
             text.insert(tk.END, ' ')
         text.config(state='disabled')
-        self._refresh_priority_spell_options()
+
+    def _on_edibles_max_slide(self, value_str):
+        """ttk.Scale reports fractional positions while dragging - snap to
+        the nearest whole number (1-13) and re-set the scale's own position
+        to match, so the handle itself visibly snaps too, not just the
+        number shown beside it."""
+        snapped = int(round(float(value_str)))
+        self.edibles_max_var.set(snapped)
+        self.edibles_max_label.config(text=str(snapped))
+        if abs(float(value_str) - snapped) > 1e-6:
+            self.edibles_max_scale.set(snapped)
+
+    def _edible_candidates(self, min_level, max_level, specific_level):
+        """Every Type='edible' item in the master database within the active
+        level constraints, filtered by the Edibles tab's own Available
+        Spells list (self.edible_allowed_spells - a whitelist of what's
+        allowed to be used, added via that tab's own dropdown, never the
+        real Wanted Spells): an empty list means every edible is eligible;
+        a non-empty one restricts to just edibles whose Spell exactly
+        matches a listed entry (base only if that entry has no tier suffix,
+        base AND exact tier if it does - no falling back to a different
+        tier). Returns a list of (base, item) pairs. Shared by
+        _find_optimal_build and _show_all_matches so edibles are matched
+        identically in both."""
+        allowed = self.edible_allowed_spells
+        chips_by_base = {}
+        for chip in allowed:
+            chips_by_base.setdefault(_spell_base(chip), []).append(chip)
+
+        results = []
+        for item in self.master_data:
+            if (item.get('Type') or '').strip().lower() != 'edible':
+                continue
+            try:
+                level = int(item.get('Level') or 0)
+            except (ValueError, TypeError):
+                continue
+            if specific_level is not None:
+                if level != specific_level:
+                    continue
+            else:
+                if min_level is not None and level < min_level:
+                    continue
+                if max_level is not None and level > max_level:
+                    continue
+
+            item_spell = (item.get('Spell') or '').strip().lower()
+            base = _spell_base(item_spell) if item_spell else ''
+
+            if allowed:
+                if not item_spell:
+                    continue
+                chips = chips_by_base.get(base)
+                if not chips:
+                    continue
+                explicit_tiers = {c.lower() for c in chips if _spell_tier_rank(c) > 0}
+                if explicit_tiers and item_spell not in explicit_tiers:
+                    continue
+            results.append((base, item))
+        return results
 
     def _update_manual_tier_options(self, category):
         """Same as _update_tier_options, but for the Manual tab's own
@@ -7624,27 +7921,134 @@ class App(tk.Tk):
             menu.grab_release()
 
     def _add_manual_item_to_results(self, item):
-        """Appends one item to self.manual_added_items - a flat, user-
-        curated list (not a slot-keyed build), so the same slot can appear
-        more than once (e.g. 3 different body pieces). Switches the
-        Results tab into its own 'manual' display mode (see
-        _render_manual_added_results/_on_results_right_click's branch for
-        it) without switching to it - stays on the Manual tab so more
+        """Adds one item to WHICHEVER results listing is currently showing -
+        Best Per Slot (tracked in self.manual_optimal_items), All Matches
+        (self.manual_all_items), or Manual's own separate list (self.
+        manual_added_items) - rather than always forcing a switch into
+        that separate 'manual' mode.
+
+        For Best Per Slot/All Matches, the item is tracked persistently
+        (not just spliced into the current row list once) and re-merged in
+        via _apply_manual_items_to_rows every time that listing gets
+        recomputed from a real search/rebuild/variant switch - so it
+        survives Remove/Rebuild/Search Missing Slots instead of only
+        lasting until the very next one of those overwrites the row list
+        from scratch (see the real bug report this fixed: manually-added
+        gear was vanishing the moment ANY other slot got removed
+        elsewhere, because the row list was being fully regenerated from
+        self.build_variants, which never knew about the manual addition in
+        the first place). Never switches away from the Manual tab, so more
         items can keep being added without navigating back and forth."""
-        self.manual_added_items.append(item)
-        self.results_display_mode.set('manual')
-        self._render_manual_added_results()
+        mode = self.results_display_mode.get()
+        if mode == 'optimal':
+            self.manual_optimal_items.append(item)
+            self.last_optimal_results = self._apply_manual_optimal_items(self._all_variants_rows())
+            self.search_results_tv.delete(*self.search_results_tv.get_children())
+            for r in self.last_optimal_results:
+                self.search_results_tv.insert('', 'end', values=r)
+            self._autosize_results_columns()
+        elif mode == 'all':
+            self.manual_all_items.append(item)
+            base_rows = [r for r in self.last_all_results if r[-1] != 'Manual Input']
+            self.last_all_results = self._apply_manual_all_items(base_rows)
+            self.search_results_tv.delete(*self.search_results_tv.get_children())
+            for r in self.last_all_results:
+                self.search_results_tv.insert('', 'end', values=r)
+            self._autosize_results_columns()
+        else:
+            self.manual_added_items.append(item)
+            self.results_display_mode.set('manual')
+            self._render_manual_added_results()
+
+    _RESULTS_SLOT_ORDER = ['head', 'jewel', 'cloak', 'body', 'hands', 'legs', 'feet',
+                          'weapon', 'off-hand', 'shield', 'claw', 'stomach']
+
+    def _apply_manual_items_to_rows(self, base_rows, manual_items):
+        """Merges manual_items (raw item dicts, in the order they were
+        added via the Manual tab) onto a copy of base_rows (fresh, real
+        build/match rows only - never mutated itself) - each one fills an
+        empty slot of the same type in place if one is available (a real,
+        still-unfilled "No suitable item found" row - identified by Alt
+        Options not already being 'Manual Input' and Type being blank),
+        otherwise it's inserted as an extra row grouped at that slot's
+        normal position (see _manual_insert_slot_rank) rather than tacked
+        onto the very end. Confined to before the first build-variant
+        divider row, if any (see _all_variants_rows) - only the first/
+        current build gets manual additions, not every stacked variant.
+        Shared by _add_manual_item_to_results and every place that
+        recomputes self.last_optimal_results/last_all_results from a real
+        search, so manual additions are re-applied consistently everywhere."""
+        result = list(base_rows)
+        for item in manual_items:
+            display_slot = (item.get('Slot') or '').strip().title()
+            row = (
+                '', '', display_slot, item.get('Item', ''), item.get('Type', ''),
+                item.get('Spell', ''), item.get('Sigil', ''), item.get('Level', ''),
+                item.get('Mob', ''), item.get('Area', ''), '████████', 'Manual Input'
+            )
+            search_end = len(result)
+            for i, r in enumerate(result):
+                if str(r[0]).startswith('█'):
+                    search_end = i
+                    break
+            rank = self._manual_insert_slot_rank(display_slot)
+
+            empty_slot_index = None
+            for i in range(search_end):
+                r = result[i]
+                if (self._manual_insert_slot_rank(r[2]) == rank
+                        and r[-1] != 'Manual Input' and r[4] == ''):
+                    empty_slot_index = i
+                    break
+
+            if empty_slot_index is not None:
+                result[empty_slot_index] = row
+            else:
+                insert_at = search_end
+                for i in range(search_end):
+                    if self._manual_insert_slot_rank(result[i][2]) > rank:
+                        insert_at = i
+                        break
+                result.insert(insert_at, row)
+        return result
+
+    def _apply_manual_optimal_items(self, base_rows):
+        """_apply_manual_items_to_rows for Best Per Slot's tracked manual
+        additions (self.manual_optimal_items) - call after any fresh
+        self._all_variants_rows() to fold them back in."""
+        return self._apply_manual_items_to_rows(base_rows, self.manual_optimal_items)
+
+    def _apply_manual_all_items(self, base_rows):
+        """_apply_manual_items_to_rows for All Matches' tracked manual
+        additions (self.manual_all_items)."""
+        return self._apply_manual_items_to_rows(base_rows, self.manual_all_items)
+
+    def _manual_insert_slot_rank(self, slot_display):
+        """Position of a Slot column value (e.g. 'Body', 'Jewel') in the
+        normal Head/Jewel/Cloak/.../Stomach ordering - used by
+        _add_manual_item_to_results to insert a manually-added row in the
+        right place instead of always at the very end. An unrecognized
+        slot value sorts after everything else, rather than erroring."""
+        key = (slot_display or '').strip().lower()
+        try:
+            return self._RESULTS_SLOT_ORDER.index(key)
+        except ValueError:
+            return len(self._RESULTS_SLOT_ORDER)
 
     def _render_manual_added_results(self):
-        """Redraw the Results tab from self.manual_added_items. Bank/
-        Locker/Div/Alt Options stay blank - none of those concepts apply to
-        a manually assembled list rather than a real computed build."""
+        """Redraw the Results tab from self.manual_added_items. Bank/Locker
+        stay blank (neither concept applies to a manually assembled list
+        rather than a real computed build), but Div/Alt Options match
+        _add_manual_item_to_results' own convention for a manually-added
+        row - the usual black divider bar, and 'Manual Input' in Alt
+        Options - for the same visual consistency there."""
         self.search_results_tv.delete(*self.search_results_tv.get_children())
         for item in self.manual_added_items:
             self.search_results_tv.insert('', 'end', values=(
-                '', '', item.get('Slot', ''), item.get('Item', ''), item.get('Type', ''),
-                item.get('Spell', ''), item.get('Sigil', ''), item.get('Level', ''),
-                item.get('Mob', ''), item.get('Area', ''), '', ''))
+                '', '', (item.get('Slot') or '').strip().title(), item.get('Item', ''),
+                item.get('Type', ''), item.get('Spell', ''), item.get('Sigil', ''),
+                item.get('Level', ''), item.get('Mob', ''), item.get('Area', ''),
+                '████████', 'Manual Input'))
         self._autosize_results_columns()
 
     def _add_wanted_sigil(self):
@@ -8237,6 +8641,7 @@ class App(tk.Tk):
             self._refresh_area_items_dropdown()
             self._refresh_event_area_checkboxes()
             self._refresh_blocked_area_dropdown()
+            self._refresh_edible_spell_options()
             self._refresh_manual_lookup_results()
             if hasattr(self, 'bank_saved_tv'):
                 self._refresh_bank_saved_tab()
@@ -8429,7 +8834,8 @@ class App(tk.Tk):
         slot, since two slots like jewel_1/jewel_2 share the same display
         name and can't be told apart from the row text alone)."""
         slot_order = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet',
-                     'weapon', 'weapon_off', 'shield', 'claw_1', 'claw_2']
+                     'weapon', 'weapon_off', 'shield', 'claw_1', 'claw_2'] + [
+                     f'edible_{i}' for i in range(1, MAX_EDIBLES + 1)]
         attempted_slots = getattr(self, 'attempted_slots', set())
         row_slots = []
         # Default "No suitable item found", overridden to "No available
@@ -8452,6 +8858,7 @@ class App(tk.Tk):
                 # only 1 Claw is checked) stays hidden as before.
                 if slot in attempted_slots:
                     display_slot = ('jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw')
+                                    else 'stomach' if slot.startswith('edible')
                                     else 'off-hand' if slot == 'weapon_off' else slot)
                     if isinstance(no_item_override, dict):
                         no_item_text = no_item_override.get(slot, 'No suitable item found')
@@ -8469,8 +8876,10 @@ class App(tk.Tk):
             # weapons can have different damage types, so distinguishing
             # them here is useful, not redundant.
             display_slot = ('jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw')
+                            else 'stomach' if slot.startswith('edible')
                             else 'off-hand' if slot == 'weapon_off' else slot)
-            lookup_slot = 'jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw') else slot
+            lookup_slot = ('jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw')
+                          else 'edible' if slot.startswith('edible') else slot)
 
             chosen_spell = (item.get('Spell') or '').lower()
             chosen_base = _spell_base(chosen_spell)
@@ -8570,7 +8979,7 @@ class App(tk.Tk):
         self.build_variant_combo['values'] = variant_labels
         self.build_variant_var.set(variant_labels[0])
 
-        self.last_optimal_results = self._all_variants_rows()
+        self.last_optimal_results = self._apply_manual_optimal_items(self._all_variants_rows())
         self.results_display_mode.set('optimal')
         self._refresh_results_display()
 
@@ -8796,6 +9205,15 @@ class App(tk.Tk):
             'realm_filter_all': self.realm_filter_all_var.get(),
             'exclude_kaid': self.exclude_kaid_var.get(),
             'exclude_event': self.exclude_event_var.get(),
+            # Only Found In's Events tab - one bool per specific Event-realm
+            # Area currently loaded (self.event_area_vars). A saved area no
+            # longer present in whatever database is loaded when this gets
+            # applied is just ignored, same as every other stale-key case.
+            'event_areas': {area: var.get() for area, var in self.event_area_vars.items()},
+            # Edibles
+            'edible_allowed_spells': list(self.edible_allowed_spells),
+            'edibles_enabled': self.edibles_enabled_var.get(),
+            'edibles_max': self.edibles_max_var.get(),
             # Armor Constraints
             'armor_all_checks': {t: v.get() for t, v in self.armor_all_checks.items()},
             'armor_checks': {
@@ -8872,6 +9290,18 @@ class App(tk.Tk):
         self.exclude_event_var.set(data.get('exclude_event', False))
         self._update_kaid_exclusivity()
         self._update_realm_all_exclusivity()
+        for area, val in data.get('event_areas', {}).items():
+            if area in self.event_area_vars:
+                self.event_area_vars[area].set(val)
+
+        # Edibles
+        self.edible_allowed_spells = list(data.get('edible_allowed_spells', []))
+        self.edibles_enabled_var.set(data.get('edibles_enabled', False))
+        edibles_max = data.get('edibles_max', 13)
+        self.edibles_max_var.set(edibles_max)
+        self.edibles_max_scale.set(edibles_max)
+        self.edibles_max_label.config(text=str(edibles_max))
+        self._render_edible_allowed_chips()
 
         # Armor Constraints
         for t, val in data.get('armor_all_checks', {}).items():
@@ -9794,16 +10224,28 @@ class App(tk.Tk):
             self.rebuild_saved_items_button.pack_forget()
 
     def _on_results_right_click(self, event):
-        """Right-click handler for the Results tab - only meaningful in
-        Best Per Slot view, and only for Build 1 (the top/first of any
-        stacked "Generate multiple build options" variants); a divider row
-        or a row belonging to a different stacked variant just does
-        nothing. Resolves the clicked row back to its slot key the same way
-        _search_missing_slots does - by recomputing Build 1's own rows/
-        slot-keys fresh (with_slot_keys) and matching by Treeview row
-        position, rather than trying to parse the displayed Slot/Item text
-        (which can't tell jewel_1 from jewel_2, among other ambiguities).
-        A filled slot offers "Remove". An empty ("No suitable item
+        """Right-click handler for the Results tab. A row manually inserted
+        by _add_manual_item_to_results (identified by its Alt Options cell
+        reading 'Manual Input' - see below) always offers just "Remove",
+        in either Best Per Slot or All Matches view - handled first,
+        before anything slot-related.
+
+        Otherwise only meaningful in Best Per Slot view, and only for
+        Build 1 (the top/first of any stacked "Generate multiple build
+        options" variants); a divider row or a row belonging to a
+        different stacked variant just does nothing. Resolves the clicked
+        row back to its slot key the same way _search_missing_slots does -
+        by recomputing Build 1's own rows/slot-keys fresh (with_slot_keys)
+        and matching by CONTENT (the exact row tuple), not position -
+        a manually-inserted row can either sit in between real rows or
+        replace an empty slot's placeholder outright (see
+        _add_manual_item_to_results), either of which would throw off a
+        simple position-based count. Every real, not-manually-touched row
+        keeps the exact same tuple _build_dict_to_rows would produce fresh
+        right now, so matching on the row itself (rather than trying to
+        parse the displayed Slot/Item text, which can't tell jewel_1 from
+        jewel_2 anyway) reliably finds its real slot key regardless of
+        whatever manual rows surround it. A filled slot offers "Remove". An empty ("No suitable item
         found"/etc.) slot offers three actions: "Search Full Database for
         This Slot" (_fill_empty_slot_from_full_database - fills just the
         clicked slot, via _find_best_item_for_slot against
@@ -9817,27 +10259,52 @@ class App(tk.Tk):
         alone leaves too many gaps and Saved Items First's fixed two-pass
         split isn't finding the fewest possible "need to acquire" slots).
 
-        A third mode, 'manual' (set by _add_manual_item_to_results), shows
-        a flat, user-curated list from the Manual tab instead of a real
-        build - handled entirely separately, see
-        _on_manual_mode_results_right_click."""
-        if self.results_display_mode.get() == 'manual':
+        A fourth mode, 'manual' (set by _add_manual_item_to_results when
+        it isn't inserting into Best Per Slot/All Matches), shows a flat,
+        user-curated list from the Manual tab instead of a real build -
+        handled entirely separately, see _on_manual_mode_results_right_click."""
+        mode = self.results_display_mode.get()
+        if mode == 'manual':
             self._on_manual_mode_results_right_click(event)
             return
-        if self.results_display_mode.get() != 'optimal' or not self.build_variants:
+        if mode not in ('optimal', 'all'):
             return
         iid = self.search_results_tv.identify_row(event.y)
         if not iid:
             return
-        build1 = self.build_variants[0]
-        rows, slots = self._build_dict_to_rows(build1, with_slot_keys=True)
         try:
             row_index = self.search_results_tv.index(iid)
         except tk.TclError:
             return
-        if row_index >= len(slots):
+
+        target_list = self.last_optimal_results if mode == 'optimal' else self.last_all_results
+        if row_index >= len(target_list):
             return
-        slot = slots[row_index]
+        clicked_row = target_list[row_index]
+        # A manually-inserted row's Alt Options cell always reads 'Manual
+        # Input' (see _add_manual_item_to_results) - never true of a real
+        # row, making it a reliable marker without needing any separate
+        # tracking state that could go stale.
+        if clicked_row[-1] == 'Manual Input':
+            menu = tk.Menu(self, tearoff=0)
+            menu.add_command(label=f"Remove '{clicked_row[3]}' from Build",
+                             command=lambda: self._remove_manual_row_from_results(mode, row_index))
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+            return
+
+        if mode != 'optimal' or not self.build_variants:
+            return  # All Matches' real rows have no context menu, same as before
+
+        build1 = self.build_variants[0]
+        rows, slots = self._build_dict_to_rows(build1, with_slot_keys=True)
+        try:
+            adjusted_index = rows.index(clicked_row)
+        except ValueError:
+            return
+        slot = slots[adjusted_index]
         item = build1.get(slot)
 
         menu = tk.Menu(self, tearoff=0)
@@ -9854,6 +10321,37 @@ class App(tk.Tk):
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _remove_manual_row_from_results(self, mode, row_index):
+        """Removes one manually-added row (see _add_manual_item_to_results)
+        from whichever results listing it's in ('optimal' -> self.
+        last_optimal_results, 'all' -> self.last_all_results), by its
+        exact position. Also removes the matching entry from the
+        persistent tracking list (self.manual_optimal_items/
+        manual_all_items) that's re-applied on every regeneration of that
+        listing - without this, the item would silently reappear the next
+        time something else (Remove on a different slot, Rebuild, etc.)
+        recomputes the list from scratch."""
+        target_list = self.last_optimal_results if mode == 'optimal' else self.last_all_results
+        manual_items = self.manual_optimal_items if mode == 'optimal' else self.manual_all_items
+        if not (0 <= row_index < len(target_list)):
+            return
+        clicked_row = target_list[row_index]
+        for i, item in enumerate(manual_items):
+            candidate_row = (
+                '', '', (item.get('Slot') or '').strip().title(), item.get('Item', ''),
+                item.get('Type', ''), item.get('Spell', ''), item.get('Sigil', ''),
+                item.get('Level', ''), item.get('Mob', ''), item.get('Area', ''),
+                '████████', 'Manual Input'
+            )
+            if candidate_row == clicked_row:
+                del manual_items[i]
+                break
+        del target_list[row_index]
+        self.search_results_tv.delete(*self.search_results_tv.get_children())
+        for r in target_list:
+            self.search_results_tv.insert('', 'end', values=r)
+        self._autosize_results_columns()
 
     def _fill_empty_slot_from_full_database(self, slot):
         """Right-click menu action for an empty slot ("Search Full
@@ -9933,7 +10431,7 @@ class App(tk.Tk):
         self.build_variants[0][slot] = item
         self.optimal_build = self.build_variants[0]
 
-        self.last_optimal_results = self._all_variants_rows()
+        self.last_optimal_results = self._apply_manual_optimal_items(self._all_variants_rows())
         self.search_results_tv.delete(*self.search_results_tv.get_children())
         for row in self.last_optimal_results:
             self.search_results_tv.insert('', 'end', values=row)
@@ -9963,7 +10461,7 @@ class App(tk.Tk):
         self.optimal_build = build1
         self.attempted_slots = set(self.attempted_slots) | {slot}
 
-        self.last_optimal_results = self._all_variants_rows()
+        self.last_optimal_results = self._apply_manual_optimal_items(self._all_variants_rows())
         self.search_results_tv.delete(*self.search_results_tv.get_children())
         for row in self.last_optimal_results:
             self.search_results_tv.insert('', 'end', values=row)
@@ -10205,7 +10703,7 @@ class App(tk.Tk):
 
         self.results_display_mode.set('optimal')
         self.notebook.select(self.tab_results)
-        self.last_optimal_results = self._all_variants_rows()
+        self.last_optimal_results = self._apply_manual_optimal_items(self._all_variants_rows())
         self.search_results_tv.delete(*self.search_results_tv.get_children())
         for row in self.last_optimal_results:
             self.search_results_tv.insert('', 'end', values=row)
@@ -10494,7 +10992,7 @@ class App(tk.Tk):
         # full-database fallback fills.
         self._bank_owned_keys = owned_keys
         try:
-            self.last_optimal_results = self._all_variants_rows()
+            self.last_optimal_results = self._apply_manual_optimal_items(self._all_variants_rows())
         finally:
             self._bank_owned_keys = None
         self.search_results_tv.delete(*self.search_results_tv.get_children())
@@ -10865,11 +11363,11 @@ class App(tk.Tk):
         self.slot_alternates = {}
         self.results_display_mode.set('optimal')
 
+        self.last_optimal_results = self._apply_manual_optimal_items(final_rows)
         self.search_results_tv.delete(*self.search_results_tv.get_children())
-        for row in final_rows:
+        for row in self.last_optimal_results:
             self.search_results_tv.insert('', 'end', values=row)
         self._autosize_results_columns()
-        self.last_optimal_results = final_rows
 
         # Declined slots stay eligible for another click; exhausted ones
         # don't - nothing further this button can do would change them.
@@ -11720,6 +12218,13 @@ class App(tk.Tk):
             item_sigil = (item.get('Sigil') or '').strip().lower()
             item_realm = (item.get('Realm') or '').strip()
 
+            # Edibles are handled entirely by the dedicated block near the
+            # end of this method (see self._edible_candidates) - skipped
+            # here so one never ends up sitting in the normal per-slot
+            # candidate pool under whatever raw Slot value it carries.
+            if item_type.strip() == 'edible':
+                continue
+
             # Claws are stored in the source data as Slot=weapon/Type=claw,
             # not a distinct Slot='claw' value - there is no such value
             # anywhere in the bundled equipment list, so any check against
@@ -12170,6 +12675,33 @@ class App(tk.Tk):
         # bases are tracked as a bitmask, one bit each, so the search state -
         # and therefore what gets memoized - stays small enough to explore
         # every real combination instead of committing slot-by-slot.
+        # Edibles - additive and opt-in (see the Edibles tab). Picked here,
+        # before base_list/initial_covered_bitmask below are derived from
+        # covered_bases, so a base an edible already covers is folded into
+        # the DP's starting state exactly like a Required Item/Max Lvl pick
+        # already locked in - it won't redundantly hunt for that same
+        # spell in an armor/jewel slot too. Eligibility itself is
+        # independent of Wanted Spells (see _edible_candidates - driven
+        # entirely by the Edibles tab's own Available Spells whitelist),
+        # but a picked edible whose spell happens to ALSO be a wanted base
+        # still counts as covering it, per that base.
+        if self.edibles_enabled_var.get():
+            max_edibles = int(self.edibles_max_var.get())
+            best_by_base = {}
+            for base, item in self._edible_candidates(min_level, max_level, specific_level):
+                try:
+                    item_level = int(item.get('Level') or 0)
+                except (ValueError, TypeError):
+                    item_level = 0
+                current = best_by_base.get(base)
+                if current is None or item_level > current[1]:
+                    best_by_base[base] = (item, item_level)
+            for i, (base, (item, _lvl)) in enumerate(sorted(best_by_base.items())):
+                if i >= max_edibles:
+                    break
+                build[f'edible_{i + 1}'] = item
+                covered_bases.add(base)
+
         base_list = list(wanted_bases.keys())
         base_bit = {base: (1 << i) for i, base in enumerate(base_list)}
         initial_covered_bitmask = 0
@@ -12388,13 +12920,30 @@ class App(tk.Tk):
                 if slot == 'jewel_2' and prev_jewel_item is not None and item is prev_jewel_item:
                     continue
                 new_bases = item_bitmask & ~covered
+
+                # Wanted Sigil - only counts as an eligibility exemption/
+                # score bonus the FIRST time this sigil type is used
+                # anywhere in the build (only 1 of each sigil type is
+                # wanted, per the user's ask - a repeat use is only
+                # allowed when it's genuinely the sole way to cover
+                # something, e.g. real new spell coverage, which doesn't
+                # depend on this at all). Computed up front so both
+                # eligibility gates below and the score further down share
+                # the same "already spent" check.
+                item_sigil_bit = _sigil_bit_for_item(item)
+                effective_wanted_sigil_match = (
+                    wanted_sigil_match if not (item_sigil_bit & used_sigils) else 0)
+
                 # Same fallback as above: a combo-mandated weapon/shield slot
                 # can still take a zero-new-coverage item (any positive score
                 # from level/tier/etc. beats leaving the slot empty), and so
-                # can an armor item carrying a Wanted Sigil, or (during a
-                # capped-unowned-item search) any slot at all - every other
-                # slot still requires contributing something new.
-                if not new_bases and not wanted_sigil_match and lookup_slot not in fallback_eligible_slots:
+                # can an armor item carrying a Wanted Sigil not already used
+                # elsewhere, or (during a capped-unowned-item search) any
+                # slot at all - every other slot still requires contributing
+                # something new. A repeat-sigil item with no new coverage of
+                # its own is no longer exempted here - the slot is left
+                # empty instead of getting a purely cosmetic duplicate.
+                if not new_bases and not effective_wanted_sigil_match and lookup_slot not in fallback_eligible_slots:
                     continue
                 # The capped-search armor/jewel fallback above is only meant
                 # to fill a slot nothing else can reach at all (item_bitmask
@@ -12405,10 +12954,17 @@ class App(tk.Tk):
                 # tiers is one requirement, not two, and the two tiers don't
                 # stack in-game either - so two slots both carrying evade.
                 # enhance (say, .i and .ii) is a real duplicate, not a minor
-                # cosmetic one, even though weapon/shield/weapon_off keep the
-                # older, looser exemption (a combo mandates one of those be
-                # filled regardless of what it carries).
-                if (not new_bases and not wanted_sigil_match and item_bitmask
+                # cosmetic one. This is absolute - NOT exempted by
+                # effective_wanted_sigil_match, unlike the gate above: an
+                # item picked purely for a Wanted Sigil still can't be one
+                # that redundantly restates an already-covered wanted base
+                # at a different tier (e.g. wisdom.iii already covered
+                # elsewhere - an item carrying wisdom.ii doesn't get a pass
+                # just because it also has the sigil). weapon/shield/
+                # weapon_off keep the older, looser exemption (a combo
+                # mandates one of those be filled regardless of what it
+                # carries).
+                if (not new_bases and item_bitmask
                         and lookup_slot not in ('weapon', 'weapon_off', 'shield')):
                     continue
                 if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
@@ -12442,15 +12998,16 @@ class App(tk.Tk):
 
                 # Sigil-diversity tie-break - see SIGIL_DIVERSITY_RESCALE
                 # above. Only ever decides between candidates already tied
-                # on everything else, including Level.
-                item_sigil_bit = _sigil_bit_for_item(item)
+                # on everything else, including Level. item_sigil_bit/
+                # effective_wanted_sigil_match were already computed above,
+                # before the eligibility gates.
                 is_new_sigil = 1 if item_sigil_bit and not (item_sigil_bit & used_sigils) else 0
 
                 step_score = SIGIL_DIVERSITY_RESCALE * (
                               bin(new_bases).count('1') * W_COVERAGE
                               + effective_priority_matches * W_PRIORITY
                               + effective_tier_priority_match * W_TIER_PRIORITY
-                              + wanted_sigil_match * W_WANTED_SIGIL
+                              + effective_wanted_sigil_match * W_WANTED_SIGIL
                               + owned_match * W_BANK_OWNED
                               + sigil_match * W_SIGIL_MATCH
                               + sigil_level * W_SIGIL_LEVEL
@@ -12734,15 +13291,16 @@ class App(tk.Tk):
         if not self._suppress_results_redraw:
             self.notebook.select(self.tab_results)
 
-        # Slots worth flagging as "No suitable item found" (via
-        # _build_dict_to_rows) if they stay unfilled. weapon/shield/claw are
-        # always eligible (always-fill slots, or only in slots_to_fill at
-        # all when their combo is checked) - an empty one there is always
-        # worth a note. Armor/jewel slots are only eligible when at least
-        # one wanted/priority spell couldn't be covered anywhere in the
-        # whole build - an empty armor/jewel slot while everything wanted
-        # is already covered elsewhere just means it wasn't needed, not
-        # that the search failed to find anything for it.
+        # Every slot the search actually tried to fill (per the current
+        # armor/weapon/jewel checkboxes) is worth flagging as "No suitable
+        # item found" via _build_dict_to_rows if it stays unfilled - shown
+        # unconditionally now, not just when some wanted/priority spell
+        # went uncovered elsewhere. An empty armor/jewel slot no longer
+        # means "everything wanted was already covered elsewhere, so it
+        # wasn't needed" - the redundant-spell/Wanted-Sigil-dedup rules
+        # above can legitimately leave a checked slot empty even when
+        # every wanted spell IS covered, and that's worth surfacing rather
+        # than silently hiding the slot.
         uncovered = sorted(set(wanted_bases) - covered_bases)
         # Exposed for _search_missing_slots, which needs to know exactly
         # which original wanted-spell chips (not just bare base names) went
@@ -12751,11 +13309,7 @@ class App(tk.Tk):
         # reassign an already-covered spell to a different slot).
         self.last_uncovered_bases = set(uncovered)
         self.last_wanted_chips_by_base = dict(wanted_bases)
-        if uncovered:
-            self.attempted_slots = set(slots_to_fill)
-        else:
-            self.attempted_slots = {s for s in slots_to_fill
-                                    if s in ('weapon', 'weapon_off', 'shield') or s.startswith('claw')}
+        self.attempted_slots = set(slots_to_fill)
 
         # Store and display every build variant stacked together, separated by
         # a thin black divider row, with Build 1 on top - the actual Treeview
@@ -12765,7 +13319,7 @@ class App(tk.Tk):
         # determine what's uncovered and to power _find_best_item_for_slot's
         # own candidate pool (self.items_by_slot, set earlier in this same
         # method, unaffected by suppression).
-        self.last_optimal_results = self._all_variants_rows()
+        self.last_optimal_results = self._apply_manual_optimal_items(self._all_variants_rows())
         if not self._suppress_results_redraw:
             for row in self.last_optimal_results:
                 self.search_results_tv.insert('', 'end', values=row)
@@ -12970,6 +13524,12 @@ class App(tk.Tk):
             item_spell = (item.get('Spell') or '').lower()
             item_type = (item.get('Type') or '').lower()
 
+            # Edibles are handled entirely by the dedicated block below (see
+            # self._edible_candidates) - skipped here so one never shows up
+            # twice under whatever raw Slot value it happens to carry.
+            if item_type.strip() == 'edible':
+                continue
+
             # Claws are stored in the source data as Slot=weapon/Type=claw,
             # not a distinct Slot='claw' value - see _find_optimal_build.
             is_claw_item = item_slot == 'weapon' and 'claw' in item_type
@@ -13166,6 +13726,15 @@ class App(tk.Tk):
                 items_by_slot[bucket_slot] = []
             items_by_slot[bucket_slot].append(item)
 
+        # Edibles - additive, opt-in (see the Edibles tab). Unlike every
+        # other bucket above, not capped by Max Edibles Used here - "Show
+        # All Matches" shows every matching candidate regardless of slot,
+        # and that cap only bounds how many end up USED in an actual build
+        # (see _find_optimal_build), which this view doesn't compute.
+        if self.edibles_enabled_var.get():
+            for _base, item in self._edible_candidates(min_level, max_level, specific_level):
+                items_by_slot.setdefault('edible', []).append(item)
+
         # Display ALL matching items (not just one per slot)
         # Group by slot for better organization
         all_matches = []
@@ -13175,8 +13744,8 @@ class App(tk.Tk):
                 all_matches.append((slot_key, item))
         
         # Sort by slot order for display
-        slot_priority = {'head': 1, 'jewel': 2, 'cloak': 3, 'body': 4, 'hands': 5, 
-                        'legs': 6, 'feet': 7, 'weapon': 8, 'shield': 9, 'claw': 10}
+        slot_priority = {'head': 1, 'jewel': 2, 'cloak': 3, 'body': 4, 'hands': 5,
+                        'legs': 6, 'feet': 7, 'weapon': 8, 'shield': 9, 'claw': 10, 'edible': 11}
         all_matches.sort(key=lambda x: slot_priority.get(x[0], 99))
         
         # Track which spells are covered
@@ -13200,10 +13769,11 @@ class App(tk.Tk):
                     covered_spells.add(wanted)
             
             bank_cell, locker_cell = self._bank_and_locker_cells(item)
+            display_slot = 'stomach' if slot == 'edible' else slot
             row = (
                 bank_cell,
                 locker_cell,
-                slot.title(),
+                display_slot.title(),
                 item.get('Item', ''),
                 item.get('Type', ''),
                 item.get('Spell', ''),
@@ -13215,6 +13785,9 @@ class App(tk.Tk):
                 ''
             )
             self.last_all_results.append(row)
+
+        self.last_all_results = self._apply_manual_all_items(self.last_all_results)
+        for row in self.last_all_results:
             self.search_results_tv.insert('', 'end', values=row)
         self._autosize_results_columns()
 

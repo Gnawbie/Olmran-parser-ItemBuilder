@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v5.6.4</p>
+    <p class="tagline">Full usage guide - v6.0.0</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -189,7 +189,7 @@
     </ul>
 
     <h2 id="build">5. Build Tab</h2>
-    <p>This is where you search a master equipment database for the best gear for your character. It's organized into three inner sub-tabs: Basic Constraints, Bank Build, and Manual. Basic Constraints itself further splits into its own mini-tabs - Basic, Armor Constraints, and Weapon Constraints (sections 5.2-5.4 below) - rather than those being separate top-level sub-tabs. Min/Max/Specific Level and the search buttons (5.7) live inside Basic Constraints' own Wanted Spells column, so they're only visible there - Bank Build has its own per-character Find Best Bank Build button instead, and Manual has its own separate controls entirely (see 5.6).</p>
+    <p>This is where you search a master equipment database for the best gear for your character. It's organized into three inner sub-tabs: Basic Constraints, Bank Build, and Manual. Basic Constraints itself further splits into its own mini-tabs - Basic, Armor Constraints, Weapon Constraints, and Edibles (sections 5.2-5.5 below) - rather than those being separate top-level sub-tabs. Min/Max/Specific Level and the search buttons (5.8) live inside Basic Constraints' own Wanted Spells column, so they're only visible there - Bank Build has its own per-character Find Best Bank Build button instead, and Manual has its own separate controls entirely (see 5.7).</p>
 
     <h3>5.1 Master Database File</h3>
     <ul>
@@ -201,7 +201,7 @@
     <p>Items whose Area is "Class" are excluded from every search entirely at load time (they're role-specific class-quest rewards, not found in the open world) - see the Class Items dropdown below for the one way to still use one deliberately.</p>
 
     <h3>5.2 Basic Constraints</h3>
-    <p>The "Build Constraints" box near the top of this sub-tab is itself a small mini-notebook with 3 tabs - <b>Basic</b> (everything below, through Save Constraints), <b>Armor Constraints</b> (5.3), and <b>Weapon Constraints</b> (5.4). Switching between them doesn't reset or duplicate anything - it's the exact same underlying settings either way, just organized into tabs instead of 3 separate top-level sub-tabs.</p>
+    <p>The "Build Constraints" box near the top of this sub-tab is itself a small mini-notebook with 4 tabs - <b>Basic</b> (everything below, through Save Constraints), <b>Armor Constraints</b> (5.4), <b>Weapon Constraints</b> (5.5), and <b>Edibles</b> (5.3). Switching between them doesn't reset or duplicate anything - it's the exact same underlying settings either way, just organized into tabs instead of separate top-level sub-tabs.</p>
     <p><b>Desired Spells</b> - pick spells from category dropdowns instead of typing them, each paired with a tier dropdown ((any), i, ii, iii):</p>
     <ul>
       <li><b>Basic</b> - Agility, Bless, Dexterity, Constitution, Intelligence, Wisdom, Strength, Evade, Combat, Tough.skin</li>
@@ -211,7 +211,8 @@
       <li><b>Protects</b> - the 8 elemental/mental protects (Cold/Earth/Elemental/Fire/Lightning/Mental/Shock/Water), with their own minor/normal/improved tier labels instead of i/ii/iii</li>
     </ul>
     <p>Some spells restrict which tiers are selectable (Agility/Bless cap at ii; Class Specific spells cap at ii; Disease.resist alone goes up to tier iv) - the tier dropdown greys out anything that spell can't reach. Click <b>Add to List</b> to add the current dropdown selection as a removable chip under <b>Wanted Spells</b>. Requesting the same spell at two different tiers (e.g. Dexterity i and Dexterity iii) is treated as one requirement, not two.</p>
-    <p><b>Wanted Sigils</b> - pick one or more Sigil types (Cold/Earth/Fire/Lightning/Pain/Shock/Water) and the search actively favors armor carrying them, the same way it does for Wanted Spells - useful since many armor pieces carry a Sigil but no Spell at all. Unlike spells, sigils don't need to be exclusive to one slot - multiple slots can each independently carry a wanted Sigil, and a Wanted Spell always outranks a Wanted Sigil for the same slot. Separately, whenever two candidates for a slot are otherwise exactly tied, the search prefers whichever one's Sigil isn't already used elsewhere in the build - a last-resort tie-break only, never able to override a genuinely better item. Each chip also has two circles for a firmer ask than that passive preference: <b>red</b> requires one piece of gear carrying that sigil AND any Wanted/Priority spell; <b>blue</b> instead requires that sigil AND a matching Protect spell (that element's own, or the generic Elemental Protect), independent of the Wanted Spells list entirely. The two are mutually exclusive per sigil, and both are enforced even if it means leaving some other slot empty.</p>
+    <p><b>Wanted Sigils</b> - pick one or more Sigil types (Cold/Earth/Fire/Lightning/Pain/Shock/Water) and the search actively favors armor carrying them, the same way it does for Wanted Spells - useful since many armor pieces carry a Sigil but no Spell at all. Only one item per Sigil type earns this preference across the whole build - once a Sigil's already been used somewhere, a slot with nothing else going for it (no Wanted Spell of its own) is left empty rather than getting a second, purely cosmetic copy of the same Sigil. A slot only ever reuses an already-claimed Sigil when doing so is the sole way to cover a genuine, otherwise-unreachable Wanted Spell - reuse for coverage's own sake is always fine, only the empty cosmetic case is excluded. A Wanted Spell always outranks a Wanted Sigil for the same slot regardless. Each chip also has two circles for a firmer ask than that passive preference: <b>red</b> requires one piece of gear carrying that sigil AND any Wanted/Priority spell; <b>blue</b> instead requires that sigil AND a matching Protect spell (that element's own, or the generic Elemental Protect), independent of the Wanted Spells list entirely. The two are mutually exclusive per sigil, and both are enforced even if it means leaving some other slot empty.</p>
+    <p><b>No wanted spell ever stacks across two places in the build</b> - requesting the same base spell at two tiers (see above) is one requirement, not two, and this holds no matter which two slots (or an Edible, section 5.3) would otherwise both end up carrying it: only one of them ever actually does, and it's never overridden just because the other candidate happens to also carry a Wanted Sigil.</p>
     <p><b>Priority</b> - pick a spell and a tier (including "(any)"), then click the <b>+</b> button. Tier "(any)" always actively searches for that spell (not just preferred among items that already matched something else). A specific tier instead pairs that spell with that tier, so the search targets exactly it, even over a higher tier that's available elsewhere.</p>
     <p><b>Required Items</b> - type a specific item's name under <b>Require Item:</b> and click <b>Add to Build</b>. It's looked up by exact match first, falling back to a spelling-tolerant fuzzy search that asks you to confirm the closest match if there's no exact hit. Once added it's forced into its slot on every future search, with the rest of the build calculated around it.</p>
     <p><b>Class Items</b> - a typeable field listing every item excluded for being in the "Class" area, formatted as <i>Item-MOB-Spell</i> and sorted by Mob (Mob shown in bold caps). Click or focus it to see the full list in a suggestion popup, or type to filter it by substring (same autocomplete style as the Area Items tab); pick an entry from the popup, then click <b>Add to Build</b> to force it into Required Items - the one deliberate way an otherwise-excluded item can still end up in a build.</p>
@@ -224,9 +225,19 @@
       <li><b>Don't populate slot</b> (default) - no fallback; the slot is left empty</li>
     </ul>
     <p><b>Only Found In</b> (realm filter) - sits next to the Priority box, inside the "Basic" mini-tab. A small two-tab area of its own: the "Only Found In" tab holds Evil, Chaos, Good, Glory Bea, Crafted, Event, or Kaid checkboxes to restrict results to those realms. Leave everything unchecked (or check <b>All</b>) to search every realm except Crafted. Kaid has its own column: <b>Kaid All</b> matches any Kaid sub-realm, or check specific colors (White/Green/Red/Purple) instead - mutually exclusive with Kaid All. <b>Crafted items never appear unless the Crafted checkbox is checked</b>, and a build can include at most one Crafted-realm item even then. Below Crafted are two independent hard exclusions that apply no matter what else is selected above: <b>Non-Kaid</b> (excludes every Kaid realm) and <b>Non-Event</b> (excludes both Event and Glory Bea items). The second tab, <b>Events</b>, lists one checkbox per specific event found in the loaded database (e.g. "Halloween 2020", "Christmas 2023") - checking one lets that event's items through even when the broad Event checkbox above is left unchecked; both work together additively.</p>
-    <p><b>Save Constraints</b> (to the right of Only Found In, above Required Items) - names and saves a full snapshot of every current Basic, Armor, and Weapon Constraints selection at once. Saved sets are listed below the button with <b>Load</b>, <b>Rename</b>, and <b>Delete</b> buttons - selecting an entry only highlights it, so an explicit Load click is needed to actually apply it (protecting against accidentally overwriting constraints you're still setting up). Saving under a name that already exists asks to confirm before overwriting it. Persists across closing and reopening the program.</p>
+    <p><b>Save Constraints</b> (to the right of Only Found In, above Required Items) - names and saves a full snapshot of every current Basic, Armor, Weapon, and Edibles Constraints selection at once, including which specific Events checkboxes are checked. Saved sets are listed below the button with <b>Load</b>, <b>Rename</b>, and <b>Delete</b> buttons - selecting an entry only highlights it, so an explicit Load click is needed to actually apply it (protecting against accidentally overwriting constraints you're still setting up). Saving under a name that already exists asks to confirm before overwriting it. Persists across closing and reopening the program.</p>
 
-    <h3>5.3 Armor Constraints</h3>
+    <h3>5.3 Edibles</h3>
+    <p>This is one of Build Constraints' own mini-tabs (see 5.2) - not a separate top-level sub-tab. Covers consumable items - anything with <b>Type = edible</b> in the master database - which a build can use any number of at once, unlike every other slot here which holds exactly one item.</p>
+    <ul>
+      <li><b>Spell</b>/<b>tier</b> dropdowns and an <b>Add to List</b> button build an <b>Available Spells</b> whitelist, shown as removable chips - the spell dropdown's options are generated directly from whatever Type=edible items are actually in the loaded database (not a fixed list), and the tier dropdown only offers tiers that spell actually has among edible items (no "(any)" option - an entry always targets one specific tier). This list is independent of the real Wanted Spells - an empty list means every edible is eligible; a non-empty one restricts to just edibles matching a listed entry exactly (base and tier both, no falling back to a different tier).</li>
+      <li><b>Add edibles to the build</b> checkbox - unchecked by default. Nothing here has any effect on a real search until this is checked.</li>
+      <li><b>Max Edibles Used</b> slider (1-13, snaps to whole numbers) - caps how many edibles a search will actually use at once.</li>
+      <li>When enabled, Find Optimal Build picks up to that many edibles - the highest-level match per distinct spell among the eligible pool - and adds them to the build as extra <b>Stomach</b> rows in the Results tab. Show All Matches instead lists every eligible edible with no cap, matching that view's "show everything" philosophy.</li>
+      <li>An edible's spell counts toward covering a real Wanted Spell exactly like an armor or weapon item would - if an edible already covers something, no other slot will redundantly carry the same spell at a different tier just because it happened to also be a good pick for its own slot.</li>
+    </ul>
+
+    <h3>5.4 Armor Constraints</h3>
     <p>This is one of Build Constraints' own mini-tabs (see 5.2) - not a separate top-level sub-tab.</p>
     <ul>
       <li>The <b>All:</b> row sets an armor type for every slot at once.</li>
@@ -236,7 +247,7 @@
       <li><b>Set as Default</b> / <b>Clear Default</b> / <b>Clear All</b> manage your saved preferences, persisted between sessions.</li>
     </ul>
 
-    <h3>5.4 Weapon Constraints</h3>
+    <h3>5.5 Weapon Constraints</h3>
     <p>Also one of Build Constraints' own mini-tabs (see 5.2) - not a separate top-level sub-tab.</p>
     <ul>
       <li><b>Weapon Types/Combo's</b> - check whichever your build uses: Dual-Wield 1h, 1h/Shield, 2h/Shield, Two-Handed, 1 Claw, 2 Claw, Fired 1h/Shield. Most have their own Style (Melee/Direct/Parry Staff/Fired) and Damage Type (Slashing/Thrusting/Crushing) dropdowns. Each row sits in its own thin bordered box, alternating between two shades of grey row by row.</li>
@@ -245,7 +256,7 @@
       <li><b>Shield Constraints</b> - Defense and Sigil dropdowns working like Armor Constraints' per-slot versions, plus Leather/Studded/Plate checkboxes (a hard filter, same as Armor Constraints' own - Cloth isn't offered here since shields are never made of cloth in-game).</li>
     </ul>
 
-    <h3>5.5 Bank Build</h3>
+    <h3>5.6 Bank Build</h3>
     <p>Paste a bank/inventory listing from the game and use it as the basis for a search, instead of (or alongside) the full database. Three inner tabs share the idea:</p>
     <ul>
       <li><b>Import</b> - paste a listing, type a <b>Character Name</b>, then click <b>💾 Save to Saved Items</b>. The first time a given name is used, a new tab for that character is created automatically under Character Items (or Lockers, if the Locker checkbox below is checked); using the same name again just updates that character's existing list. Matching is by spelling only, regardless of capitalization - typing "aria" or "ARIA" when "Aria" already exists updates that same character rather than creating a case-sensitive duplicate. This is the only way items get into a character's list now - Import doesn't run a search itself. A <b>Locker</b> checkbox is here too - a Locker isn't a character you play, it's extra bank space (a spare character made just to hold overflow gear). A Locker's non-Kaid gear is automatically folded into every other character's Bank Build search, regardless of that character's own Search all characters setting - unless its own tab has <b>Exclude this Locker from other characters' Bank Build searches</b> checked (unchecked by default), which opts just that one Locker out of everyone else's searches while still showing up normally on its own tab. Toggling this checkbox on a later Import for an existing character moves its tab between Character Items and Lockers automatically.</li>
@@ -263,7 +274,7 @@
     <p>Each character's list reconciles by <b>content type</b> - bank listing vs. inventory/equipped listing - rather than which content was pasted most recently. Updating just a bank paste never wipes out that character's inventory-sourced items, and vice versa; a paste containing both kinds updates both. A second (or further) copy of the same item is listed at the bottom of a list, prefixed "::extra::". Everything persists across closing and reopening the program.</p>
     <p>The 📦 Bank icon appears in the leftmost column of every search's results (Find Optimal Build, Show All Matches, everywhere) whenever an item matches something saved anywhere - any character, or the older Main-only leftover data. If the item instead came from a Locker, that column shows a bold "L" and the Results tab's Locker column (see 6) shows which one.</p>
 
-    <h3>5.6 Manual</h3>
+    <h3>5.7 Manual</h3>
     <p>A standalone spell/tier database lookup, completely separate from the actual build search - nothing picked here ever feeds into Find Optimal Build/Show All Matches, and nothing from Basic/Armor/Weapon Constraints feeds into it either.</p>
     <ul>
       <li>Wanted Spell chips here are entirely optional - with none added, every item matching the other active constraints below shows up already; picking a spell from a category dropdown, an <b>exact</b> tier (no "any tier or higher" fallback - this is a precise lookup, not a build search), and clicking <b>Add to List</b> just narrows that down further to items whose Spell exactly matches. Add more than one spell/tier to see the combined (union) results.</li>
@@ -271,12 +282,12 @@
       <li>A <b>Level</b> range (min/max, blank side unbounded) - its own independent filter, separate from Basic Constraints' Level fields.</li>
       <li><b>Only Found In</b> and <b>Armor Type</b>/<b>Weapon</b>/<b>Melee/Shield</b>/<b>Jewel</b> mini-notebooks sit beside the spell dropdowns - each is an independent copy of the same-named controls elsewhere (Only Found In's Realms+Events, Armor Constraints' per-slot Defense/Sigil plus a simplified Cloth/Leather/Studded/Plate checklist, Weapon Constraints' Weapon Types/Combo's, Melee Weapon/Shield Constraints, and a Sigil dropdown for jewels). None of it is shared with the real tabs - it only ever affects Manual's own results.</li>
       <li>Armor Type's per-slot rows (Head/Cloak/Body/Hands/Legs/Feet) each have their own checkbox before the label too - checking one or more restricts the list to just those specific pieces, on top of whatever the broader Armor/Weapons/Jewel checkboxes above already allow.</li>
-      <li>Right-click any row in the results table for <b>Add to Results Tab</b> - unlike a real build, more than one item can go into the same slot this way (e.g. 3 different body pieces), since this is a flat list you're curating by hand, not a computed build. Adding an item stays on the Manual tab rather than switching away. Once something's been added this way, right-click a row in the Results tab itself for <b>Remove from list</b>.</li>
+      <li>Right-click any row in the results table for <b>Add to Results Tab</b> - it adds into whichever Results view is currently showing (Best Per Slot, All Matches, or Manual's own flat list). For Best Per Slot/All Matches, an empty slot of the matching type is filled in place first if one's available; only once every empty slot of that type is already taken does the addition group as an extra row alongside it (so more than one item can occupy the same slot, e.g. 3 different body pieces - this is a curated addition, not a computed build). Manually-added gear survives Remove/Rebuild/Search Missing Slots elsewhere in the build, rather than only lasting until the next one of those recomputes the list. Right-click a manually-added row in the Results tab itself for <b>Remove</b>. Adding an item never switches away from the Manual tab.</li>
       <li>Click any column header in the results table to sort by it; click again to reverse.</li>
     </ul>
 
-    <h3>5.7 Search Controls</h3>
-    <p>Min/Max/Specific Level, the "If no match at Specific Level" fallback options, and the three buttons below sit in the Wanted Spells column, right below <b>Clear All</b>. Since they're part of Basic Constraints' own layout, they're only visible while Basic Constraints is the selected sub-tab - not on Bank Build (which has its own per-character Find Best Bank Build button instead) or Manual (which has its own separate controls entirely - see 5.6).</p>
+    <h3>5.8 Search Controls</h3>
+    <p>Min/Max/Specific Level, the "If no match at Specific Level" fallback options, and the three buttons below sit in the Wanted Spells column, right below <b>Clear All</b>. Since they're part of Basic Constraints' own layout, they're only visible while Basic Constraints is the selected sub-tab - not on Bank Build (which has its own per-character Find Best Bank Build button instead) or Manual (which has its own separate controls entirely - see 5.7).</p>
     <ul>
       <li><b>🎯 Find Optimal Build</b> - exact search across every slot at once for the combination covering as many wanted spells as possible under your constraints.</li>
       <li><b>📋 Show All Matches</b> - lists every item matching your filters, without narrowing to one per slot.</li>
@@ -287,7 +298,9 @@
     <ul>
       <li><b>Display: Best Per Slot / All Matches</b> toggles between the two search modes above.</li>
       <li><b>Build Variant</b> dropdown - active when multiple build options were generated.</li>
-      <li>Columns: Bank icon, <b>Locker</b>, Slot, Item, Type, Spell, Sigil, Level, Mob, Area, and <b>Alt Options</b> (other items that tied for that slot). The Locker column shows the first 4 letters of a Locker character's name whenever a row's item came from one - the Bank column shows a bold "L" instead of the usual 📦 for those rows.</li>
+      <li>Columns: Bank icon, <b>Locker</b>, Slot, Item, Type, Spell, Sigil, Level, Mob, Area, and <b>Alt Options</b> (other items that tied for that slot). The Locker column shows the first 4 letters of a Locker character's name whenever a row's item came from one - the Bank column shows a bold "L" instead of the usual 📦 for those rows. Edibles show as <b>Stomach</b> in the Slot column.</li>
+      <li>Every slot the search actually tried to fill shows a row, even if it stays empty ("No suitable item found") - this no longer depends on whether some other slot happened to leave a wanted spell uncovered.</li>
+      <li>A row added via the Manual tab (see 5.7) shows "Manual Input" in Alt Options - right-click it for a simple <b>Remove</b>, distinct from the options below (which resolve back to a real build slot).</li>
       <li><b>Right-click a filled item</b> to remove it from the build - the slot stays visible showing "No suitable item found" rather than disappearing, and it stays excluded from every future search until a genuinely new search runs. Two buttons appear once something's been removed:
         <ul>
           <li><b>Rebuild (Full Database)</b> - recomputes the whole build, re-searching everywhere, excluding what's been removed.</li>
