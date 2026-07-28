@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.1.3"
+VERSION = "6.2.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -817,9 +817,13 @@ class LootParser:
 # ─────────────────────────────────────────────────────────────
 
 COLORS = {
-    'chat':   'FF4472C4',  # blue
-    'combat': 'FFED7D31',  # orange
-    'loot':   'FF70AD47',  # green
+    'chat':       'FF4472C4',  # blue
+    'combat':     'FFED7D31',  # orange
+    'loot':       'FF70AD47',  # green
+    'xp':         'FF9E58C6',  # purple
+    'damage':     'FFC00000',  # red
+    'pvp_dealt':  'FF7F6000',  # dark gold
+    'pvp_taken':  'FF808080',  # grey
 }
 
 def write_sheet(ws, rows: list, fields: list, sheet_type: str):
@@ -923,11 +927,52 @@ DEFAULT_FIELDS = {
         {'label': 'Weight',     'source_key': 'Weight',     'col': 16},
         {'label': 'Notes',      'source_key': 'Notes',      'col': 17},
     ],
+    # The four Counters (see _compute_xp_stats/_compute_damage_stats/
+    # _compute_pvp_damage_stats) each already return their per-event rows
+    # as plain dicts with these exact (lowercase) keys - reused as-is here
+    # rather than re-shaping them, unlike Chat/Combat/Loot's own
+    # Title-Case keys from ChatParser/CombatParser/LootParser.
+    'xp': [
+        {'label': 'Timestamp',  'source_key': 'timestamp', 'col': 1},
+        {'label': 'Area',       'source_key': 'area',      'col': 2},
+        {'label': 'XP Gained',  'source_key': 'xp',        'col': 3},
+        {'label': 'File',       'source_key': 'file',      'col': 4},
+    ],
+    'damage': [
+        {'label': 'Timestamp',  'source_key': 'timestamp', 'col': 1},
+        {'label': 'Mob',        'source_key': 'mob',       'col': 2},
+        {'label': 'Damage',     'source_key': 'damage',    'col': 3},
+        {'label': 'Weapon',     'source_key': 'weapon',    'col': 4},
+        {'label': 'File',       'source_key': 'file',      'col': 5},
+    ],
+    'pvp_dealt': [
+        {'label': 'Timestamp',   'source_key': 'timestamp', 'col': 1},
+        {'label': 'Player Hit',  'source_key': 'player',    'col': 2},
+        {'label': 'Damage',      'source_key': 'damage',    'col': 3},
+        {'label': 'Weapon',      'source_key': 'weapon',    'col': 4},
+        {'label': 'File',        'source_key': 'file',      'col': 5},
+    ],
+    'pvp_taken': [
+        {'label': 'Timestamp',          'source_key': 'timestamp', 'col': 1},
+        {'label': 'Attacking Player',   'source_key': 'player',    'col': 2},
+        {'label': 'Damage',             'source_key': 'damage',    'col': 3},
+        {'label': 'Weapon',             'source_key': 'weapon',    'col': 4},
+        {'label': 'File',               'source_key': 'file',      'col': 5},
+    ],
 }
 
 CHAT_SOURCES   = ['Timestamp','Channel','Speaker','Target','Message','File']
 COMBAT_SOURCES = ['Timestamp','Location','Attacker','Target','Action','Damage','Spell','Event','Full','File']
 LOOT_SOURCES   = ['Realm','Area','Mob','Item','Slot','Type','Spell','Level','Damage','Timer','Fumble','Accuracy','Defense','Sigil','SigilLvl','Weight','Notes','Timestamp','Location','Source','Quantity','Silver','Event','Full','File']
+XP_SOURCES     = ['timestamp', 'area', 'xp', 'file']
+DAMAGE_SOURCES = ['timestamp', 'mob', 'damage', 'weapon', 'file']
+PVP_SOURCES    = ['timestamp', 'player', 'damage', 'weapon', 'file']
+
+# Field-type mode names, in the exact order their mini-tabs are built in
+# self.fields_notebook (see _build_fields_tab) - shared by
+# _get_current_field_mode/_refresh_all_fields so both stay in sync with
+# however many tabs actually exist.
+FIELD_MODES = ['chat', 'combat', 'loot', 'xp', 'damage', 'pvp_dealt', 'pvp_taken']
 
 # Spell name options for the Build tab category dropdowns.
 SPELL_CATEGORIES = {
@@ -979,6 +1024,15 @@ MAX_CRAFTED_ITEMS = 1
 # Cap on how many alternate full-build variants "Generate multiple build
 # options" will produce (in addition to the primary optimal build).
 MAX_BUILD_VARIANTS = 10
+
+# Counters sub-tab's "Load Log Files" table (see _build_file_list_section's
+# resizable=True path) - drag-resizable between these row counts (a plain
+# row-count clamp, not a pixel one, since ttk.Treeview's own height option
+# is already expressed in rows). MAX matches every other copy of this
+# table's fixed height (Files & Search, unaffected by this feature).
+COUNTERS_FILE_LIST_MIN_ROWS = 3
+COUNTERS_FILE_LIST_MAX_ROWS = 8
+COUNTERS_FILE_LIST_DEFAULT_ROWS = 4  # half of MAX, the initial size before any drag
 
 # Highest value the Edibles tab's slider allows for "Max Edibles Used" -
 # also how many edible_N slot keys _build_dict_to_rows/_find_optimal_build
@@ -1471,7 +1525,9 @@ class FieldEditorDialog(tk.Toplevel):
         super().__init__(parent)
         self.result = None
         self.mode = mode
-        source_opts = {'chat': CHAT_SOURCES, 'combat': COMBAT_SOURCES, 'loot': LOOT_SOURCES}[mode]
+        source_opts = {'chat': CHAT_SOURCES, 'combat': COMBAT_SOURCES, 'loot': LOOT_SOURCES,
+                       'xp': XP_SOURCES, 'damage': DAMAGE_SOURCES,
+                       'pvp_dealt': PVP_SOURCES, 'pvp_taken': PVP_SOURCES}[mode]
 
         self.title("Edit Field" if existing else "Add Field")
         self.resizable(False, False)
@@ -1967,7 +2023,8 @@ class App(tk.Tk):
         self._set_app_icon()
 
         self.files: list[dict] = []       # {path, name, size, type}
-        self.parsed = {'chat': [], 'combat': [], 'loot': []}
+        self.parsed = {'chat': [], 'combat': [], 'loot': [],
+                       'xp': [], 'damage': [], 'pvp_dealt': [], 'pvp_taken': []}
         self.fields = {k: [dict(f) for f in v] for k, v in DEFAULT_FIELDS.items()}
 
         # Config file for persistent settings
@@ -2067,6 +2124,11 @@ class App(tk.Tk):
                     # Parse tab's PvP Damage Counter - saved dealt/taken
                     # damage reports, same pattern as damage_reports above.
                     self._persisted_pvp_damage_reports = config.get('pvp_damage_reports', [])
+                    # Counters sub-tab's resizable "Load Log Files" table -
+                    # last row count the user dragged it to (see
+                    # _build_file_list_section's resizable=True path).
+                    self._persisted_counters_file_rows = config.get(
+                        'counters_file_list_rows', COUNTERS_FILE_LIST_DEFAULT_ROWS)
                     # Lockers' "+" tab Locker Groups - raw {'id','name'}
                     # pairs only, turned into real notebooks (each its own
                     # tab of self.bank_lockers_sub_notebook) in
@@ -2091,6 +2153,7 @@ class App(tk.Tk):
                 self._persisted_xp_reports = []
                 self._persisted_damage_reports = []
                 self._persisted_pvp_damage_reports = []
+                self._persisted_counters_file_rows = COUNTERS_FILE_LIST_DEFAULT_ROWS
                 self._persisted_locker_groups = []
                 self._persisted_locker_group_counter = 0
         except Exception:
@@ -2109,6 +2172,7 @@ class App(tk.Tk):
             self._persisted_xp_reports = []
             self._persisted_damage_reports = []
             self._persisted_pvp_damage_reports = []
+            self._persisted_counters_file_rows = COUNTERS_FILE_LIST_DEFAULT_ROWS
             self._persisted_locker_groups = []
             self._persisted_locker_group_counter = 0
 
@@ -2162,6 +2226,8 @@ class App(tk.Tk):
                     {'name': rep['name'], 'data': rep['data']}
                     for rep in getattr(self, 'pvp_damage_saved_reports', [])
                 ],
+                'counters_file_list_rows': getattr(
+                    self, '_counters_file_rows', COUNTERS_FILE_LIST_DEFAULT_ROWS),
             }
             if getattr(self, 'is_test_build', False):
                 # Basic Constraints' current selections - TEST BUILD ONLY,
@@ -2900,13 +2966,20 @@ class App(tk.Tk):
         self._build_saved_builds_tab()
         self._build_area_items_tab()
 
-    def _build_file_list_section(self, parent):
+    def _build_file_list_section(self, parent, resizable=False):
         """Builds one copy of the "Load Log Files" section (toolbar +
         file table + hint) in the given parent and returns its Treeview.
         Called once per sub-tab that needs it - every copy is tracked in
         self.file_tvs/self.file_count_lbls and kept in sync by
         _refresh_file_list, so loading or removing files from any one of
-        them updates them all."""
+        them updates them all.
+
+        resizable=True (only the Counters sub-tab's copy uses this) adds a
+        drag handle below the table - dragging it changes the table's row
+        count between COUNTERS_FILE_LIST_MIN_ROWS and _MAX_ROWS (MAX is
+        this same table's fixed height everywhere else), giving more or
+        less room to the XP/Damage/PvP Damage notebook packed below it in
+        the same parent. See _start_counters_file_resize and friends."""
         ttk.Label(parent, text="Load Log Files",
                   font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0, 8))
 
@@ -2922,9 +2995,15 @@ class App(tk.Tk):
 
         cols = ('File', 'Type', 'Size')
         frame = ttk.Frame(parent)
-        frame.pack(fill='both', expand=True, pady=8)
+        frame.pack(fill='both', expand=(not resizable), pady=(8, 0 if resizable else 8))
 
-        file_tv = ttk.Treeview(frame, columns=cols, show='headings', height=8)
+        if resizable:
+            initial_rows = getattr(self, '_persisted_counters_file_rows', COUNTERS_FILE_LIST_DEFAULT_ROWS)
+            initial_rows = max(COUNTERS_FILE_LIST_MIN_ROWS, min(COUNTERS_FILE_LIST_MAX_ROWS, initial_rows))
+        else:
+            initial_rows = COUNTERS_FILE_LIST_MAX_ROWS
+
+        file_tv = ttk.Treeview(frame, columns=cols, show='headings', height=initial_rows)
         file_tv.heading('File', text='Filename')
         file_tv.heading('Type', text='Auto-Detected Type')
         file_tv.heading('Size', text='Size')
@@ -2937,11 +3016,50 @@ class App(tk.Tk):
         file_tv.pack(side='left', fill='both', expand=True)
         vsb.pack(side='right', fill='y')
 
+        if resizable:
+            self.counters_file_tv = file_tv
+            self._counters_file_rows = initial_rows
+            grip = ttk.Frame(parent, height=8, cursor='sb_v_double_arrow')
+            grip.pack(fill='x', pady=(2, 8))
+            grip_line = ttk.Separator(grip, orient='horizontal')
+            grip_line.place(relx=0.5, rely=0.5, relwidth=1.0, anchor='center')
+            grip_label = ttk.Label(grip, text='⋯', cursor='sb_v_double_arrow',
+                                   font=('Arial', 8), foreground='#888')
+            grip_label.place(relx=0.5, rely=0.5, anchor='center')
+            for w in (grip, grip_line, grip_label):
+                w.bind('<ButtonPress-1>', self._start_counters_file_resize)
+                w.bind('<B1-Motion>', self._do_counters_file_resize)
+                w.bind('<ButtonRelease-1>', self._end_counters_file_resize)
+
         ttk.Label(parent, text="💡 File types are auto-detected (CHAT = Chat logs, ACTION = Action logs)",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w', pady=(0,12))
 
         self.file_tvs.append(file_tv)
         return file_tv
+
+    def _start_counters_file_resize(self, event):
+        self._counters_resize_start_y = event.y_root
+        self._counters_resize_start_rows = self._counters_file_rows
+
+    def _do_counters_file_resize(self, event):
+        if getattr(self, '_counters_resize_start_y', None) is None:
+            return
+        # ~20px per row is a reasonable approximation of this Treeview's
+        # actual rendered row height (Arial 10 on the default ttk theme) -
+        # exact precision doesn't matter since the result is clamped to
+        # whole rows either way, so the drag just needs to feel roughly
+        # 1:1 with the mouse.
+        delta_rows = round((event.y_root - self._counters_resize_start_y) / 20)
+        new_rows = self._counters_resize_start_rows + delta_rows
+        new_rows = max(COUNTERS_FILE_LIST_MIN_ROWS, min(COUNTERS_FILE_LIST_MAX_ROWS, new_rows))
+        if new_rows != self._counters_file_rows:
+            self._counters_file_rows = new_rows
+            self.counters_file_tv.configure(height=new_rows)
+
+    def _end_counters_file_resize(self, event):
+        self._counters_resize_start_y = None
+        self._persisted_counters_file_rows = self._counters_file_rows
+        self._save_config()
 
     # ── PARSE TAB (FILES + PARSING) ───────────────────────────
     def _build_parse_tab(self):
@@ -2979,8 +3097,10 @@ class App(tk.Tk):
 
         # One shared "Load Log Files" section for both counters below,
         # since it's identical either way - kept in sync with Files &
-        # Search's copy above (see _build_file_list_section).
-        self._build_file_list_section(counters_tab)
+        # Search's copy above (see _build_file_list_section). Resizable
+        # here (unlike Files & Search's copy) so it can be shrunk to give
+        # more room to the XP/Damage/PvP Damage notebook below it.
+        self._build_file_list_section(counters_tab, resizable=True)
 
         self.counters_notebook = ttk.Notebook(counters_tab, style='RealmMini.TNotebook')
         self.counters_notebook.pack(fill='both', expand=True, pady=(10, 0))
@@ -3103,9 +3223,35 @@ class App(tk.Tk):
                                          variable=self.do_combat)
         self.combat_cb.pack(side='left', padx=(0,20))
         
-        self.loot_cb = ttk.Checkbutton(opts_frame, text="💎 Loot", 
+        self.loot_cb = ttk.Checkbutton(opts_frame, text="💎 Loot",
                                        variable=self.do_loot)
         self.loot_cb.pack(side='left')
+
+        ttk.Label(parse_frame, text="Counters (Run Parse also exports these if checked):",
+                 font=('Arial', 9)).pack(anchor='w', pady=(8,4))
+
+        counters_opts_frame = ttk.Frame(parse_frame)
+        counters_opts_frame.pack(anchor='w', padx=20)
+
+        # Independent of the Chat/Combat/Loot checkboxes above and their
+        # auto-enable/disable logic (_update_parse_options) - these each
+        # run their own full-file scan (_compute_xp_stats/
+        # _compute_damage_stats/_compute_pvp_damage_stats), the same ones
+        # backing the Counters sub-tab's own buttons, not gated by file
+        # type the way Chat/Combat/Loot are.
+        self.do_xp = tk.BooleanVar(value=False)
+        self.do_damage = tk.BooleanVar(value=False)
+        self.do_pvp_dealt = tk.BooleanVar(value=False)
+        self.do_pvp_taken = tk.BooleanVar(value=False)
+
+        ttk.Checkbutton(counters_opts_frame, text="🧮 XP Counter",
+                       variable=self.do_xp).pack(side='left', padx=(0,20))
+        ttk.Checkbutton(counters_opts_frame, text="⚔ Damage Counter",
+                       variable=self.do_damage).pack(side='left', padx=(0,20))
+        ttk.Checkbutton(counters_opts_frame, text="🗡 PvP Dealt",
+                       variable=self.do_pvp_dealt).pack(side='left', padx=(0,20))
+        ttk.Checkbutton(counters_opts_frame, text="🗡 PvP Taken",
+                       variable=self.do_pvp_taken).pack(side='left')
 
         run_frame = ttk.Frame(t)
         run_frame.pack(pady=8)
@@ -3117,6 +3263,17 @@ class App(tk.Tk):
                    command=lambda: self._show_snapshot('combat')).pack(side='left', padx=6)
         ttk.Button(run_frame, text="👁  Snapshot: Loot",
                    command=lambda: self._show_snapshot('loot')).pack(side='left', padx=6)
+
+        counters_run_frame = ttk.Frame(t)
+        counters_run_frame.pack(pady=(0,8))
+        ttk.Button(counters_run_frame, text="👁  Snapshot: XP",
+                   command=lambda: self._show_snapshot('xp')).pack(side='left', padx=6)
+        ttk.Button(counters_run_frame, text="👁  Snapshot: Damage",
+                   command=lambda: self._show_snapshot('damage')).pack(side='left', padx=6)
+        ttk.Button(counters_run_frame, text="👁  Snapshot: PvP Dealt",
+                   command=lambda: self._show_snapshot('pvp_dealt')).pack(side='left', padx=6)
+        ttk.Button(counters_run_frame, text="👁  Snapshot: PvP Taken",
+                   command=lambda: self._show_snapshot('pvp_taken')).pack(side='left', padx=6)
 
         self.status_var = tk.StringVar(value="Load files and click 'Run Parse' to begin")
         ttk.Label(t, textvariable=self.status_var,
@@ -3131,10 +3288,13 @@ class App(tk.Tk):
         self.stats_frame.pack(side='left')
 
         self.stat_labels = {}
-        for i, (k, icon) in enumerate([('chat','💬'),('combat','⚔️'),('loot','💎')]):
+        stat_tiles = [('chat','💬','Chat'), ('combat','⚔️','Combat'), ('loot','💎','Loot'),
+                      ('xp','🧮','XP'), ('damage','⚔','Damage'),
+                      ('pvp_dealt','🗡','PvP Dealt'), ('pvp_taken','🗡','PvP Taken')]
+        for i, (k, icon, title) in enumerate(stat_tiles):
             f = ttk.Frame(self.stats_frame)
             f.grid(row=0, column=i, padx=20, pady=6)
-            ttk.Label(f, text=f"{icon} {k.title()}", font=('Arial', 10, 'bold')).pack()
+            ttk.Label(f, text=f"{icon} {title}", font=('Arial', 10, 'bold')).pack()
             lbl = ttk.Label(f, text="0 rows", foreground='#555')
             lbl.pack()
             self.stat_labels[k] = lbl
@@ -3241,21 +3401,26 @@ class App(tk.Tk):
                            "Drag rows to reorder, or use Add/Edit/Remove. Column position sets the Excel column (1=A).",
                   foreground='#444').pack(anchor='w', pady=(0,8))
 
-        ttk.Label(t, 
-                 text="💡 Editing fields for types selected in Parse tab (Chat/Combat/Loot checkboxes)", 
+        ttk.Label(t,
+                 text="💡 Editing fields for types checked in Parse tab's Parse Options / Counters row",
                  font=('Arial', 9, 'italic'), foreground='#666').pack(anchor='w', pady=(0,8))
 
         # Create notebook for multiple field types
         self.fields_notebook = ttk.Notebook(t)
         self.fields_notebook.pack(fill='both', expand=True, pady=(0,6))
-        
-        # Create tabs for each type
+
+        # Create tabs for each type - order and set must match FIELD_MODES.
         self.field_frames = {}
         self.field_tvs = {}
-        
-        for field_type, icon in [('chat', '💬'), ('combat', '⚔️'), ('loot', '💎')]:
+
+        FIELD_MODE_LABELS = {
+            'chat': '💬 Chat', 'combat': '⚔️ Combat', 'loot': '💎 Loot',
+            'xp': '🧮 XP Counter', 'damage': '⚔ Damage Counter',
+            'pvp_dealt': '🗡 PvP Dealt', 'pvp_taken': '🗡 PvP Taken',
+        }
+        for field_type in FIELD_MODES:
             frame = ttk.Frame(self.fields_notebook, padding=12)
-            self.fields_notebook.add(frame, text=f"{icon} {field_type.title()}")
+            self.fields_notebook.add(frame, text=FIELD_MODE_LABELS[field_type])
             
             # Treeview for this type
             tree_frame = ttk.Frame(frame)
@@ -3298,8 +3463,8 @@ class App(tk.Tk):
 
         info_frame = ttk.Frame(t)
         info_frame.pack(fill='x', pady=(0,12))
-        ttk.Label(info_frame, 
-                 text="💡 Export settings follow Parse tab selections (Chat/Combat/Loot checkboxes)", 
+        ttk.Label(info_frame,
+                 text="💡 Export settings follow Files & Search's Parse Options/Counters checkboxes",
                  font=('Arial', 9, 'italic'), foreground='#666').pack(anchor='w')
         
         # Summary sheet option
@@ -3646,7 +3811,8 @@ class App(tk.Tk):
             messagebox.showwarning("No Files", "Load some log files first.")
             return
 
-        self.parsed = {'chat': [], 'chat_files': {}, 'combat': [], 'loot': []}
+        self.parsed = {'chat': [], 'chat_files': {}, 'combat': [], 'loot': [],
+                       'xp': [], 'damage': [], 'pvp_dealt': [], 'pvp_taken': []}
         errors = []
 
         for f in self.files:
@@ -3665,6 +3831,23 @@ class App(tk.Tk):
             except Exception as e:
                 errors.append(f"{f['name']}: {e}")
 
+        # The four Counters each scan every loaded file at once (not
+        # gated by a per-file type the way Chat/Combat/Loot are above) -
+        # same underlying methods as the Counters sub-tab's own buttons.
+        try:
+            if self.do_xp.get():
+                xp_data = self._compute_xp_stats()
+                self.parsed['xp'] = xp_data['gains'] if xp_data else []
+            if self.do_damage.get():
+                damage_data = self._compute_damage_stats()
+                self.parsed['damage'] = damage_data['hits'] if damage_data else []
+            if self.do_pvp_dealt.get() or self.do_pvp_taken.get():
+                pvp_data = self._compute_pvp_damage_stats()
+                self.parsed['pvp_dealt'] = pvp_data['dealt']['hits'] if pvp_data and self.do_pvp_dealt.get() else []
+                self.parsed['pvp_taken'] = pvp_data['taken']['hits'] if pvp_data and self.do_pvp_taken.get() else []
+        except Exception as e:
+            errors.append(f"Counters: {e}")
+
         for k, lbl in self.stat_labels.items():
             if k in self.parsed:
                 lbl.config(text=f"{len(self.parsed[k])} rows")
@@ -3672,17 +3855,29 @@ class App(tk.Tk):
         msg = (f"✓  Chat: {len(self.parsed['chat'])} rows  |  "
                f"Combat: {len(self.parsed['combat'])} rows  |  "
                f"Loot: {len(self.parsed['loot'])} rows")
+        counter_parts = []
+        if self.do_xp.get():
+            counter_parts.append(f"XP: {len(self.parsed['xp'])} rows")
+        if self.do_damage.get():
+            counter_parts.append(f"Damage: {len(self.parsed['damage'])} rows")
+        if self.do_pvp_dealt.get():
+            counter_parts.append(f"PvP Dealt: {len(self.parsed['pvp_dealt'])} rows")
+        if self.do_pvp_taken.get():
+            counter_parts.append(f"PvP Taken: {len(self.parsed['pvp_taken'])} rows")
+        if counter_parts:
+            msg += "  |  " + "  |  ".join(counter_parts)
         if errors:
             msg += f"\n⚠ Errors: {'; '.join(errors)}"
         self.status_var.set(msg)
 
     def _show_snapshot(self, mode: str):
+        title = {'pvp_dealt': 'PvP Dealt', 'pvp_taken': 'PvP Taken'}.get(mode, mode.title())
         rows = self.parsed.get(mode, [])
         if not rows:
             messagebox.showinfo("Snapshot",
-                f"No {mode} data yet.\nRun Parse first (with {mode} files loaded).")
+                f"No {title} data yet.\nRun Parse first (with its checkbox checked).")
             return
-        SnapshotViewer(self, mode.title(), rows, self.fields[mode])
+        SnapshotViewer(self, title, rows, self.fields[mode])
 
     def _show_credits(self):
         CreditsDialog(self)
@@ -4905,11 +5100,11 @@ class App(tk.Tk):
     def _get_current_field_mode(self):
         """Get the currently selected field type from notebook tab"""
         tab_index = self.fields_notebook.index(self.fields_notebook.select())
-        return ['chat', 'combat', 'loot'][tab_index]
-    
+        return FIELD_MODES[tab_index]
+
     def _refresh_all_fields(self):
         """Refresh all field treeviews"""
-        for mode in ['chat', 'combat', 'loot']:
+        for mode in FIELD_MODES:
             tv = self.field_tvs[mode]
             tv.delete(*tv.get_children())
             for f in sorted(self.fields[mode], key=lambda x: x['col']):
@@ -4995,7 +5190,9 @@ class App(tk.Tk):
     # ── EXPORT ────────────────────────────────────────────────
     def _export(self):
         total = (len(self.parsed['chat']) + len(self.parsed['combat']) +
-                 len(self.parsed['loot']))
+                 len(self.parsed['loot']) + len(self.parsed.get('xp', [])) +
+                 len(self.parsed.get('damage', [])) + len(self.parsed.get('pvp_dealt', [])) +
+                 len(self.parsed.get('pvp_taken', [])))
         if total == 0:
             messagebox.showwarning("No Data", "Nothing parsed yet. Run Parse first.")
             return
@@ -5049,8 +5246,11 @@ class App(tk.Tk):
             if self.use_master.get() and self.master_path_var.get() and self.parsed['loot']:
                 self._append_to_master()
             
-            # Check if we should export Combat and Loot as separate files
-            if (self.separate_action_exports.get() and 
+            # Check if we should export Combat and Loot as separate files.
+            # Note: this path doesn't carry the four Counters along (it
+            # only ever produces Combat.xlsx/Loot.xlsx) - checking any of
+            # them alongside this option silently exports Combat/Loot only.
+            if (self.separate_action_exports.get() and
                 self.do_combat.get() and self.do_loot.get() and
                 len(self.parsed['combat']) > 0 and len(self.parsed['loot']) > 0):
                 # Export as two separate files
@@ -5086,14 +5286,43 @@ class App(tk.Tk):
                 ws = wb.create_sheet("Loot")
                 write_sheet(ws, self.parsed['loot'], self.fields['loot'], 'loot')
 
+            # Export the four Counters, same as Chat/Combat/Loot above -
+            # each only if its own checkbox is checked and Run Parse
+            # actually found something.
+            if self.do_xp.get() and self.parsed.get('xp'):
+                ws = wb.create_sheet("XP Counter")
+                write_sheet(ws, self.parsed['xp'], self.fields['xp'], 'xp')
+
+            if self.do_damage.get() and self.parsed.get('damage'):
+                ws = wb.create_sheet("Damage Counter")
+                write_sheet(ws, self.parsed['damage'], self.fields['damage'], 'damage')
+
+            if self.do_pvp_dealt.get() and self.parsed.get('pvp_dealt'):
+                ws = wb.create_sheet("PvP Dealt")
+                write_sheet(ws, self.parsed['pvp_dealt'], self.fields['pvp_dealt'], 'pvp_dealt')
+
+            if self.do_pvp_taken.get() and self.parsed.get('pvp_taken'):
+                ws = wb.create_sheet("PvP Taken")
+                write_sheet(ws, self.parsed['pvp_taken'], self.fields['pvp_taken'], 'pvp_taken')
+
             wb.save(path)
             self.export_status.config(
                 text=f"✓ Saved to {os.path.basename(path)}")
+            summary_lines = [
+                f"  Chat:   {len(self.parsed['chat'])} rows",
+                f"  Combat: {len(self.parsed['combat'])} rows",
+                f"  Loot:   {len(self.parsed['loot'])} rows",
+            ]
+            if self.do_xp.get():
+                summary_lines.append(f"  XP Counter: {len(self.parsed.get('xp', []))} rows")
+            if self.do_damage.get():
+                summary_lines.append(f"  Damage Counter: {len(self.parsed.get('damage', []))} rows")
+            if self.do_pvp_dealt.get():
+                summary_lines.append(f"  PvP Dealt: {len(self.parsed.get('pvp_dealt', []))} rows")
+            if self.do_pvp_taken.get():
+                summary_lines.append(f"  PvP Taken: {len(self.parsed.get('pvp_taken', []))} rows")
             messagebox.showinfo("Exported",
-                f"File saved!\n{path}\n\nSheets written:\n"
-                f"  Chat:   {len(self.parsed['chat'])} rows\n"
-                f"  Combat: {len(self.parsed['combat'])} rows\n"
-                f"  Loot:   {len(self.parsed['loot'])} rows")
+                f"File saved!\n{path}\n\nSheets written:\n" + "\n".join(summary_lines))
         except Exception as e:
             messagebox.showerror("Export Error", str(e))
 

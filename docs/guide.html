@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v6.1.3</p>
+    <p class="tagline">Full usage guide - v6.2.0</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -155,6 +155,7 @@
           <li><b>Damage Counter</b> - totals damage dealt to every mob across the loaded log(s), with a <b>Per-Mob Summary</b> (Mob/Damage/Hits/Avg per Hit) and an <b>Every Hit</b> tab listing every individual hit (Timestamp/Mob/Damage/Weapon/File) - sorting Every Hit by Mob groups every hit against one mob together, useful for isolating damage-testing hits on a specific mob without singling it out during logging. The <b>Weapon</b> column shows the melee weapon used, the actual spell cast, or - for a weapon's own innate elemental proc with no cast line - the weapon that triggered it. A hit landing on a player instead of a mob is excluded here entirely - see PvP Damage below.</li>
           <li><b>PvP Damage</b> - splits player-vs-player combat into <b>Damage Dealt</b> (hits you land on another player) and <b>Damage Taken</b> (hits another player lands on you), each with its own Per-Player Summary + Every Hit tables, same layout and columns as the mob Damage Counter. A target is recognized as a player rather than a mob by name shape alone - a bare single word with no leading "a/an/the" article (mob names almost always carry one, e.g. "a tortured spirit"), matching how the game's own combat text distinguishes the two.</li>
           <li>All three counters' tables sort by clicking any column header, and all support a <b>Save</b> button to turn a result into its own persistent, named tab with a <b>Delete</b> button, surviving a restart. Every Gain and Every Hit rows also support right-click <b>Open Log at This Line</b> (see below).</li>
+          <li>This sub-tab's own "Load Log Files" table is drag-resizable from its bottom edge (a small handle just below it) - shrink it to give more room to the XP/Damage/PvP Damage notebook below. Ranges from 8 lines (its original size, the maximum) down to 3, starting at 4 by default; the size you leave it at persists across restarts. Files & Search's own copy of this table is unaffected and stays fixed at 8.</li>
         </ul>
       </li>
       <li><b>Search Logs</b> finds every time an item actually dropped across a whole batch of loaded logs, independent of running a full parse:
@@ -172,22 +173,22 @@
           <li><b>Participated</b> - just a button, no name needed. Finds every "You earn N realm points!" line that ISN'T immediately preceded by "You just killed &lt;name&gt;!" (that combo is a direct kill, already covered by Your Kills) - credit for participating in someone else's kill without landing the final blow yourself. Same <b>Total RP</b>/<b>Participations</b> fields as Your Kills, next to its own Search button.</li>
         </ul>
       </li>
-      <li>Parse options (Chat / Combat / Loot) automatically enable or disable based on which file types are loaded.</li>
-      <li>Use the Snapshot buttons to preview parsed data before exporting.</li>
+      <li>Parse options (Chat / Combat / Loot) automatically enable or disable based on which file types are loaded. A second row of checkboxes - <b>XP Counter</b>, <b>Damage Counter</b>, <b>PvP Dealt</b>, <b>PvP Taken</b> - sits below it, independent of that auto-enable logic; check any of these and click Run Parse to compute that Counter's data (the same engine as the Counters sub-tab's own buttons) and make it available to Export.</li>
+      <li>Use the Snapshot buttons to preview parsed data before exporting - a second row covers the four Counters (XP/Damage/PvP Dealt/PvP Taken).</li>
       <li>Export everything to a formatted Excel workbook.</li>
       <li><b>Credits</b> - far right of the Parse Results row. Opens a popup listing everyone who contributed to the project.</li>
       <li><b>Settings</b> (its own sub-tab) - a mini-notebook holding <b>Fields</b> and <b>Export</b>:
         <ul>
-          <li><b>Fields</b> - customize which fields get extracted for Chat, Combat, and Loot:
+          <li><b>Fields</b> - customize which columns get extracted for each of 7 types: Chat, Combat, Loot, <b>XP Counter</b>, <b>Damage Counter</b>, <b>PvP Dealt</b>, and <b>PvP Taken</b>:
             <ul>
               <li>Add, edit, remove, and reorder fields per data type.</li>
               <li>"Reset to Defaults" restores the built-in field set.</li>
             </ul>
           </li>
-          <li><b>Export</b>:
+          <li><b>Export</b> - writes one sheet per checked type (Chat/Combat/Loot plus any of the 4 Counters checked in Parse Options), each using whatever columns were customized in Fields:
             <ul>
               <li>Create a new Master Loot Database or append to an existing one (fodder items excluded automatically).</li>
-              <li>Export Combat and Loot as separate files if needed.</li>
+              <li>Export Combat and Loot as separate files if needed (this split-file option doesn't carry the 4 Counters along - checking any of them alongside it still exports Combat/Loot only, as two separate files).</li>
               <li>Optional summary sheet with run statistics.</li>
               <li>Each chat log gets its own sheet on export.</li>
             </ul>

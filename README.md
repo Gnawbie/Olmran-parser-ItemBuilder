@@ -137,7 +137,12 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.1.3 (Current)
+### v6.2.0 (Current)
+- The Fields tab (Settings sub-tab) gained 4 new customizable field types - **XP Counter**, **Damage Counter**, **PvP Dealt**, and **PvP Taken** - alongside Chat/Combat/Loot, each with its own Col #/Header Label/Data Source rows (add/edit/remove/reorder/reset all work the same way)
+- Parse Options (Files & Search) gained matching checkboxes for these 4 Counters - checking one and clicking **Run Parse** computes it (same engine as the Counters sub-tab's own buttons) and makes it available to **Export to Excel**, which now writes a sheet per checked Counter using whatever columns were customized in Fields. New Snapshot buttons and Parse Results tiles were added for all 4 as well
+- The Counters sub-tab's **Load Log Files** table is now drag-resizable from its bottom edge - shrink it to give more room to the XP/Damage/PvP Damage notebook below, from 8 lines (its original size, now the maximum) down to a minimum of 3, starting at 4 (half) by default. The last size you drag it to persists across restarts. Files & Search's own copy of this table is unaffected and stays fixed
+
+### v6.1.3
 - Saved Items now default an untagged **Event**-realm item's Gear Tag to **Good Gear** instead of Blank, everywhere the Gear Tag column appears (Main, every character, every Locker) - also feeds into the Good Gear only/Invasion Gear only search filters. An explicit tag (including explicitly choosing Blank) always overrides this default
 
 ### v6.1.2
