@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v6.2.0</p>
+    <p class="tagline">Full usage guide - v6.3.0</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -175,7 +175,7 @@
       </li>
       <li>Parse options (Chat / Combat / Loot) automatically enable or disable based on which file types are loaded. A second row of checkboxes - <b>XP Counter</b>, <b>Damage Counter</b>, <b>PvP Dealt</b>, <b>PvP Taken</b> - sits below it, independent of that auto-enable logic; check any of these and click Run Parse to compute that Counter's data (the same engine as the Counters sub-tab's own buttons) and make it available to Export.</li>
       <li>Use the Snapshot buttons to preview parsed data before exporting - a second row covers the four Counters (XP/Damage/PvP Dealt/PvP Taken).</li>
-      <li>Export everything to a formatted Excel workbook.</li>
+      <li>Export everything to a formatted spreadsheet or plain-text file - see Settings' own Export sub-tab below for the full set of formats and options.</li>
       <li><b>Credits</b> - far right of the Parse Results row. Opens a popup listing everyone who contributed to the project.</li>
       <li><b>Settings</b> (its own sub-tab) - a mini-notebook holding <b>Fields</b> and <b>Export</b>:
         <ul>
@@ -185,12 +185,14 @@
               <li>"Reset to Defaults" restores the built-in field set.</li>
             </ul>
           </li>
-          <li><b>Export</b> - writes one sheet per checked type (Chat/Combat/Loot plus any of the 4 Counters checked in Parse Options), each using whatever columns were customized in Fields:
+          <li><b>Export</b> - customizes and writes out whichever of Chat/Combat/Loot/the 4 Counters actually has data, using whatever columns were set up in Fields:
             <ul>
-              <li>Create a new Master Loot Database or append to an existing one (fodder items excluded automatically).</li>
-              <li>Export Combat and Loot as separate files if needed (this split-file option doesn't carry the 4 Counters along - checking any of them alongside it still exports Combat/Loot only, as two separate files).</li>
-              <li>Optional summary sheet with run statistics.</li>
-              <li>Each chat log gets its own sheet on export.</li>
+              <li><b>File Format</b> dropdown - Excel Workbook (.xlsx, the default), Excel 97-2003 (.xls), OpenDocument Spreadsheet (.ods), CSV, or TSV, with a one-line explanation of whichever is currently selected shown just below it. XLSX/XLS/ODS keep every checked type as a separate sheet in one file; CSV/TSV can't hold more than one table per file, so each checked type instead becomes its own file (named with that type as a suffix) - picking either of those two shows a folder picker instead of a single-file "Save As" dialog, since more than one file is always produced.</li>
+              <li>Optional summary sheet with run statistics - available in every format, though only XLSX gets the fully styled version (bold title, colored header); the others get a plain label/value table with the same information.</li>
+              <li><b>Sheets to Export</b> - a checklist with one entry per Chat file/Combat/Loot/XP Counter/Damage Counter/PvP Dealt/PvP Taken that currently has data, each showing its row count, with Select All/Select None/Refresh buttons. This is what actually decides what gets written - independent of Parse Options' own checkboxes, which only control what gets computed in the first place. It refreshes automatically after Run Parse, and also after using any of the Counters sub-tab's own XP Counter/Damage Counter/PvP Damage Counter buttons directly (no need to run Parse a second time just to make that same data exportable).</li>
+              <li>Two entirely separate destinations, each with its own Output filename and Export button - <b>Export Chat / Combat / Loot</b> (which also carries the Master Database section below) and <b>Export Counters</b> (a plain snapshot file for the 4 Counters, with no master-database/accumulation behavior - just this export's own data, easy to hand to someone without needing this program to view it). Each only ever writes sheets checked above that belong to its own group.</li>
+              <li>Create a new Master Loot Database or append to an existing one (fodder items excluded automatically) - part of the Chat/Combat/Loot destination specifically, always a .xlsx file regardless of the File Format dropdown, since it's a separate persistent database, not this particular export's own output.</li>
+              <li>Export Combat and Loot as separate files if needed - XLSX only, part of the Chat/Combat/Loot destination; disabled automatically for every other format (CSV/TSV are already inherently one-file-per-type, as above).</li>
             </ul>
           </li>
         </ul>

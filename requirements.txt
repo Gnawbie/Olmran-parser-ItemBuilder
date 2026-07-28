@@ -1,2 +1,4 @@
 openpyxl
 pillow
+xlwt
+odfpy

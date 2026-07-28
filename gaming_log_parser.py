@@ -10,13 +10,18 @@ from tkinter import font as tkfont
 import re, os, sys, json, difflib, threading, tempfile, subprocess, webbrowser, urllib.request, urllib.error, zipfile, shutil, traceback
 from pathlib import Path
 from datetime import datetime
+import csv
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+import xlwt
+from odf.opendocument import OpenDocumentSpreadsheet
+from odf.table import Table, TableRow, TableCell
+from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.2.0"
+VERSION = "6.3.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -882,6 +887,159 @@ def write_sheet(ws, rows: list, fields: list, sheet_type: str):
             val = ws.cell(row=ri, column=ci).value or ''
             best = max(best, min(len(str(val)) + 2, 60))
         ws.column_dimensions[col_letter].width = best
+
+
+# Export tab's "File Format" choices - XLSX (openpyxl) is the original,
+# fully-styled format; XLS (xlwt) and ODS (odfpy) get a simpler but still
+# multi-sheet write via write_sheet_xls/write_ods_table; CSV/TSV can't
+# hold multiple sheets at all, so every checked type becomes its own file
+# instead (see App._export_as_csv_tsv).
+EXPORT_FORMATS = ['xlsx', 'xls', 'ods', 'csv', 'tsv']
+EXPORT_FORMAT_LABELS = {
+    'xlsx': 'Excel Workbook (.xlsx)',
+    'xls':  'Excel 97-2003 (.xls)',
+    'ods':  'OpenDocument Spreadsheet (.ods)',
+    'csv':  'CSV (.csv)',
+    'tsv':  'TSV (.tsv)',
+}
+# Shown under the Export tab's File Format dropdown (see
+# _on_export_format_changed) - a one-line plain-English explanation of
+# what picking that format actually means.
+EXPORT_FORMAT_DESCRIPTIONS = {
+    'xlsx': "Modern Excel format - keeps every checked type as its own sheet in one file. "
+            "Opens in Excel, Google Sheets, LibreOffice Calc, etc.",
+    'xls':  "Older Excel format (Excel 97-2003) - still one file with multiple sheets, for "
+            "compatibility with very old software that can't open .xlsx.",
+    'ods':  "OpenDocument Spreadsheet - the native format for LibreOffice Calc/OpenOffice Calc "
+            "(also one file, multiple sheets); opens fine in Excel too.",
+    'csv':  "Plain text, comma-separated - opens in virtually anything. Can't hold more than one "
+            "table per file, so each checked type is saved as its own .csv file.",
+    'tsv':  "Plain text, tab-separated - same idea as CSV, just tab-delimited instead of "
+            "comma-delimited (handy if your data itself contains commas). Also one file per checked type.",
+}
+EXPORT_FORMAT_EXT = {'xlsx': '.xlsx', 'xls': '.xls', 'ods': '.ods', 'csv': '.csv', 'tsv': '.tsv'}
+EXPORT_FORMAT_FILETYPES = {
+    'xlsx': [('Excel Workbook', '*.xlsx'), ('All', '*.*')],
+    'xls':  [('Excel 97-2003', '*.xls'), ('All', '*.*')],
+    'ods':  [('OpenDocument Spreadsheet', '*.ods'), ('All', '*.*')],
+    'csv':  [('CSV', '*.csv'), ('All', '*.*')],
+    'tsv':  [('TSV', '*.tsv'), ('All', '*.*')],
+}
+# Only XLSX/XLS/ODS can hold more than one sheet per file.
+MULTI_SHEET_EXPORT_FORMATS = {'xlsx', 'xls', 'ods'}
+
+# The Export tab's two independent destinations (see _export_main/
+# _export_counters/_export_group) - Chat/Combat/Loot keeps the Master
+# Database/separate-files features; Counters is just a plain snapshot
+# file with neither.
+MAIN_EXPORT_TYPES = {'chat', 'combat', 'loot'}
+COUNTER_EXPORT_TYPES = {'xp', 'damage', 'pvp_dealt', 'pvp_taken'}
+
+# Plain (label, value) shape shared by every format's Summary sheet/file
+# except XLSX, which keeps its own more polished _write_summary instead
+# (bold title, colored header row) - see App._build_summary_rows.
+SUMMARY_FIELDS = [
+    {'label': 'Label', 'source_key': 'label', 'col': 1},
+    {'label': 'Value', 'source_key': 'value', 'col': 2},
+]
+
+
+def write_sheet_xls(ws, rows: list, fields: list, sheet_type: str):
+    """xlwt equivalent of write_sheet, for the legacy .xls format. xlwt's
+    styling is far more limited than openpyxl's (a fixed named-color
+    palette, no auto column width) - kept simple rather than trying to
+    match every visual detail of the xlsx version."""
+    if not rows:
+        ws.write(0, 0, 'No data found for this log type.')
+        return
+
+    header_style = xlwt.easyxf(
+        'font: bold on, color white; align: horiz center, vert center, wrap on; '
+        'pattern: pattern solid, fore_colour blue_gray;')
+    data_style = xlwt.easyxf('font: height 200;')
+
+    max_col = max(f['col'] for f in fields) if fields else 1
+    headers = [''] * max_col
+    for f in fields:
+        headers[f['col'] - 1] = f['label']
+
+    for ci, h in enumerate(headers):
+        ws.write(0, ci, h, header_style)
+
+    for ri, row_data in enumerate(rows, 1):
+        values = [''] * max_col
+        for f in fields:
+            values[f['col'] - 1] = str(row_data.get(f['source_key'], ''))
+        for ci, v in enumerate(values):
+            ws.write(ri, ci, v, data_style)
+
+    for ci, h in enumerate(headers):
+        ws.col(ci).width = 256 * max(10, min(60, len(str(h)) + 8))
+
+
+def write_ods_table(doc, sheet_name: str, rows: list, fields: list):
+    """odfpy equivalent of write_sheet, for the .ods format - one Table
+    per sheet, added straight onto the document's spreadsheet body. Like
+    write_sheet_xls, this skips xlsx's fancier styling (colors, borders,
+    auto column width) in favor of just getting the data across cleanly."""
+    table = Table(name=sheet_name)
+
+    if not rows:
+        tr = TableRow()
+        tc = TableCell(valuetype='string')
+        tc.addElement(OdfP(text='No data found for this log type.'))
+        tr.addElement(tc)
+        table.addElement(tr)
+        doc.spreadsheet.addElement(table)
+        return
+
+    max_col = max(f['col'] for f in fields) if fields else 1
+    headers = [''] * max_col
+    for f in fields:
+        headers[f['col'] - 1] = f['label']
+
+    header_row = TableRow()
+    for h in headers:
+        tc = TableCell(valuetype='string')
+        tc.addElement(OdfP(text=str(h)))
+        header_row.addElement(tc)
+    table.addElement(header_row)
+
+    for row_data in rows:
+        values = [''] * max_col
+        for f in fields:
+            values[f['col'] - 1] = str(row_data.get(f['source_key'], ''))
+        tr = TableRow()
+        for v in values:
+            tc = TableCell(valuetype='string')
+            tc.addElement(OdfP(text=v))
+            tr.addElement(tc)
+        table.addElement(tr)
+
+    doc.spreadsheet.addElement(table)
+
+
+def write_rows_csv(path: str, rows: list, fields: list, delimiter: str = ','):
+    """CSV/TSV writer, shared by both formats (just a different
+    delimiter) - a single table per file, since neither format has any
+    concept of multiple sheets. utf-8-sig (a BOM) so Excel opens it with
+    the right encoding instead of mangling non-ASCII characters."""
+    max_col = max(f['col'] for f in fields) if fields else 1
+    headers = [''] * max_col
+    for f in fields:
+        headers[f['col'] - 1] = f['label']
+
+    with open(path, 'w', newline='', encoding='utf-8-sig') as fh:
+        writer = csv.writer(fh, delimiter=delimiter)
+        if not rows:
+            writer.writerow(['No data found for this log type.'])
+            return
+        writer.writerow(headers)
+        for row_data in rows:
+            values = [''] * max_col
+            for f in fields:
+                values[f['col'] - 1] = str(row_data.get(f['source_key'], ''))
+            writer.writerow(values)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -3458,73 +3616,236 @@ class App(tk.Tk):
         self.tab_export = ttk.Frame(self.settings_sub_notebook, padding=12)
         self.settings_sub_notebook.add(self.tab_export, text='💾  Export')
         t = self.tab_export
-        ttk.Label(t, text="Export to Excel",
+        ttk.Label(t, text="Export",
                   font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0,10))
 
         info_frame = ttk.Frame(t)
         info_frame.pack(fill='x', pady=(0,12))
         ttk.Label(info_frame,
-                 text="💡 Export settings follow Files & Search's Parse Options/Counters checkboxes",
+                 text="💡 Run Parse (Files & Search's Parse Options/Counters checkboxes) first to make data "
+                      "available here, then pick exactly which of it to export below",
                  font=('Arial', 9, 'italic'), foreground='#666').pack(anchor='w')
         
+        # File format - drives the file dialog's extension/filetypes, which
+        # writer functions get used (write_sheet/write_sheet_xls/
+        # write_ods_table/write_rows_csv - see _export), and whether the
+        # "separate Combat/Loot files" option below even applies (CSV/TSV
+        # can't hold more than one table per file at all, so every checked
+        # type already becomes its own file for those two - see
+        # _export_as_csv_tsv).
+        format_frame = ttk.Frame(t)
+        format_frame.pack(fill='x', pady=(0,12))
+        ttk.Label(format_frame, text="File Format:").pack(side='left', padx=(0,8))
+        self.export_format_var = tk.StringVar(value='xlsx')
+        format_combo = ttk.Combobox(format_frame, textvariable=self.export_format_var,
+                                    values=EXPORT_FORMATS, state='readonly', width=8)
+        format_combo.pack(side='left')
+        self.export_format_label_var = tk.StringVar(value=EXPORT_FORMAT_LABELS['xlsx'])
+        ttk.Label(format_frame, textvariable=self.export_format_label_var,
+                 foreground='#666').pack(side='left', padx=(8,0))
+        self.export_format_var.trace_add('write', self._on_export_format_changed)
+
+        self.export_format_desc_var = tk.StringVar(value=EXPORT_FORMAT_DESCRIPTIONS['xlsx'])
+        ttk.Label(t, textvariable=self.export_format_desc_var, wraplength=640,
+                 font=('Arial', 8, 'italic'), foreground='#666',
+                 justify='left').pack(anchor='w', pady=(0,12))
+
         # Summary sheet option
         summary_frame = ttk.Frame(t)
         summary_frame.pack(fill='x', pady=(0,12))
         self.exp_summary = tk.BooleanVar(value=False)
-        ttk.Checkbutton(summary_frame, text="📋 Include Summary Sheet", 
+        ttk.Checkbutton(summary_frame, text="📋 Include Summary Sheet",
                        variable=self.exp_summary).pack(anchor='w')
 
-        # Master file option
-        master_frame = ttk.LabelFrame(t, text="Master Database (Loot Only)", padding=10)
-        master_frame.pack(fill='x', pady=(0,12))
-        
+        # Sheets to Export - every Chat file/Combat/Loot/XP Counter/Damage
+        # Counter/PvP Dealt/PvP Taken that currently has parsed data gets
+        # its own checkbox here (see _refresh_export_sheet_list), decoupled
+        # from Parse Options' own checkboxes - those only control what
+        # gets computed when Run Parse runs, not what actually gets
+        # written out afterward. Defaults to everything checked; existing
+        # checkbox states survive a refresh for whichever entries are
+        # still present. Shared by both export sections below - which of
+        # a section's own types are checked here decides what that
+        # section's own Export button actually writes.
+        sheets_frame = ttk.LabelFrame(t, text="Sheets to Export", padding=10)
+        sheets_frame.pack(fill='both', expand=True, pady=(0,12))
+
+        sheets_btn_row = ttk.Frame(sheets_frame)
+        sheets_btn_row.pack(fill='x', pady=(0,6))
+        ttk.Button(sheets_btn_row, text="Select All",
+                  command=self._select_all_export_sheets).pack(side='left', padx=(0,6))
+        ttk.Button(sheets_btn_row, text="Select None",
+                  command=self._select_no_export_sheets).pack(side='left', padx=(0,6))
+        ttk.Button(sheets_btn_row, text="🔄 Refresh",
+                  command=self._refresh_export_sheet_list).pack(side='left')
+
+        self.export_sheet_vars = {}
+        self.export_sheet_list_frame = ttk.Frame(sheets_frame)
+        self.export_sheet_list_frame.pack(fill='both', expand=True)
+
+        # Two independent destinations, each its own filename and Export
+        # button - so, say, Counters can be saved as a separate plain file
+        # (for someone to open outside this program) without it getting
+        # mixed into the same file as Chat/Combat/Loot, or vice versa.
+        main_export_frame = ttk.LabelFrame(t, text="Export: Chat / Combat / Loot", padding=10)
+        main_export_frame.pack(fill='x', pady=(0,12))
+
+        master_frame = ttk.LabelFrame(main_export_frame, text="Master Database (Loot Only)", padding=10)
+        master_frame.pack(fill='x', pady=(0,10))
+
         checkbox_frame = ttk.Frame(master_frame)
         checkbox_frame.pack(anchor='w', pady=4)
-        
+
         self.use_master = tk.BooleanVar(value=False)
-        ttk.Checkbutton(checkbox_frame, text="📚 Append to Master Database", 
+        ttk.Checkbutton(checkbox_frame, text="📚 Append to Master Database",
                        variable=self.use_master).pack(side='left', padx=(0, 20))
-        
+
         self.exclude_fodder = tk.BooleanVar(value=True)
-        ttk.Checkbutton(checkbox_frame, text="🚫 Exclude Fodder", 
+        ttk.Checkbutton(checkbox_frame, text="🚫 Exclude Fodder",
                        variable=self.exclude_fodder).pack(side='left')
-        
-        ttk.Label(master_frame, text="Master file:", 
+
+        ttk.Label(master_frame, text="Master file:",
                  font=('Arial', 9)).pack(side='left', padx=(0,8))
         self.master_path_var = tk.StringVar(value='')
-        ttk.Entry(master_frame, textvariable=self.master_path_var, 
+        ttk.Entry(master_frame, textvariable=self.master_path_var,
                  width=35, state='readonly').pack(side='left', padx=4)
-        ttk.Button(master_frame, text="Browse...", 
+        ttk.Button(master_frame, text="Browse...",
                   command=self._browse_master).pack(side='left', padx=2)
-        ttk.Button(master_frame, text="Create New", 
+        ttk.Button(master_frame, text="Create New",
                   command=self._create_new_master).pack(side='left', padx=2)
-        
-        ttk.Label(master_frame, 
+
+        ttk.Label(master_frame,
                  text="💡 Master database builds a complete item list across all sessions",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w', pady=(4,0))
 
-        fname_frame = ttk.Frame(t)
-        fname_frame.pack(fill='x', pady=6)
-        ttk.Label(fname_frame, text="Output filename:").pack(side='left')
+        main_fname_frame = ttk.Frame(main_export_frame)
+        main_fname_frame.pack(fill='x', pady=6)
+        ttk.Label(main_fname_frame, text="Output filename:").pack(side='left')
         self.fname_var = tk.StringVar(value='game_log_export')
-        ttk.Entry(fname_frame, textvariable=self.fname_var, width=32).pack(side='left', padx=8)
-        ttk.Label(fname_frame, text=".xlsx").pack(side='left')
-        
-        # Export options
-        export_opts_frame = ttk.Frame(t)
-        export_opts_frame.pack(fill='x', pady=(0,8))
-        
-        self.separate_action_exports = tk.BooleanVar(value=False)
-        ttk.Checkbutton(export_opts_frame, 
-                       text="📂 Export Combat and Loot as separate files (when both selected)", 
-                       variable=self.separate_action_exports).pack(anchor='w')
+        ttk.Entry(main_fname_frame, textvariable=self.fname_var, width=32).pack(side='left', padx=8)
+        self.fname_ext_var = tk.StringVar(value='.xlsx')
+        ttk.Label(main_fname_frame, textvariable=self.fname_ext_var).pack(side='left')
 
-        ttk.Button(t, text="💾  Export to Excel",
-                   command=self._export, width=26).pack(pady=8)
+        main_export_opts_frame = ttk.Frame(main_export_frame)
+        main_export_opts_frame.pack(fill='x', pady=(0,8))
+
+        self.separate_action_exports = tk.BooleanVar(value=False)
+        self.separate_action_cb = ttk.Checkbutton(main_export_opts_frame,
+                       text="📂 Export Combat and Loot as separate files (when both selected, XLSX only)",
+                       variable=self.separate_action_exports)
+        self.separate_action_cb.pack(anchor='w')
+        ttk.Label(main_export_opts_frame,
+                 text="💡 CSV/TSV can't hold more than one table per file, so every checked type is already "
+                      "its own file for those two, regardless of this option.",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(anchor='w', pady=(2,0))
+
+        ttk.Button(main_export_frame, text="💾  Export Chat / Combat / Loot",
+                   command=self._export_main, width=30).pack(pady=(4,0))
+
+        # Counters get their own separate destination - a plain file with
+        # no master-database/accumulation behavior, just this export's own
+        # snapshot, so someone can open it without needing this program.
+        counters_export_frame = ttk.LabelFrame(t, text="Export: Counters (XP / Damage / PvP)", padding=10)
+        counters_export_frame.pack(fill='x', pady=(0,12))
+
+        counters_fname_frame = ttk.Frame(counters_export_frame)
+        counters_fname_frame.pack(fill='x', pady=6)
+        ttk.Label(counters_fname_frame, text="Output filename:").pack(side='left')
+        self.counters_fname_var = tk.StringVar(value='counters_export')
+        ttk.Entry(counters_fname_frame, textvariable=self.counters_fname_var, width=32).pack(side='left', padx=8)
+        self.counters_fname_ext_var = tk.StringVar(value='.xlsx')
+        ttk.Label(counters_fname_frame, textvariable=self.counters_fname_ext_var).pack(side='left')
+
+        ttk.Button(counters_export_frame, text="💾  Export Counters",
+                   command=self._export_counters, width=30).pack(pady=(4,0))
 
         self.export_status = ttk.Label(t, text="", foreground='#226622', font=('Arial', 10))
         self.export_status.pack(anchor='w')
-    
+
+        self._on_export_format_changed()
+        self._refresh_export_sheet_list()
+
+    def _export_candidate_sheets(self):
+        """Every (key, checklist_label, rows, fields, sheet_type, sheet_name)
+        that actually has parsed data right now, regardless of Parse
+        Options' current checkbox state (that only gates what gets
+        computed during Run Parse) - the full candidate list the Export
+        tab's "Sheets to Export" checklist is built from, and the same
+        list _build_export_sheet_list filters down by whichever of those
+        checkboxes are actually checked."""
+        candidates = []
+        for filename, chat_data in self.parsed.get('chat_files', {}).items():
+            if not chat_data:
+                continue
+            sheet_name = os.path.splitext(filename)[0]
+            if len(sheet_name) > 31:
+                sheet_name = sheet_name[:28] + "..."
+            candidates.append((f'chat:{filename}', f"Chat - {filename}", chat_data,
+                               self.fields['chat'], 'chat', sheet_name))
+        type_meta = [
+            ('combat', 'Combat', 'Combat', 'combat'),
+            ('loot', 'Loot', 'Loot', 'loot'),
+            ('xp', 'XP Counter', 'XP Counter', 'xp'),
+            ('damage', 'Damage Counter', 'Damage Counter', 'damage'),
+            ('pvp_dealt', 'PvP Dealt', 'PvP Dealt', 'pvp_dealt'),
+            ('pvp_taken', 'PvP Taken', 'PvP Taken', 'pvp_taken'),
+        ]
+        for key, label, sheet_name, sheet_type in type_meta:
+            rows = self.parsed.get(key)
+            if rows:
+                candidates.append((key, label, rows, self.fields[key], sheet_type, sheet_name))
+        return candidates
+
+    def _refresh_export_sheet_list(self):
+        """Rebuilds the "Sheets to Export" checklist from whatever's
+        currently in self.parsed - called after Run Parse (see
+        _run_parse) and once at Export tab construction, or manually via
+        its own Refresh button. A checkbox for a key that's still present
+        keeps whatever state it already had; anything newly appearing
+        defaults to checked; anything that disappeared (e.g. a file was
+        removed) is simply dropped."""
+        candidates = self._export_candidate_sheets()
+        old_vars = self.export_sheet_vars
+        self.export_sheet_vars = {}
+        for widget in self.export_sheet_list_frame.winfo_children():
+            widget.destroy()
+
+        if not candidates:
+            ttk.Label(self.export_sheet_list_frame,
+                     text="Nothing parsed yet - check some boxes in Parse Options/Counters and Run Parse first.",
+                     foreground='#888').pack(anchor='w')
+            return
+
+        for key, label, rows, fields, sheet_type, sheet_name in candidates:
+            existing = old_vars.get(key)
+            var = existing if existing is not None else tk.BooleanVar(value=True)
+            self.export_sheet_vars[key] = var
+            ttk.Checkbutton(self.export_sheet_list_frame,
+                           text=f"{label} ({len(rows)} rows)",
+                           variable=var).pack(anchor='w')
+
+    def _select_all_export_sheets(self):
+        for var in self.export_sheet_vars.values():
+            var.set(True)
+
+    def _select_no_export_sheets(self):
+        for var in self.export_sheet_vars.values():
+            var.set(False)
+
+    def _on_export_format_changed(self, *_args):
+        """File Format combobox changed - updates the filename extension
+        shown next to Output filename, the friendly format name label, the
+        one-line explanation below the dropdown, and disables "Export
+        Combat and Loot as separate files" for anything that isn't XLSX
+        (its own dedicated feature, unchanged from before this format
+        selector existed)."""
+        fmt = self.export_format_var.get()
+        self.fname_ext_var.set(EXPORT_FORMAT_EXT[fmt])
+        self.counters_fname_ext_var.set(EXPORT_FORMAT_EXT[fmt])
+        self.export_format_label_var.set(EXPORT_FORMAT_LABELS[fmt])
+        self.export_format_desc_var.set(EXPORT_FORMAT_DESCRIPTIONS[fmt])
+        self.separate_action_cb.config(state='normal' if fmt == 'xlsx' else 'disabled')
+
     def _browse_master(self):
         """Browse for master database file"""
         path = filedialog.askopenfilename(
@@ -3869,6 +4190,10 @@ class App(tk.Tk):
         if errors:
             msg += f"\n⚠ Errors: {'; '.join(errors)}"
         self.status_var.set(msg)
+
+        # Keep the Export tab's "Sheets to Export" checklist in sync with
+        # whatever was actually just (re)computed.
+        self._refresh_export_sheet_list()
 
     def _show_snapshot(self, mode: str):
         title = {'pvp_dealt': 'PvP Dealt', 'pvp_taken': 'PvP Taken'}.get(mode, mode.title())
@@ -4303,6 +4628,13 @@ class App(tk.Tk):
                 'No "You gain ... experience points." lines were found in the loaded file(s).')
             return
 
+        # Also feeds the Export tab's "Sheets to Export" checklist, same
+        # as Run Parse's own XP Counter checkbox does - so exporting
+        # doesn't require running Parse a second time just to make this
+        # same data available there too.
+        self.parsed['xp'] = data['gains']
+        self._refresh_export_sheet_list()
+
         try:
             if getattr(self, '_xp_working_frame', None) is not None:
                 try:
@@ -4730,6 +5062,13 @@ class App(tk.Tk):
                 'No damage-dealt-to-mob lines were found in the loaded file(s).')
             return
 
+        # Also feeds the Export tab's "Sheets to Export" checklist, same
+        # as Run Parse's own Damage Counter checkbox does - so exporting
+        # doesn't require running Parse a second time just to make this
+        # same data available there too.
+        self.parsed['damage'] = data['hits']
+        self._refresh_export_sheet_list()
+
         try:
             if getattr(self, '_damage_working_frame', None) is not None:
                 try:
@@ -4879,6 +5218,14 @@ class App(tk.Tk):
             messagebox.showinfo("No PvP Damage Found",
                 'No PvP damage-dealt or damage-taken lines were found in the loaded file(s).')
             return
+
+        # Also feeds the Export tab's "Sheets to Export" checklist, same
+        # as Run Parse's own PvP Dealt/PvP Taken checkboxes do - so
+        # exporting doesn't require running Parse a second time just to
+        # make this same data available there too.
+        self.parsed['pvp_dealt'] = data['dealt']['hits']
+        self.parsed['pvp_taken'] = data['taken']['hits']
+        self._refresh_export_sheet_list()
 
         try:
             if getattr(self, '_pvp_damage_working_frame', None) is not None:
@@ -5188,17 +5535,39 @@ class App(tk.Tk):
         self._refresh_fields()
 
     # ── EXPORT ────────────────────────────────────────────────
-    def _export(self):
-        total = (len(self.parsed['chat']) + len(self.parsed['combat']) +
-                 len(self.parsed['loot']) + len(self.parsed.get('xp', [])) +
-                 len(self.parsed.get('damage', [])) + len(self.parsed.get('pvp_dealt', [])) +
-                 len(self.parsed.get('pvp_taken', [])))
-        if total == 0:
-            messagebox.showwarning("No Data", "Nothing parsed yet. Run Parse first.")
+    def _export_main(self):
+        """"Export Chat / Combat / Loot" button - only ever writes sheets
+        of those three types, using self.fname_var as the destination.
+        Carries the Master Database append and "separate Combat/Loot
+        files" features, both specific to this group."""
+        self._export_group(MAIN_EXPORT_TYPES, self.fname_var,
+                           allow_master=True, allow_separate_files=True)
+
+    def _export_counters(self):
+        """"Export Counters" button - only ever writes XP Counter/Damage
+        Counter/PvP Dealt/PvP Taken sheets, using its own
+        self.counters_fname_var destination, entirely separate from
+        Chat/Combat/Loot's - just a plain snapshot file, no master-
+        database/accumulation behavior, so it's easy to hand to someone
+        without needing this program to view it."""
+        self._export_group(COUNTER_EXPORT_TYPES, self.counters_fname_var,
+                           allow_master=False, allow_separate_files=False)
+
+    def _export_group(self, group_types, fname_var, allow_master, allow_separate_files):
+        """Shared implementation behind _export_main/_export_counters -
+        writes only whichever checked "Sheets to Export" entries belong to
+        `group_types`, to `fname_var`'s own destination. allow_master/
+        allow_separate_files gate the two Chat/Combat/Loot-only features
+        so Counters' export never tries either."""
+        sheets = [s for s in self._build_export_sheet_list() if s[3] in group_types]
+        if not sheets:
+            messagebox.showwarning("No Data",
+                "Nothing in this group is checked under \"Sheets to Export\" (or nothing's been "
+                "parsed yet - Run Parse first, then check at least one sheet above).")
             return
 
         # Auto-generate filename based on what's being exported
-        fname = self.fname_var.get().strip()
+        fname = fname_var.get().strip()
         if not fname:
             # Extract character name from ACTION log files
             char_name = None
@@ -5210,121 +5579,175 @@ class App(tk.Tk):
                     if len(parts) >= 3:
                         char_name = parts[2].title()  # Capitalize properly
                         break
-            
-            # Generate filename based on what's being parsed
-            if self.do_combat.get() and len(self.parsed['combat']) > 0:
-                # Combat export: CharacterName_Combat_timestamp
-                from datetime import datetime
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+            # Generate filename based on what's actually being exported
+            exported_types = {sheet_type for _, _, _, sheet_type in sheets}
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            if 'combat' in exported_types:
                 fname = f"{char_name}_Combat_{timestamp}" if char_name else f"Combat_{timestamp}"
-            elif self.do_loot.get() and len(self.parsed['loot']) > 0:
-                # Loot export: CharacterName_Loot_timestamp
-                from datetime import datetime
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            elif 'loot' in exported_types:
                 fname = f"{char_name}_Loot_{timestamp}" if char_name else f"Loot_{timestamp}"
-            elif self.do_chat.get() and len(self.parsed['chat']) > 0:
-                # Chat export: CharacterName_Chat_timestamp
-                from datetime import datetime
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            elif 'chat' in exported_types:
                 fname = f"{char_name}_Chat_{timestamp}" if char_name else f"Chat_{timestamp}"
+            elif exported_types & COUNTER_EXPORT_TYPES:
+                fname = f"{char_name}_Counters_{timestamp}" if char_name else f"Counters_{timestamp}"
             else:
                 fname = 'game_log_export'
-        
-        path  = filedialog.asksaveasfilename(
-            defaultextension='.xlsx',
-            initialdir=self.last_save_dir,
-            initialfile=fname + '.xlsx',
-            filetypes=[('Excel', '*.xlsx'), ('All', '*.*')])
-        if not path:
-            return
-        
-        # Save the directory for next time
-        self.last_save_dir = os.path.dirname(path)
+
+        fmt = self.export_format_var.get()
+        ext = EXPORT_FORMAT_EXT[fmt]
+
+        if fmt in ('csv', 'tsv'):
+            # CSV/TSV always write one file per sheet, so a "Save As" single-
+            # file dialog would be misleading - ask for a destination folder
+            # instead, then derive each file's name from it plus `fname`.
+            folder = filedialog.askdirectory(
+                title="Choose a folder to save the exported files into",
+                initialdir=self.last_save_dir)
+            if not folder:
+                return
+            self.last_save_dir = folder
+            path = os.path.join(folder, fname + ext)
+        else:
+            path = filedialog.asksaveasfilename(
+                defaultextension=ext,
+                initialdir=self.last_save_dir,
+                initialfile=fname + ext,
+                filetypes=EXPORT_FORMAT_FILETYPES[fmt])
+            if not path:
+                return
+            self.last_save_dir = os.path.dirname(path)
 
         try:
-            # Handle master database append if enabled
-            if self.use_master.get() and self.master_path_var.get() and self.parsed['loot']:
+            # Handle master database append if enabled - a separate, always
+            # XLSX, persistent database file, unrelated to whichever format
+            # is chosen for this particular export. Chat/Combat/Loot only.
+            if allow_master and self.use_master.get() and self.master_path_var.get() and self.parsed['loot']:
                 self._append_to_master()
-            
-            # Check if we should export Combat and Loot as separate files.
-            # Note: this path doesn't carry the four Counters along (it
-            # only ever produces Combat.xlsx/Loot.xlsx) - checking any of
-            # them alongside this option silently exports Combat/Loot only.
-            if (self.separate_action_exports.get() and
-                self.do_combat.get() and self.do_loot.get() and
-                len(self.parsed['combat']) > 0 and len(self.parsed['loot']) > 0):
-                # Export as two separate files
+
+            # "Export Combat and Loot as separate files" is XLSX-only (its
+            # own dedicated feature, unchanged from before the format
+            # selector existed) - the combobox disables it for every other
+            # format (see _on_export_format_changed), but the checkbox
+            # itself isn't reset, so re-check the format here too. Still
+            # keyed off Combat/Loot actually being checked in the Sheets
+            # to Export list, not just having been parsed. Chat/Combat/
+            # Loot only - Counters' export never reaches this branch.
+            exported_types = {sheet_type for _, _, _, sheet_type in sheets}
+            if (allow_separate_files and fmt == 'xlsx' and self.separate_action_exports.get() and
+                'combat' in exported_types and 'loot' in exported_types):
                 self._export_separate_action_files(path)
                 return
-            
-            # Normal single-file export
+
+            if fmt in ('csv', 'tsv'):
+                written = self._export_as_csv_tsv(path, sheets, fmt)
+                self.export_status.config(text=f"✓ Saved {len(written)} file(s)")
+                messagebox.showinfo("Exported",
+                    f"{len(written)} file(s) saved to {os.path.dirname(path)}:\n\n" +
+                    "\n".join(f"  {os.path.basename(p)}" for p in written))
+            else:
+                self._export_as_workbook(path, sheets, fmt)
+                self.export_status.config(text=f"✓ Saved to {os.path.basename(path)}")
+                summary_lines = [f"  {name}: {len(rows)} rows" for name, rows, _, _ in sheets]
+                messagebox.showinfo("Exported",
+                    f"File saved!\n{path}\n\nSheets written:\n" + "\n".join(summary_lines))
+        except Exception as e:
+            messagebox.showerror("Export Error", str(e))
+
+    def _build_export_sheet_list(self):
+        """List of (sheet_name, rows, fields, sheet_type) tuples to export -
+        whichever candidates from _export_candidate_sheets are actually
+        checked in the Export tab's "Sheets to Export" checklist right
+        now. Shared by every export format (_export_as_workbook and
+        _export_as_csv_tsv) so they all cover exactly the same content."""
+        sheets = []
+        for key, _label, rows, fields, sheet_type, sheet_name in self._export_candidate_sheets():
+            var = self.export_sheet_vars.get(key)
+            if var is not None and var.get():
+                sheets.append((sheet_name, rows, fields, sheet_type))
+        return sheets
+
+    def _build_summary_rows(self):
+        """Plain (label, value) rows for the Summary sheet/file on every
+        format except XLSX, which keeps its own more polished
+        _write_summary (bold title, colored header row) instead - see
+        SUMMARY_FIELDS for the matching column layout."""
+        now = datetime.now().strftime('%Y-%m-%d %H:%M')
+        rows = [
+            {'label': 'Gaming Log Parser — Export Summary', 'value': ''},
+            {'label': 'Generated:', 'value': now},
+            {'label': 'Files processed:', 'value': len(self.files)},
+            {'label': 'Chat rows:', 'value': len(self.parsed['chat'])},
+            {'label': 'Combat rows:', 'value': len(self.parsed['combat'])},
+            {'label': 'Loot rows:', 'value': len(self.parsed['loot'])},
+        ]
+        if self.do_xp.get():
+            rows.append({'label': 'XP Counter rows:', 'value': len(self.parsed.get('xp', []))})
+        if self.do_damage.get():
+            rows.append({'label': 'Damage Counter rows:', 'value': len(self.parsed.get('damage', []))})
+        if self.do_pvp_dealt.get():
+            rows.append({'label': 'PvP Dealt rows:', 'value': len(self.parsed.get('pvp_dealt', []))})
+        if self.do_pvp_taken.get():
+            rows.append({'label': 'PvP Taken rows:', 'value': len(self.parsed.get('pvp_taken', []))})
+        rows.append({'label': '', 'value': ''})
+        rows.append({'label': 'Files', 'value': 'Type'})
+        for f in self.files:
+            rows.append({'label': f['name'], 'value': f['type']})
+        return rows
+
+    def _export_as_workbook(self, path, sheets, fmt):
+        """Writes every sheet into ONE file - XLSX (openpyxl, full
+        styling, unchanged from before), XLS (xlwt), or ODS (odfpy)."""
+        if fmt == 'xlsx':
             wb = openpyxl.Workbook()
             wb.remove(wb.active)
-
             if self.exp_summary.get():
                 ws = wb.create_sheet("Summary")
                 self._write_summary(ws)
-
-            # Export chat - create a separate sheet for each chat file
-            if self.do_chat.get() and self.parsed['chat_files']:
-                for filename, chat_data in self.parsed['chat_files'].items():
-                    # Create sheet name from filename (remove extension, truncate if needed)
-                    sheet_name = os.path.splitext(filename)[0]
-                    # Excel sheet names max 31 chars
-                    if len(sheet_name) > 31:
-                        sheet_name = sheet_name[:28] + "..."
-                    ws = wb.create_sheet(sheet_name)
-                    write_sheet(ws, chat_data, self.fields['chat'], 'chat')
-
-            # Export combat if checkbox is checked and data exists
-            if self.do_combat.get() and self.parsed['combat']:
-                ws = wb.create_sheet("Combat")
-                write_sheet(ws, self.parsed['combat'], self.fields['combat'], 'combat')
-
-            # Export loot if checkbox is checked and data exists
-            if self.do_loot.get() and self.parsed['loot']:
-                ws = wb.create_sheet("Loot")
-                write_sheet(ws, self.parsed['loot'], self.fields['loot'], 'loot')
-
-            # Export the four Counters, same as Chat/Combat/Loot above -
-            # each only if its own checkbox is checked and Run Parse
-            # actually found something.
-            if self.do_xp.get() and self.parsed.get('xp'):
-                ws = wb.create_sheet("XP Counter")
-                write_sheet(ws, self.parsed['xp'], self.fields['xp'], 'xp')
-
-            if self.do_damage.get() and self.parsed.get('damage'):
-                ws = wb.create_sheet("Damage Counter")
-                write_sheet(ws, self.parsed['damage'], self.fields['damage'], 'damage')
-
-            if self.do_pvp_dealt.get() and self.parsed.get('pvp_dealt'):
-                ws = wb.create_sheet("PvP Dealt")
-                write_sheet(ws, self.parsed['pvp_dealt'], self.fields['pvp_dealt'], 'pvp_dealt')
-
-            if self.do_pvp_taken.get() and self.parsed.get('pvp_taken'):
-                ws = wb.create_sheet("PvP Taken")
-                write_sheet(ws, self.parsed['pvp_taken'], self.fields['pvp_taken'], 'pvp_taken')
-
+            for name, rows, fields, sheet_type in sheets:
+                ws = wb.create_sheet(name)
+                write_sheet(ws, rows, fields, sheet_type)
             wb.save(path)
-            self.export_status.config(
-                text=f"✓ Saved to {os.path.basename(path)}")
-            summary_lines = [
-                f"  Chat:   {len(self.parsed['chat'])} rows",
-                f"  Combat: {len(self.parsed['combat'])} rows",
-                f"  Loot:   {len(self.parsed['loot'])} rows",
-            ]
-            if self.do_xp.get():
-                summary_lines.append(f"  XP Counter: {len(self.parsed.get('xp', []))} rows")
-            if self.do_damage.get():
-                summary_lines.append(f"  Damage Counter: {len(self.parsed.get('damage', []))} rows")
-            if self.do_pvp_dealt.get():
-                summary_lines.append(f"  PvP Dealt: {len(self.parsed.get('pvp_dealt', []))} rows")
-            if self.do_pvp_taken.get():
-                summary_lines.append(f"  PvP Taken: {len(self.parsed.get('pvp_taken', []))} rows")
-            messagebox.showinfo("Exported",
-                f"File saved!\n{path}\n\nSheets written:\n" + "\n".join(summary_lines))
-        except Exception as e:
-            messagebox.showerror("Export Error", str(e))
+        elif fmt == 'xls':
+            wb = xlwt.Workbook()
+            if self.exp_summary.get():
+                ws = wb.add_sheet("Summary")
+                write_sheet_xls(ws, self._build_summary_rows(), SUMMARY_FIELDS, 'summary')
+            for name, rows, fields, sheet_type in sheets:
+                ws = wb.add_sheet(name)
+                write_sheet_xls(ws, rows, fields, sheet_type)
+            wb.save(path)
+        elif fmt == 'ods':
+            doc = OpenDocumentSpreadsheet()
+            if self.exp_summary.get():
+                write_ods_table(doc, "Summary", self._build_summary_rows(), SUMMARY_FIELDS)
+            for name, rows, fields, sheet_type in sheets:
+                write_ods_table(doc, name, rows, fields)
+            doc.save(path)
+
+    def _export_as_csv_tsv(self, path, sheets, fmt):
+        """CSV/TSV can't hold multiple sheets, so every checked type
+        becomes its own file - all in the same directory as `path`,
+        sharing its base name as a prefix. Returns the list of paths
+        actually written."""
+        delimiter = ',' if fmt == 'csv' else '\t'
+        ext = EXPORT_FORMAT_EXT[fmt]
+        base_dir = os.path.dirname(path)
+        base_name = os.path.splitext(os.path.basename(path))[0]
+        written = []
+
+        if self.exp_summary.get():
+            summary_path = os.path.join(base_dir, f"{base_name}_Summary{ext}")
+            write_rows_csv(summary_path, self._build_summary_rows(), SUMMARY_FIELDS, delimiter)
+            written.append(summary_path)
+
+        for name, rows, fields, sheet_type in sheets:
+            safe_name = re.sub(r'[^\w\-. ]', '_', name).strip() or sheet_type
+            sheet_path = os.path.join(base_dir, f"{base_name}_{safe_name}{ext}")
+            write_rows_csv(sheet_path, rows, fields, delimiter)
+            written.append(sheet_path)
+
+        return written
 
     def _export_separate_action_files(self, base_path):
         """Export Combat and Loot as two separate files"""
