@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.0.0"
+VERSION = "6.1.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -1581,23 +1581,7 @@ class LogSearchViewer(tk.Toplevel):
                   foreground='gray').pack(pady=4)
 
         self.tv = tv
-        self._menu = tk.Menu(self, tearoff=0)
-        self._menu.add_command(label="Open Log at This Line", command=self._open_selected_log)
-        tv.bind('<Button-3>', self._on_right_click)
-
-    def _on_right_click(self, event):
-        row_iid = self.tv.identify_row(event.y)
-        if not row_iid:
-            return
-        self.tv.selection_set(row_iid)
-        self._menu.tk_popup(event.x_root, event.y_root)
-
-    def _open_selected_log(self):
-        sel = self.tv.selection()
-        if not sel:
-            return
-        file_name, path, line_num = self._row_source[sel[0]]
-        LogFileViewer(self, file_name, path, line_num)
+        _attach_open_log_menu(tv, self._row_source, self)
 
 
 class DropSnapshotViewer(tk.Toplevel):
@@ -1635,9 +1619,8 @@ class DropSnapshotViewer(tk.Toplevel):
                            values=(d['file'], d['timestamp'], d['item'], d['mob']))
         self.tv.bind('<<TreeviewSelect>>', self._on_select)
 
-        self._menu = tk.Menu(self, tearoff=0)
-        self._menu.add_command(label="Open Log at This Line", command=self._open_selected_log)
-        self.tv.bind('<Button-3>', self._on_right_click)
+        row_source = {str(i): (d['file'], d['path'], d['line_num']) for i, d in enumerate(drops)}
+        _attach_open_log_menu(self.tv, row_source, self)
 
         snapshot_frame = ttk.LabelFrame(paned, text="Snapshot (last timestamp → drop)", padding=6)
         paned.add(snapshot_frame, weight=1)
@@ -1669,19 +1652,46 @@ class DropSnapshotViewer(tk.Toplevel):
         self.snapshot_text.insert('1.0', drop['snapshot'])
         self.snapshot_text.config(state='disabled')
 
-    def _on_right_click(self, event):
-        row_iid = self.tv.identify_row(event.y)
-        if not row_iid:
-            return
-        self.tv.selection_set(row_iid)
-        self._menu.tk_popup(event.x_root, event.y_root)
 
-    def _open_selected_log(self):
-        sel = self.tv.selection()
+def _attach_open_log_menu(tv, row_source, dialog_parent):
+    """Wires up the standard "Open Log at This Line" right-click action on
+    any Treeview whose rows each correspond to one specific log file line -
+    right-clicking anywhere on a row opens that file in a LogFileViewer,
+    scrolled to and highlighting the exact line. A default for every chart/
+    table in the app built from one-row-per-log-line data - just build
+    row_source (a dict of {iid: (file_name, path, line_num)}, one entry per
+    row actually inserted into tv) and call this once afterward. Shared by
+    LogSearchViewer, DropSnapshotViewer, PvpResultViewer, and the Parse
+    tab's XP Counter/Damage Counter reports.
+
+    dialog_parent is whatever LogFileViewer should be a child of - the
+    Toplevel itself for a standalone results window, or the main App
+    instance for a report embedded directly in a tab (XP/Damage Counter)."""
+    menu = tk.Menu(tv, tearoff=0)
+
+    def _open_selected():
+        sel = tv.selection()
         if not sel:
             return
-        drop = self.drops[int(sel[0])]
-        LogFileViewer(self, drop['file'], drop['path'], drop['line_num'])
+        entry = row_source.get(sel[0])
+        if not entry:
+            return
+        file_name, path, line_num = entry
+        if not path:
+            return
+        LogFileViewer(dialog_parent, file_name, path, line_num)
+
+    menu.add_command(label="Open Log at This Line", command=_open_selected)
+
+    def _on_right_click(event):
+        row_iid = tv.identify_row(event.y)
+        if not row_iid:
+            return
+        tv.selection_set(row_iid)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    tv.bind('<Button-3>', _on_right_click)
+    return menu
 
 
 class LogFileViewer(tk.Toplevel):
@@ -1842,23 +1852,8 @@ class PvpResultViewer(tk.Toplevel):
                   foreground='gray').pack(pady=4)
 
         self.tv = tv
-        self._menu = tk.Menu(self, tearoff=0)
-        self._menu.add_command(label="Open Log at This Line", command=self._open_selected_log)
-        tv.bind('<Button-3>', self._on_right_click)
-
-    def _on_right_click(self, event):
-        row_iid = self.tv.identify_row(event.y)
-        if not row_iid:
-            return
-        self.tv.selection_set(row_iid)
-        self._menu.tk_popup(event.x_root, event.y_root)
-
-    def _open_selected_log(self):
-        sel = self.tv.selection()
-        if not sel:
-            return
-        r = self.results[int(sel[0])]
-        LogFileViewer(self, r['file'], r['path'], r['line_num'])
+        row_source = {str(i): (r['file'], r['path'], r['line_num']) for i, r in enumerate(results)}
+        _attach_open_log_menu(tv, row_source, self)
 
 
 def _patch_widgets_for_debug_logging():
@@ -2057,6 +2052,12 @@ class App(tk.Tk):
                     # data only; turned into self.xp_saved_reports, complete
                     # with their tab frames, once the Parse tab is built).
                     self._persisted_xp_reports = config.get('xp_reports', [])
+                    # Parse tab's Damage Counter - saved per-mob damage
+                    # reports, same pattern as xp_reports above.
+                    self._persisted_damage_reports = config.get('damage_reports', [])
+                    # Parse tab's PvP Damage Counter - saved dealt/taken
+                    # damage reports, same pattern as damage_reports above.
+                    self._persisted_pvp_damage_reports = config.get('pvp_damage_reports', [])
                     # Lockers' "+" tab Locker Groups - raw {'id','name'}
                     # pairs only, turned into real notebooks (each its own
                     # tab of self.bank_lockers_sub_notebook) in
@@ -2079,6 +2080,8 @@ class App(tk.Tk):
                 self._persisted_constraint_sets = []
                 self._persisted_test_basic_constraints = {}
                 self._persisted_xp_reports = []
+                self._persisted_damage_reports = []
+                self._persisted_pvp_damage_reports = []
                 self._persisted_locker_groups = []
                 self._persisted_locker_group_counter = 0
         except Exception:
@@ -2095,6 +2098,8 @@ class App(tk.Tk):
             self._persisted_constraint_sets = []
             self._persisted_test_basic_constraints = {}
             self._persisted_xp_reports = []
+            self._persisted_damage_reports = []
+            self._persisted_pvp_damage_reports = []
             self._persisted_locker_groups = []
             self._persisted_locker_group_counter = 0
 
@@ -2139,6 +2144,14 @@ class App(tk.Tk):
                 'xp_reports': [
                     {'name': rep['name'], 'data': rep['data']}
                     for rep in getattr(self, 'xp_saved_reports', [])
+                ],
+                'damage_reports': [
+                    {'name': rep['name'], 'data': rep['data']}
+                    for rep in getattr(self, 'damage_saved_reports', [])
+                ],
+                'pvp_damage_reports': [
+                    {'name': rep['name'], 'data': rep['data']}
+                    for rep in getattr(self, 'pvp_damage_saved_reports', [])
                 ],
             }
             if getattr(self, 'is_test_build', False):
@@ -2935,20 +2948,35 @@ class App(tk.Tk):
         self.parse_sub_notebook.pack(fill='both', expand=True)
 
         t = ttk.Frame(self.parse_sub_notebook, padding=12)
-        xp_tab = ttk.Frame(self.parse_sub_notebook, padding=12)
+        counters_tab = ttk.Frame(self.parse_sub_notebook, padding=12)
         self.parse_sub_notebook.add(t, text='📄  Files & Search')
-        self.parse_sub_notebook.add(xp_tab, text='🧮  XP Counter')
+        self.parse_sub_notebook.add(counters_tab, text='📊  Counters')
 
         # ═══ FILES SECTION ═══
         # Built via a shared helper so the exact same section (toolbar +
         # file table + hint, all backed by the one shared self.files
-        # list) can appear on both this sub-tab and the XP Counter
+        # list) can appear on both this sub-tab and the Counters
         # sub-tab - loading/removing files from either place keeps both
         # in sync (see self.file_tvs / self.file_count_lbls and
         # _refresh_file_list/_remove_files).
         self.file_tvs = []
         self.file_count_lbls = []
         self.file_tv = self._build_file_list_section(t)
+
+        # One shared "Load Log Files" section for both counters below,
+        # since it's identical either way - kept in sync with Files &
+        # Search's copy above (see _build_file_list_section).
+        self._build_file_list_section(counters_tab)
+
+        self.counters_notebook = ttk.Notebook(counters_tab, style='RealmMini.TNotebook')
+        self.counters_notebook.pack(fill='both', expand=True, pady=(10, 0))
+
+        xp_tab = ttk.Frame(self.counters_notebook, padding=12)
+        dmg_tab = ttk.Frame(self.counters_notebook, padding=12)
+        pvp_dmg_tab = ttk.Frame(self.counters_notebook, padding=12)
+        self.counters_notebook.add(xp_tab, text='🧮  XP Counter')
+        self.counters_notebook.add(dmg_tab, text='⚔  Damage Counter')
+        self.counters_notebook.add(pvp_dmg_tab, text='🗡  PvP Damage')
 
         # ═══ SEARCH SECTION ═══
         # Search across every loaded file's actual lines - independent of Run
@@ -3100,12 +3128,8 @@ class App(tk.Tk):
         ttk.Button(results_row, text="Credits",
                   command=self._show_credits).pack(side='right', anchor='n')
 
-        # ═══ XP COUNTER SUB-TAB (own page, clear of everything else) ═══
-        # Its own copy of "Load Log Files" too, kept in sync with Files &
-        # Search's copy (see _build_file_list_section), so files can be
-        # loaded here without switching sub-tabs.
-        self._build_file_list_section(xp_tab)
-
+        # ═══ XP COUNTER TAB (inside the Counters sub-tab, below the
+        # shared "Load Log Files" section built above) ═══
         ttk.Label(xp_tab, text="XP Counter",
                   font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0, 8))
 
@@ -3134,6 +3158,61 @@ class App(tk.Tk):
             frame = self._build_xp_report_frame(self.xp_notebook, rep_data, is_saved=True, name=rep_name)
             self.xp_notebook.add(frame, text=rep_name)
             self.xp_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
+
+        # ═══ DAMAGE COUNTER TAB (inside the Counters sub-tab, below the
+        # shared "Load Log Files" section built above) ═══
+        ttk.Label(dmg_tab, text="Damage Counter",
+                  font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0, 8))
+
+        dmg_top_row = ttk.Frame(dmg_tab)
+        dmg_top_row.pack(fill='x')
+        ttk.Button(dmg_top_row, text="⚔ Damage Counter",
+                  command=self._open_damage_counter).pack(side='left')
+        ttk.Label(dmg_top_row,
+                 text="Totals up damage dealt to every mob across the loaded log(s). Click any column header to sort.",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=10)
+
+        self.damage_notebook = ttk.Notebook(dmg_tab)
+        self.damage_notebook.pack(fill='both', expand=True, pady=(10,0))
+
+        self.damage_saved_reports = []
+        self._damage_working_frame = None
+        for rep in getattr(self, '_persisted_damage_reports', []):
+            rep_name = rep.get('name', '')
+            rep_data = rep.get('data', {})
+            if not rep_name or not rep_data:
+                continue
+            frame = self._build_damage_report_frame(self.damage_notebook, rep_data, is_saved=True, name=rep_name)
+            self.damage_notebook.add(frame, text=rep_name)
+            self.damage_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
+
+        # ═══ PVP DAMAGE TAB (inside the Counters sub-tab, below the
+        # shared "Load Log Files" section built above) ═══
+        ttk.Label(pvp_dmg_tab, text="PvP Damage Counter",
+                  font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0, 8))
+
+        pvp_dmg_top_row = ttk.Frame(pvp_dmg_tab)
+        pvp_dmg_top_row.pack(fill='x')
+        ttk.Button(pvp_dmg_top_row, text="🗡 PvP Damage Counter",
+                  command=self._open_pvp_damage_counter).pack(side='left')
+        ttk.Label(pvp_dmg_top_row,
+                 text="Totals up damage dealt to and taken from other players across the loaded log(s).",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=10)
+
+        self.pvp_damage_notebook = ttk.Notebook(pvp_dmg_tab)
+        self.pvp_damage_notebook.pack(fill='both', expand=True, pady=(10,0))
+
+        self.pvp_damage_saved_reports = []
+        self._pvp_damage_working_frame = None
+        for rep in getattr(self, '_persisted_pvp_damage_reports', []):
+            rep_name = rep.get('name', '')
+            rep_data = rep.get('data', {})
+            if not rep_name or not rep_data:
+                continue
+            frame = self._build_pvp_damage_report_frame(
+                self.pvp_damage_notebook, rep_data, is_saved=True, name=rep_name)
+            self.pvp_damage_notebook.add(frame, text=rep_name)
+            self.pvp_damage_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
 
     # ── FIELDS TAB ────────────────────────────────────────────
     def _build_fields_tab(self):
@@ -3903,6 +3982,7 @@ class App(tk.Tk):
         total_xp = 0
         total_seconds = 0.0
         any_xp_found = False
+        gains_detail = []
 
         for f in self.files:
             try:
@@ -3917,6 +3997,7 @@ class App(tk.Tk):
             first_ts = None
             current_area = None
             area_start_ts = None
+            current_ts_str = ''
 
             def close_stint(end_ts):
                 nonlocal current_area, area_start_ts
@@ -3924,11 +4005,12 @@ class App(tk.Tk):
                     area_seconds[current_area] = (
                         area_seconds.get(current_area, 0.0) + (end_ts - area_start_ts))
 
-            for raw_line in lines:
+            for line_num, raw_line in enumerate(lines, start=1):
                 line = raw_line.rstrip('\r\n')
                 m_ts = ts_re.match(line)
                 if m_ts:
                     h, mi, s = (int(x) for x in m_ts.groups())
+                    current_ts_str = f"{h:02d}:{mi:02d}:{s:02d}"
                     raw_secs = h * 3600 + mi * 60 + s
                     if prev_raw_secs is not None and raw_secs < prev_raw_secs:
                         day_offset += 1
@@ -3956,6 +4038,10 @@ class App(tk.Tk):
                     any_xp_found = True
                     bucket = current_area if current_area is not None else '(Unknown Area)'
                     area_xp[bucket] = area_xp.get(bucket, 0) + gained
+                    gains_detail.append({
+                        'timestamp': current_ts_str, 'area': bucket, 'xp': gained,
+                        'file': f['name'], 'path': f['path'], 'line_num': line_num,
+                    })
 
             close_stint(last_ts)
             if first_ts is not None and last_ts is not None:
@@ -3980,6 +4066,7 @@ class App(tk.Tk):
             'total_hours': total_hours,
             'xp_per_hour': overall_rate,
             'areas': areas,
+            'gains': gains_detail,
         }
 
     def _open_xp_counter(self):
@@ -4024,8 +4111,12 @@ class App(tk.Tk):
 
     def _build_xp_report_frame(self, parent, data, is_saved, name=None):
         """Builds one XP Counter tab's content - overall XP/hour, total
-        XP/hours, and a per-area table sorted by that area's own XP/hour
-        descending. is_saved controls whether the tab gets a Delete
+        XP/hours, and two views of the breakdown: "Per-Area Summary"
+        (aggregated, sorted by that area's own XP/hour descending) and
+        "Every Gain" (one row per individual "You gain..." line, each
+        right-clickable for "Open Log at This Line" - same as Damage
+        Counter's Every Hit). Every column header in both tables is
+        click-to-sort. is_saved controls whether the tab gets a Delete
         button (saved reports) or a Save button (the ephemeral working
         tab)."""
         frame = ttk.Frame(parent, padding=10)
@@ -4044,12 +4135,19 @@ class App(tk.Tk):
         ttk.Label(frame, text=f"Total: {data['total_xp']:,} XP over {data['total_hours']:.2f} hour(s)",
                  foreground='#555').pack(anchor='w', pady=(2,10))
 
+        inner_nb = ttk.Notebook(frame, style='RealmMini.TNotebook')
+        inner_nb.pack(fill='both', expand=True)
+        summary_tab = ttk.Frame(inner_nb, padding=8)
+        gains_tab = ttk.Frame(inner_nb, padding=8)
+        inner_nb.add(summary_tab, text="Per-Area Summary")
+        inner_nb.add(gains_tab, text="Every Gain")
+
         cols = ('Area', 'XP Gained', 'Time', 'XP/Hour')
-        tv_frame = ttk.Frame(frame)
+        tv_frame = ttk.Frame(summary_tab)
         tv_frame.pack(fill='both', expand=True)
         tv = ttk.Treeview(tv_frame, columns=cols, show='headings', height=12)
         for c, w, anchor in zip(cols, (280, 110, 90, 110), ('w', 'center', 'center', 'center')):
-            tv.heading(c, text=c)
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(tv, c, False))
             tv.column(c, width=w, anchor=anchor)
         vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
         tv.configure(yscrollcommand=vsb.set)
@@ -4061,6 +4159,28 @@ class App(tk.Tk):
             mm = int(round((a['hours'] - hh) * 60))
             tv.insert('', 'end', values=(a['area'], f"{a['xp']:,}", f"{hh}h {mm:02d}m",
                                         f"{a['xp_per_hour']:,.0f}"))
+
+        gain_cols = ('Timestamp', 'Area', 'XP Gained', 'File')
+        gain_tv_frame = ttk.Frame(gains_tab)
+        gain_tv_frame.pack(fill='both', expand=True)
+        gain_tv = ttk.Treeview(gain_tv_frame, columns=gain_cols, show='headings', height=12)
+        for c, w, anchor in zip(gain_cols, (90, 260, 90, 200), ('center', 'w', 'center', 'w')):
+            gain_tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(gain_tv, c, False))
+            gain_tv.column(c, width=w, anchor=anchor)
+        gain_vsb = ttk.Scrollbar(gain_tv_frame, command=gain_tv.yview)
+        gain_tv.configure(yscrollcommand=gain_vsb.set)
+        gain_tv.pack(side='left', fill='both', expand=True)
+        gain_vsb.pack(side='right', fill='y')
+
+        # iid -> (file_name, path, line_num) for _attach_open_log_menu.
+        gain_row_source = {}
+        for i, g in enumerate(data.get('gains', [])):
+            iid = str(i)
+            gain_tv.insert('', 'end', iid=iid,
+                           values=(g['timestamp'], g['area'], f"{g['xp']:,}", g['file']))
+            gain_row_source[iid] = (g['file'], g.get('path', ''), g.get('line_num', 1))
+
+        _attach_open_log_menu(gain_tv, gain_row_source, self)
 
         return frame
 
@@ -4104,6 +4224,582 @@ class App(tk.Tk):
                     return
                 self.xp_notebook.forget(rep['frame'])
                 del self.xp_saved_reports[i]
+                self._save_config()
+                return
+
+    def _compute_damage_stats(self):
+        """Parses every loaded file for lines where the player deals damage
+        to a mob, returning a per-mob breakdown (total damage, number of
+        hits, average damage per hit) plus a flat per-hit list, or None if
+        no such lines were found in any loaded file.
+
+        Two line shapes count, the same ones CombatParser already uses for
+        the Export tab's Combat data (validated against real Action logs):
+          - Melee: "You smash/strike/swing at (a/an/the) <mob> with <weapon>
+            for N damage!" - a miss ("...and miss") contributes no damage
+            and isn't counted as a hit here. The weapon phrase is captured
+            per hit (data['hits'][i]['weapon']) for the Every Hit table's
+            Weapon column.
+          - Spell/AoE: "<mob> is hit for N damage!" - never matches "You
+            are hit for..." (a different phrase - the player taking
+            damage), so this is always damage the player is dealing, not
+            receiving. This shape has no weapon/spell name of its own, so
+            the Weapon column instead shows whichever of the two most
+            recently happened: a spell actually cast ("You cast a <spell>
+            spell!"), or a melee hit's own weapon - real logs show either
+            one, then a flavor-text line, then this line. That covers both
+            a true spell cast (e.g. "You cast a Bolt.Of.Ice.II spell!" ->
+            "A diseased leper is hit for 198 damage!") and a Direct
+            weapon's own innate proc, which has no "cast" line at all (e.g.
+            "You smash an alloy dealer with a bright white staff of winter
+            for 56 damage!" -> "An alloy dealer is hit for 151 damage!" -
+            correctly attributed to the staff, not left blank), same idea
+            as tracking current_area in _compute_xp_stats - it just
+            carries forward until whichever of the two happens next.
+
+        The per-hit list (data['hits']) exists specifically for testing
+        damage on a mob you can't always hit exclusively (other mobs get
+        mixed in during the same fight) - sort that table by Mob (click
+        the column header) to group every hit against a given mob
+        together, without needing to filter anything out by hand.
+
+        Unlike _compute_xp_stats, this doesn't need area or time-in-area
+        tracking - it's just a running total (and a running list) per mob
+        name across every loaded file.
+
+        A hit landing on a player rather than a mob (no article, a single
+        bare word - see _compute_pvp_damage_stats) is excluded entirely
+        here, so a PvP fight never shows the other player as if they were
+        a mob."""
+        ts_re = re.compile(r'^<(\d{2}:\d{2}:\d{2})>\s*')
+        # The attack verb is entirely class/weapon-style dependent - smash,
+        # strike, swing at, attack, maul, backstab, thrust, slash, and
+        # likely others not yet seen (matching the same class-specific
+        # skill-enhance spell names - Bash/Berzerk/Crush/Maul/Pummel/Rake/
+        # Slash/Tap/Thrust/etc., see SPELL_CATEGORIES) - so this matches
+        # any single word there rather than maintaining a verb whitelist,
+        # relying on the very specific "with <weapon> for N damage!" tail
+        # to avoid false positives. "swing at"/"attack" (etc.) sometimes
+        # add a literal "at" after the verb - optional here either way.
+        # The article is captured (not just stripped) here so a hit can be
+        # told apart from a PvP hit on a player - see is_player_target
+        # below. A mob name is almost always preceded by "a/an/the"; a
+        # player name is a single bare word with no article at all.
+        melee_re = re.compile(
+            r'^You \w+ (?:at )?(a |an |the )?(.+?) with (.+?) for (\d+) damage!', re.IGNORECASE)
+        # Leading article captured here too, same as melee_re above -
+        # otherwise the same mob hit both ways (melee AND spell/AoE) would
+        # fragment into two separate rows ("ancient forest spirit" from
+        # melee vs "An ancient forest spirit" from this line), instead of
+        # combining into one total for that mob.
+        spell_re = re.compile(r'^(a |an |the )?(.+?) is hit for (\d+) damage!', re.IGNORECASE)
+        spell_cast_re = re.compile(r'^You cast a (.+?) spell!', re.IGNORECASE)
+
+        mob_damage = {}
+        mob_hits = {}
+        hits_detail = []
+        any_found = False
+
+        for f in self.files:
+            try:
+                with open(f['path'], 'r', encoding='utf-8', errors='ignore') as fh:
+                    lines = fh.readlines()
+            except Exception:
+                continue
+
+            # Whichever of "last spell cast" or "last melee weapon used"
+            # happened more recently - see the docstring above for why a
+            # single running value (rather than two separate ones) is
+            # what correctly attributes a Direct weapon's own proc damage
+            # to the weapon, not blank, since that shape never has its
+            # own "You cast a ... spell!" line to fall back on.
+            current_source = ''
+
+            for line_num, raw_line in enumerate(lines, start=1):
+                line = raw_line.rstrip('\r\n').strip()
+                ts_m = ts_re.match(line)
+                ts = ts_m.group(1) if ts_m else ''
+                line = ts_re.sub('', line)
+
+                m_cast = spell_cast_re.match(line)
+                if m_cast:
+                    current_source = m_cast.group(1).strip()
+                    continue
+
+                m = melee_re.match(line)
+                if m:
+                    article = m.group(1)
+                    mob = m.group(2).strip()
+                    weapon = m.group(3).strip()
+                    dmg = int(m.group(4))
+                    current_source = weapon
+                else:
+                    m = spell_re.match(line)
+                    if not m:
+                        continue
+                    article = m.group(1)
+                    mob = m.group(2).strip()
+                    weapon = current_source
+                    dmg = int(m.group(3))
+
+                # No article + a single bare word means this hit landed on
+                # a player, not a mob - that's PvP damage, tracked
+                # separately by _compute_pvp_damage_stats instead.
+                if article is None and ' ' not in mob:
+                    continue
+
+                any_found = True
+                mob_damage[mob] = mob_damage.get(mob, 0) + dmg
+                mob_hits[mob] = mob_hits.get(mob, 0) + 1
+                hits_detail.append({'timestamp': ts, 'mob': mob, 'damage': dmg, 'weapon': weapon,
+                                    'file': f['name'], 'path': f['path'], 'line_num': line_num})
+
+        if not any_found:
+            return None
+
+        mobs = []
+        for mob, dmg in mob_damage.items():
+            hits = mob_hits.get(mob, 0)
+            avg = (dmg / hits) if hits > 0 else 0
+            mobs.append({'mob': mob, 'damage': dmg, 'hits': hits, 'avg': avg})
+        mobs.sort(key=lambda m: m['damage'], reverse=True)
+
+        return {
+            'total_damage': sum(m['damage'] for m in mobs),
+            'mobs': mobs,
+            'hits': hits_detail,
+        }
+
+    def _compute_pvp_damage_stats(self):
+        """Parses every loaded file for PvP damage - both dealt (you
+        hitting another player) and taken (another player hitting you) -
+        returning None if neither side found anything.
+
+        Dealt reuses the exact same melee/spell-cast/spell-hit line shapes
+        as _compute_damage_stats, just keeping the opposite subset: a hit
+        whose target has no article and is a single bare word (a player
+        name) instead of one with an article (a mob). The Weapon column
+        follows the same "most recently used source" rule (spell cast or
+        melee weapon, whichever happened more recently) as the mob version,
+        for the same reason - see _compute_damage_stats' docstring.
+
+        Taken looks for "<Player> <verb> [at] you [with <weapon>] for N
+        damage!" - the same free-verb approach as melee_re above, since
+        the attacking player's own class/weapon determines the verb. The
+        leading word is excluded when it's actually "a"/"an"/"the" (a mob
+        attacking with a multi-word name, which this shape only ever
+        matches by coincidence for a one-word mob name) or "you" (the "You
+        are hit for N damage!" self-referential phrasing, which never
+        names an attacker and so can't be attributed to any player)."""
+        ts_re = re.compile(r'^<(\d{2}:\d{2}:\d{2})>\s*')
+        melee_re = re.compile(
+            r'^You \w+ (?:at )?(a |an |the )?(.+?) with (.+?) for (\d+) damage!', re.IGNORECASE)
+        spell_re = re.compile(r'^(a |an |the )?(.+?) is hit for (\d+) damage!', re.IGNORECASE)
+        spell_cast_re = re.compile(r'^You cast a (.+?) spell!', re.IGNORECASE)
+        taken_re = re.compile(
+            r'^(\S+) \w+ (?:at )?you(?: with (.+?))? for (\d+) damage!', re.IGNORECASE)
+
+        dealt_damage, dealt_hits_n, dealt_detail = {}, {}, []
+        taken_damage, taken_hits_n, taken_detail = {}, {}, []
+        any_found = False
+
+        for f in self.files:
+            try:
+                with open(f['path'], 'r', encoding='utf-8', errors='ignore') as fh:
+                    lines = fh.readlines()
+            except Exception:
+                continue
+
+            current_source = ''
+
+            for line_num, raw_line in enumerate(lines, start=1):
+                line = raw_line.rstrip('\r\n').strip()
+                ts_m = ts_re.match(line)
+                ts = ts_m.group(1) if ts_m else ''
+                line = ts_re.sub('', line)
+
+                m_cast = spell_cast_re.match(line)
+                if m_cast:
+                    current_source = m_cast.group(1).strip()
+                    continue
+
+                m = melee_re.match(line)
+                if m:
+                    article = m.group(1)
+                    target = m.group(2).strip()
+                    weapon = m.group(3).strip()
+                    dmg = int(m.group(4))
+                    current_source = weapon
+                    if article is None and ' ' not in target:
+                        any_found = True
+                        dealt_damage[target] = dealt_damage.get(target, 0) + dmg
+                        dealt_hits_n[target] = dealt_hits_n.get(target, 0) + 1
+                        dealt_detail.append({'timestamp': ts, 'player': target, 'damage': dmg,
+                                             'weapon': weapon, 'file': f['name'], 'path': f['path'],
+                                             'line_num': line_num})
+                    continue
+
+                m = spell_re.match(line)
+                if m:
+                    article = m.group(1)
+                    target = m.group(2).strip()
+                    weapon = current_source
+                    dmg = int(m.group(3))
+                    if article is None and ' ' not in target:
+                        any_found = True
+                        dealt_damage[target] = dealt_damage.get(target, 0) + dmg
+                        dealt_hits_n[target] = dealt_hits_n.get(target, 0) + 1
+                        dealt_detail.append({'timestamp': ts, 'player': target, 'damage': dmg,
+                                             'weapon': weapon, 'file': f['name'], 'path': f['path'],
+                                             'line_num': line_num})
+                    continue
+
+                m = taken_re.match(line)
+                if m:
+                    attacker = m.group(1).strip()
+                    atk_weapon = (m.group(2) or '').strip()
+                    dmg = int(m.group(3))
+                    if attacker.lower() not in ('a', 'an', 'the', 'you'):
+                        any_found = True
+                        taken_damage[attacker] = taken_damage.get(attacker, 0) + dmg
+                        taken_hits_n[attacker] = taken_hits_n.get(attacker, 0) + 1
+                        taken_detail.append({'timestamp': ts, 'player': attacker, 'damage': dmg,
+                                             'weapon': atk_weapon, 'file': f['name'], 'path': f['path'],
+                                             'line_num': line_num})
+                    continue
+
+        if not any_found:
+            return None
+
+        def _build_side(damage_map, hits_map):
+            players = []
+            for name, dmg in damage_map.items():
+                hits = hits_map.get(name, 0)
+                avg = (dmg / hits) if hits > 0 else 0
+                players.append({'player': name, 'damage': dmg, 'hits': hits, 'avg': avg})
+            players.sort(key=lambda p: p['damage'], reverse=True)
+            return players
+
+        dealt_players = _build_side(dealt_damage, dealt_hits_n)
+        taken_players = _build_side(taken_damage, taken_hits_n)
+
+        return {
+            'dealt': {
+                'total_damage': sum(p['damage'] for p in dealt_players),
+                'players': dealt_players,
+                'hits': dealt_detail,
+            },
+            'taken': {
+                'total_damage': sum(p['damage'] for p in taken_players),
+                'players': taken_players,
+                'hits': taken_detail,
+            },
+        }
+
+    def _open_damage_counter(self):
+        """Parse tab's "Damage Counter" button - computes per-mob damage
+        from the currently loaded files (see _compute_damage_stats) and
+        shows it in an ephemeral working tab inside self.damage_notebook.
+        Re-clicking replaces that same working tab rather than stacking up
+        duplicates. The working tab isn't persisted - only an explicit
+        Save (see _save_damage_report_prompt) survives a restart."""
+        if not self.files:
+            messagebox.showwarning("No Files", "Load some log files first.")
+            return
+
+        data = self._compute_damage_stats()
+        if data is None:
+            messagebox.showinfo("No Damage Found",
+                'No damage-dealt-to-mob lines were found in the loaded file(s).')
+            return
+
+        try:
+            if getattr(self, '_damage_working_frame', None) is not None:
+                try:
+                    self.damage_notebook.forget(self._damage_working_frame)
+                except tk.TclError:
+                    pass
+
+            frame = self._build_damage_report_frame(self.damage_notebook, data, is_saved=False)
+            if self.damage_notebook.tabs():
+                self.damage_notebook.insert(0, frame, text="Damage Counter")
+            else:
+                self.damage_notebook.add(frame, text="Damage Counter")
+            self._damage_working_frame = frame
+            self.damage_notebook.select(frame)
+        except Exception as e:
+            messagebox.showerror("Damage Counter Error", f"Couldn't display the damage report:\n{e}")
+
+    def _build_damage_report_frame(self, parent, data, is_saved, name=None):
+        """Builds one Damage Counter tab's content - total damage dealt,
+        and a per-mob table (Mob, Damage, Hits, Avg/Hit) sorted by Damage
+        descending by default. Every column header is click-to-sort (see
+        _sort_treeview_column), same as Manual/Area Items/Saved Items.
+        is_saved controls whether the tab gets a Delete button (saved
+        reports) or a Save button (the ephemeral working tab)."""
+        frame = ttk.Frame(parent, padding=10)
+
+        header_row = ttk.Frame(frame)
+        header_row.pack(fill='x')
+        ttk.Label(header_row, text=f"Total Damage Dealt: {data['total_damage']:,}",
+                  font=('Arial', 13, 'bold')).pack(side='left')
+        if is_saved:
+            ttk.Button(header_row, text="🗑 Delete",
+                      command=lambda: self._delete_damage_report(name)).pack(side='right')
+        else:
+            ttk.Button(header_row, text="💾 Save",
+                      command=lambda: self._save_damage_report_prompt(data)).pack(side='right')
+
+        # Two views of the same data: "Per-Mob Summary" (aggregated) and
+        # "Every Hit" (one row per hit) - the latter is for testing damage
+        # on a specific mob when other mobs inevitably get hit too during
+        # the same fight; sorting it by Mob (click the column header)
+        # groups every hit against that one mob together, so they're easy
+        # to pick out visually without needing to filter anything by hand.
+        inner_nb = ttk.Notebook(frame, style='RealmMini.TNotebook')
+        inner_nb.pack(fill='both', expand=True, pady=(10,0))
+        summary_tab = ttk.Frame(inner_nb, padding=8)
+        hits_tab = ttk.Frame(inner_nb, padding=8)
+        inner_nb.add(summary_tab, text="Per-Mob Summary")
+        inner_nb.add(hits_tab, text="Every Hit")
+
+        cols = ('Mob', 'Damage', 'Hits', 'Avg/Hit')
+        tv_frame = ttk.Frame(summary_tab)
+        tv_frame.pack(fill='both', expand=True)
+        tv = ttk.Treeview(tv_frame, columns=cols, show='headings', height=12)
+        for c, w, anchor in zip(cols, (300, 110, 90, 100), ('w', 'center', 'center', 'center')):
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(tv, c, False))
+            tv.column(c, width=w, anchor=anchor)
+        vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        tv.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        for m in data['mobs']:
+            tv.insert('', 'end', values=(m['mob'], f"{m['damage']:,}", m['hits'], f"{m['avg']:,.1f}"))
+
+        hit_cols = ('Timestamp', 'Mob', 'Damage', 'Weapon', 'File')
+        hit_tv_frame = ttk.Frame(hits_tab)
+        hit_tv_frame.pack(fill='both', expand=True)
+        hit_tv = ttk.Treeview(hit_tv_frame, columns=hit_cols, show='headings', height=12)
+        for c, w, anchor in zip(hit_cols, (90, 220, 90, 180, 180), ('center', 'w', 'center', 'w', 'w')):
+            hit_tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(hit_tv, c, False))
+            hit_tv.column(c, width=w, anchor=anchor)
+        hit_vsb = ttk.Scrollbar(hit_tv_frame, command=hit_tv.yview)
+        hit_tv.configure(yscrollcommand=hit_vsb.set)
+        hit_tv.pack(side='left', fill='both', expand=True)
+        hit_vsb.pack(side='right', fill='y')
+
+        # iid -> (file_name, path, line_num) for _attach_open_log_menu -
+        # path/line_num aren't displayed columns, so this is the only way
+        # to map a row back to its exact spot in the original file.
+        hit_row_source = {}
+        for i, h in enumerate(data.get('hits', [])):
+            iid = str(i)
+            hit_tv.insert('', 'end', iid=iid,
+                          values=(h['timestamp'], h['mob'], h['damage'], h.get('weapon', ''), h['file']))
+            hit_row_source[iid] = (h['file'], h.get('path', ''), h.get('line_num', 1))
+
+        _attach_open_log_menu(hit_tv, hit_row_source, self)
+
+        return frame
+
+    def _save_damage_report_prompt(self, data):
+        """Working tab's "Save" button - names and persists the current
+        Damage Counter snapshot as its own tab, surviving a restart (see
+        damage_saved_reports / _save_config). Saving under a name that
+        already exists overwrites that entry in place, after confirming."""
+        name = simpledialog.askstring("Save Damage Report", "Save Name:", parent=self)
+        if name is None:
+            return
+        name = name.strip()
+        if not name:
+            return
+
+        for rep in self.damage_saved_reports:
+            if rep['name'] == name:
+                if not messagebox.askyesno("Overwrite?",
+                        f'A saved damage report named "{name}" already exists. Overwrite it?'):
+                    return
+                self.damage_notebook.forget(rep['frame'])
+                rep['data'] = data
+                rep['frame'] = self._build_damage_report_frame(self.damage_notebook, data, is_saved=True, name=name)
+                self.damage_notebook.add(rep['frame'], text=name)
+                self.damage_notebook.select(rep['frame'])
+                self._save_config()
+                return
+
+        frame = self._build_damage_report_frame(self.damage_notebook, data, is_saved=True, name=name)
+        self.damage_notebook.add(frame, text=name)
+        self.damage_saved_reports.append({'name': name, 'data': data, 'frame': frame})
+        self.damage_notebook.select(frame)
+        self._save_config()
+
+    def _delete_damage_report(self, name):
+        """Saved Damage report tab's "Delete" button - removes it from the
+        notebook and from persisted config."""
+        for i, rep in enumerate(self.damage_saved_reports):
+            if rep['name'] == name:
+                if not messagebox.askyesno("Delete", f'Delete saved damage report "{name}"?'):
+                    return
+                self.damage_notebook.forget(rep['frame'])
+                del self.damage_saved_reports[i]
+                self._save_config()
+                return
+
+    def _open_pvp_damage_counter(self):
+        """Counters sub-tab's "PvP Damage Counter" button - computes
+        damage dealt to/taken from other players (see
+        _compute_pvp_damage_stats) and shows it in an ephemeral working
+        tab inside self.pvp_damage_notebook. Re-clicking replaces that
+        same working tab rather than stacking up duplicates."""
+        if not self.files:
+            messagebox.showwarning("No Files", "Load some log files first.")
+            return
+
+        data = self._compute_pvp_damage_stats()
+        if data is None:
+            messagebox.showinfo("No PvP Damage Found",
+                'No PvP damage-dealt or damage-taken lines were found in the loaded file(s).')
+            return
+
+        try:
+            if getattr(self, '_pvp_damage_working_frame', None) is not None:
+                self.pvp_damage_notebook.forget(self._pvp_damage_working_frame)
+        except Exception:
+            pass
+
+        frame = self._build_pvp_damage_report_frame(self.pvp_damage_notebook, data, is_saved=False)
+        if len(self.pvp_damage_notebook.tabs()) > 0:
+            self.pvp_damage_notebook.insert(0, frame, text="Working Result")
+        else:
+            self.pvp_damage_notebook.add(frame, text="Working Result")
+        self._pvp_damage_working_frame = frame
+        self.pvp_damage_notebook.select(frame)
+
+    def _build_pvp_damage_side_table(self, parent, side_data, player_label):
+        """Builds one side's (dealt or taken) Per-Player Summary + Every
+        Hit two-tab structure - shared by both sides of
+        _build_pvp_damage_report_frame since they're laid out identically,
+        just with a different label for who the "Player" column refers
+        to."""
+        inner_nb = ttk.Notebook(parent, style='RealmMini.TNotebook')
+        inner_nb.pack(fill='both', expand=True, pady=(6, 0))
+        summary_tab = ttk.Frame(inner_nb, padding=8)
+        hits_tab = ttk.Frame(inner_nb, padding=8)
+        inner_nb.add(summary_tab, text="Per-Player Summary")
+        inner_nb.add(hits_tab, text="Every Hit")
+
+        cols = (player_label, 'Damage', 'Hits', 'Avg/Hit')
+        tv_frame = ttk.Frame(summary_tab)
+        tv_frame.pack(fill='both', expand=True)
+        tv = ttk.Treeview(tv_frame, columns=cols, show='headings', height=10)
+        for c, w, anchor in zip(cols, (220, 110, 90, 100), ('w', 'center', 'center', 'center')):
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(tv, c, False))
+            tv.column(c, width=w, anchor=anchor)
+        vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        tv.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        for p in side_data['players']:
+            tv.insert('', 'end', values=(p['player'], f"{p['damage']:,}", p['hits'], f"{p['avg']:,.1f}"))
+
+        hit_cols = ('Timestamp', player_label, 'Damage', 'Weapon', 'File')
+        hit_tv_frame = ttk.Frame(hits_tab)
+        hit_tv_frame.pack(fill='both', expand=True)
+        hit_tv = ttk.Treeview(hit_tv_frame, columns=hit_cols, show='headings', height=10)
+        for c, w, anchor in zip(hit_cols, (90, 180, 90, 180, 180), ('center', 'w', 'center', 'w', 'w')):
+            hit_tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(hit_tv, c, False))
+            hit_tv.column(c, width=w, anchor=anchor)
+        hit_vsb = ttk.Scrollbar(hit_tv_frame, command=hit_tv.yview)
+        hit_tv.configure(yscrollcommand=hit_vsb.set)
+        hit_tv.pack(side='left', fill='both', expand=True)
+        hit_vsb.pack(side='right', fill='y')
+
+        hit_row_source = {}
+        for i, h in enumerate(side_data.get('hits', [])):
+            iid = str(i)
+            hit_tv.insert('', 'end', iid=iid,
+                          values=(h['timestamp'], h['player'], h['damage'], h.get('weapon', ''), h['file']))
+            hit_row_source[iid] = (h['file'], h.get('path', ''), h.get('line_num', 1))
+        _attach_open_log_menu(hit_tv, hit_row_source, self)
+
+    def _build_pvp_damage_report_frame(self, parent, data, is_saved, name=None):
+        """Builds one PvP Damage Counter tab's content - two sides,
+        Damage Dealt (to other players) and Damage Taken (from other
+        players), each with its own Per-Player Summary + Every Hit tables
+        via _build_pvp_damage_side_table. is_saved controls whether the
+        tab gets a Delete button (saved reports) or a Save button (the
+        ephemeral working tab)."""
+        frame = ttk.Frame(parent, padding=10)
+
+        header_row = ttk.Frame(frame)
+        header_row.pack(fill='x')
+        ttk.Label(header_row,
+                  text=f"Dealt: {data['dealt']['total_damage']:,}   |   Taken: {data['taken']['total_damage']:,}",
+                  font=('Arial', 13, 'bold')).pack(side='left')
+        if is_saved:
+            ttk.Button(header_row, text="🗑 Delete",
+                      command=lambda: self._delete_pvp_damage_report(name)).pack(side='right')
+        else:
+            ttk.Button(header_row, text="💾 Save",
+                      command=lambda: self._save_pvp_damage_report_prompt(data)).pack(side='right')
+
+        sides_nb = ttk.Notebook(frame, style='RealmMini.TNotebook')
+        sides_nb.pack(fill='both', expand=True, pady=(10, 0))
+        dealt_tab = ttk.Frame(sides_nb, padding=8)
+        taken_tab = ttk.Frame(sides_nb, padding=8)
+        sides_nb.add(dealt_tab, text="Damage Dealt")
+        sides_nb.add(taken_tab, text="Damage Taken")
+
+        self._build_pvp_damage_side_table(dealt_tab, data['dealt'], 'Hit Player')
+        self._build_pvp_damage_side_table(taken_tab, data['taken'], 'Attacking Player')
+
+        return frame
+
+    def _save_pvp_damage_report_prompt(self, data):
+        """Working tab's "Save" button - names and persists the current
+        PvP Damage Counter snapshot as its own tab, surviving a restart
+        (see pvp_damage_saved_reports / _save_config). Saving under a name
+        that already exists overwrites that entry in place, after
+        confirming."""
+        name = simpledialog.askstring("Save PvP Damage Report", "Save Name:", parent=self)
+        if name is None:
+            return
+        name = name.strip()
+        if not name:
+            return
+
+        for rep in self.pvp_damage_saved_reports:
+            if rep['name'] == name:
+                if not messagebox.askyesno("Overwrite?",
+                        f'A saved PvP damage report named "{name}" already exists. Overwrite it?'):
+                    return
+                self.pvp_damage_notebook.forget(rep['frame'])
+                rep['data'] = data
+                rep['frame'] = self._build_pvp_damage_report_frame(
+                    self.pvp_damage_notebook, data, is_saved=True, name=name)
+                self.pvp_damage_notebook.add(rep['frame'], text=name)
+                self.pvp_damage_notebook.select(rep['frame'])
+                self._save_config()
+                return
+
+        frame = self._build_pvp_damage_report_frame(self.pvp_damage_notebook, data, is_saved=True, name=name)
+        self.pvp_damage_notebook.add(frame, text=name)
+        self.pvp_damage_saved_reports.append({'name': name, 'data': data, 'frame': frame})
+        self.pvp_damage_notebook.select(frame)
+        self._save_config()
+
+    def _delete_pvp_damage_report(self, name):
+        """Saved PvP Damage report tab's "Delete" button - removes it from
+        the notebook and from persisted config."""
+        for i, rep in enumerate(self.pvp_damage_saved_reports):
+            if rep['name'] == name:
+                if not messagebox.askyesno("Delete", f'Delete saved PvP damage report "{name}"?'):
+                    return
+                self.pvp_damage_notebook.forget(rep['frame'])
+                del self.pvp_damage_saved_reports[i]
                 self._save_config()
                 return
 
