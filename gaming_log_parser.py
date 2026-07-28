@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.1.1"
+VERSION = "6.1.2"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -7180,19 +7180,27 @@ class App(tk.Tk):
 
         manual_tree_frame = ttk.Frame(manual_tab)
         manual_tree_frame.pack(fill='both', expand=True)
-        manual_cols = ('Realm', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
+        # Bank/Locker lead the column list, same order as the real Results
+        # tab (see _bank_and_locker_cells) - a plain "you already own this"
+        # indicator here too, purely informational since Manual has no
+        # build/scoring concept of its own to prioritize owned items within.
+        manual_cols = ('Bank', 'Locker', 'Realm', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
         # Weight/Fumble/Damage/Timer/Accuracy only get appended while
         # Weapons is checked (see _set_manual_results_columns) - they're
         # meaningless for armor/jewel rows and would just sit blank.
         self._manual_base_cols = manual_cols
         self._manual_weapon_extra_cols = ('Weight', 'Fumble', 'Damage', 'Timer', 'Accuracy')
-        self._manual_col_widths = {'Realm': 70, 'Mob': 140, 'Item': 220, 'Slot': 55, 'Type': 110,
+        self._manual_col_widths = {'Bank': 28, 'Locker': 55, 'Realm': 70, 'Mob': 140, 'Item': 220, 'Slot': 55, 'Type': 110,
                              'Spell': 110, 'Sigil': 60, 'Level': 45, 'Area': 120,
                              'Weight': 55, 'Fumble': 70, 'Damage': 70, 'Timer': 55, 'Accuracy': 70}
         self.manual_results_tv = ttk.Treeview(manual_tree_frame, columns=manual_cols,
                                               show='headings', height=14)
         for col in manual_cols:
-            self.manual_results_tv.heading(col, text=col, anchor='center',
+            # Bank is a fixed-width icon column (📦, or a bold "L" for a
+            # Locker-sourced item - see _bank_and_locker_cells), same
+            # treatment as the real Results tab's own Bank column.
+            heading_text = '📦' if col == 'Bank' else col
+            self.manual_results_tv.heading(col, text=heading_text, anchor='center',
                                            command=lambda c=col: _sort_treeview_column(self.manual_results_tv, c, False))
             self.manual_results_tv.column(col, width=self._manual_col_widths[col], stretch=False)
 
@@ -8251,7 +8259,8 @@ class App(tk.Tk):
             return
         self.manual_results_tv['columns'] = cols
         for col in cols:
-            self.manual_results_tv.heading(col, text=col, anchor='center',
+            heading_text = '📦' if col == 'Bank' else col
+            self.manual_results_tv.heading(col, text=heading_text, anchor='center',
                                            command=lambda c=col: _sort_treeview_column(self.manual_results_tv, c, False))
             self.manual_results_tv.column(col, width=self._manual_col_widths[col], stretch=False)
 
@@ -8590,7 +8599,9 @@ class App(tk.Tk):
         self._manual_lookup_matches = matches
 
         for i, item in enumerate(matches):
-            row = [item.get('Realm', ''), item.get('Mob', ''), item.get('Item', ''),
+            bank_cell, locker_cell = self._bank_and_locker_cells(item)
+            row = [bank_cell, locker_cell,
+                   item.get('Realm', ''), item.get('Mob', ''), item.get('Item', ''),
                    item.get('Slot', ''), item.get('Type', ''), item.get('Spell', ''),
                    item.get('Sigil', ''), item.get('Level', ''), item.get('Area', '')]
             if weapons_checked:

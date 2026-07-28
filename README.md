@@ -137,7 +137,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.1.1 (Current)
+### v6.1.2 (Current)
+- Added the same **Bank** (📦) and **Locker** icon columns from the Results tab to the Manual tab's results table - a plain 📦 marks any item you've already saved anywhere, or a bold "L" plus the first 4 letters of the Locker's name for a Locker-sourced item, purely informational since Manual has no build/scoring concept of its own
+
+### v6.1.1
 - Moved the **Fields** and **Export** tabs from the top-level tab strip into a new **Settings** sub-tab of Parse (alongside Files & Search and Counters) - Settings is a small mini-notebook holding both. Nothing about either tab's own content changed, just where they live
 
 ### v6.1.0
