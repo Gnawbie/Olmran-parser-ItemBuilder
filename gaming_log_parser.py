@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.1.0"
+VERSION = "6.1.1"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2870,16 +2870,12 @@ class App(tk.Tk):
         self._build_update_bar(nb)
 
         self.tab_parse  = ttk.Frame(nb, padding=12)
-        self.tab_fields = ttk.Frame(nb, padding=12)
-        self.tab_export = ttk.Frame(nb, padding=12)
         self.tab_build = ttk.Frame(nb, padding=12)
         self.tab_results = ttk.Frame(nb, padding=12)
         self.tab_saved = ttk.Frame(nb, padding=12)
         self.tab_area_items = ttk.Frame(nb, padding=12)
 
         nb.add(self.tab_parse,  text='▶  Parse')
-        nb.add(self.tab_fields, text='⚙  Fields')
-        nb.add(self.tab_export, text='💾  Export')
         nb.add(self.tab_build, text='🔨  Build')
         nb.add(self.tab_results, text='📊  Results')  # Always visible
         nb.add(self.tab_saved, text='📌  Saved Builds')  # One tab holds every save
@@ -2949,8 +2945,17 @@ class App(tk.Tk):
 
         t = ttk.Frame(self.parse_sub_notebook, padding=12)
         counters_tab = ttk.Frame(self.parse_sub_notebook, padding=12)
+        settings_tab = ttk.Frame(self.parse_sub_notebook, padding=12)
         self.parse_sub_notebook.add(t, text='📄  Files & Search')
         self.parse_sub_notebook.add(counters_tab, text='📊  Counters')
+        self.parse_sub_notebook.add(settings_tab, text='⚙  Settings')
+
+        # Settings sub-tab is just a mini-notebook holding Fields and
+        # Export, both built by their own methods (called right after
+        # _build_parse_tab in _build_ui, so self.settings_sub_notebook
+        # already exists by the time they run).
+        self.settings_sub_notebook = ttk.Notebook(settings_tab, style='RealmMini.TNotebook')
+        self.settings_sub_notebook.pack(fill='both', expand=True)
 
         # ═══ FILES SECTION ═══
         # Built via a shared helper so the exact same section (toolbar +
@@ -3216,6 +3221,10 @@ class App(tk.Tk):
 
     # ── FIELDS TAB ────────────────────────────────────────────
     def _build_fields_tab(self):
+        # Lives inside the Settings tab's sub-notebook, alongside Export,
+        # rather than as its own top-level tab.
+        self.tab_fields = ttk.Frame(self.settings_sub_notebook, padding=12)
+        self.settings_sub_notebook.add(self.tab_fields, text='⚙  Fields')
         t = self.tab_fields
         ttk.Label(t, text="Customize Output Columns",
                   font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0,6))
@@ -3270,6 +3279,10 @@ class App(tk.Tk):
 
     # ── EXPORT TAB ────────────────────────────────────────────
     def _build_export_tab(self):
+        # Lives inside the Settings sub-tab's own mini-notebook, alongside
+        # Fields, rather than as its own top-level tab.
+        self.tab_export = ttk.Frame(self.settings_sub_notebook, padding=12)
+        self.settings_sub_notebook.add(self.tab_export, text='💾  Export')
         t = self.tab_export
         ttk.Label(t, text="Export to Excel",
                   font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0,10))

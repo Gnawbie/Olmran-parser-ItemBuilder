@@ -18,12 +18,15 @@ For installation steps, see **INSTALL_INSTRUCTIONS.txt**. This file covers how t
 - Use the Snapshot buttons to preview parsed data before exporting
 - Export everything to a formatted Excel workbook
 
-### Fields Tab
+### Settings (Parse sub-tab)
+A mini-notebook holding Fields and Export.
+
+**Fields**
 - Customize which fields get extracted for Chat, Combat, and Loot
 - Add, edit, remove, and reorder fields per data type
 - "Reset to Defaults" restores the built-in field set
 
-### Export Tab
+**Export**
 - Create a new Master Loot Database or append to an existing one (fodder items excluded automatically)
 - Export Combat and Loot as separate files if needed
 - Optional summary sheet with run statistics
@@ -134,7 +137,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.1.0 (Current)
+### v6.1.1 (Current)
+- Moved the **Fields** and **Export** tabs from the top-level tab strip into a new **Settings** sub-tab of Parse (alongside Files & Search and Counters) - Settings is a small mini-notebook holding both. Nothing about either tab's own content changed, just where they live
+
+### v6.1.0
 - Added a **Damage Counter** next to the XP Counter (both now grouped under a single "Counters" sub-tab, sharing one "Load Log Files" section) - totals damage dealt to every mob across the loaded log(s), with a **Per-Mob Summary** (Mob/Damage/Hits/Avg per Hit) and an **Every Hit** detail table (Timestamp/Mob/Damage/Weapon/File) so individual hits on a mob can be isolated even when other mobs were hit in between. Both tables sort by clicking any column header, and both support saving named reports that persist across restarts (with Delete)
 - Every Hit's **Weapon** column shows the melee weapon used, the actual spell cast, or - for a "Direct" weapon's own innate elemental proc (no spell-cast line at all) - falls back to the weapon that triggered it, so that damage is never left unattributed
 - Melee-hit detection now recognizes any attack verb ("smash", "attack", "maul", "backstab", "thrust", "slash", etc. - varies by class/shapeshift form) instead of a fixed list, and mob names are consistently de-articled ("a"/"an"/"the" stripped) whether the hit came from melee or a spell/AoE line, so the same mob no longer fragments into two separate summary rows
