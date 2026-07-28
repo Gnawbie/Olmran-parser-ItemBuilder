@@ -137,7 +137,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.1.2 (Current)
+### v6.1.3 (Current)
+- Saved Items now default an untagged **Event**-realm item's Gear Tag to **Good Gear** instead of Blank, everywhere the Gear Tag column appears (Main, every character, every Locker) - also feeds into the Good Gear only/Invasion Gear only search filters. An explicit tag (including explicitly choosing Blank) always overrides this default
+
+### v6.1.2
 - Added the same **Bank** (📦) and **Locker** icon columns from the Results tab to the Manual tab's results table - a plain 📦 marks any item you've already saved anywhere, or a bold "L" plus the first 4 letters of the Locker's name for a Locker-sourced item, purely informational since Manual has no build/scoring concept of its own
 
 ### v6.1.1

@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.1.2"
+VERSION = "6.1.3"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -1005,7 +1005,9 @@ BLOCKED_AREAS = {'class'}
 
 # Saved Items' "Gear Tag" column (see _open_gear_tag_editor) - one shared tag
 # per item NAME, not per character, so tagging "zebra hood" from any tab
-# shows the same tag everywhere else that name appears too.
+# shows the same tag everywhere else that name appears too. An item with no
+# explicit tag of its own defaults to "Good Gear" for an Event-realm item
+# (see _is_event_realm/_default_gear_tag_for_item), "Blank" otherwise.
 GEAR_TAG_OPTIONS = ['Good Gear', 'Invasion Gear', 'Both', 'Blank']
 
 DEFENSE_LEVELS = ['much worse', 'worse', 'normal', 'better', 'much better']
@@ -1336,6 +1338,13 @@ def _parse_bank_paste_text(text, master_data=None):
             continue
 
     return owned_keys, recognized, name_counts_by_type
+
+
+def _is_event_realm(realm):
+    """True if a master_data item's Realm text is an Event realm - used to
+    default a Saved Item's Gear Tag to "Good Gear" instead of "Blank" for
+    event gear (see _default_gear_tag_for_item)."""
+    return 'event' in (realm or '').strip().lower()
 
 
 def _bank_item_key(item):
@@ -6522,15 +6531,17 @@ class App(tk.Tk):
         self._recompute_all_saved_item_names()
 
         # Saved Items' "Gear Tag" column (see _open_gear_tag_editor) - one
-        # shared tag per item name (GEAR_TAG_OPTIONS, defaulting to "Blank"
-        # for anything not explicitly set), not stored at all for "Blank"
-        # itself so an untagged item doesn't bloat the config file. For the
-        # Good Gear only/Invasion Gear only search filters (see
-        # _find_character_saved_items_build), "Both" always qualifies under
-        # either checkbox (it counts as both categories at once), but
-        # "Blank" qualifies under neither - a user who never tags anything
-        # (everything stays Blank) will find both checkboxes filter down to
-        # nothing, same as not having used the Gear Tag feature at all.
+        # shared tag per item name (GEAR_TAG_OPTIONS), defaulting to "Good
+        # Gear" for an Event-realm item or "Blank" otherwise for anything
+        # not explicitly set (see _default_gear_tag_for_item) - an explicit
+        # choice (including an explicit "Blank") always overrides that
+        # computed default once made. For the Good Gear only/Invasion Gear
+        # only search filters (see _find_character_saved_items_build),
+        # "Both" always qualifies under either checkbox (it counts as both
+        # categories at once), but "Blank" qualifies under neither - a user
+        # who never tags a non-Event item (it stays Blank) will find both
+        # checkboxes filter down to nothing for it, same as not having used
+        # the Gear Tag feature at all.
         self.bank_gear_tags = dict(getattr(self, '_persisted_bank_gear_tags', {}))
 
         # Bank Build - two inner tabs: "Import" parses a pasted bank/
@@ -11788,8 +11799,8 @@ class App(tk.Tk):
             tag_filter.add('Invasion Gear')
         if tag_filter:
             effective_names = {n for n in effective_names
-                               if self.bank_gear_tags.get(n, 'Blank') in tag_filter
-                               or self.bank_gear_tags.get(n, 'Blank') == 'Both'}
+                               if self.bank_gear_tags.get(n, self._default_gear_tag_for_item(n)) in tag_filter
+                               or self.bank_gear_tags.get(n, self._default_gear_tag_for_item(n)) == 'Both'}
 
         return effective_names, tag_filter
 
@@ -12178,17 +12189,30 @@ class App(tk.Tk):
     def _set_gear_tag(self, item_name, new_val):
         """Write one item's Gear Tag - global per item name, so this
         redraws every Saved Items treeview (Main and every character), not
-        just the one the edit happened in. "Blank" isn't stored at all
-        (it's just the default for anything absent from the dict), keeping
-        the persisted config from filling up with untagged entries."""
-        if new_val == 'Blank':
-            self.bank_gear_tags.pop(item_name, None)
-        else:
-            self.bank_gear_tags[item_name] = new_val
+        just the one the edit happened in. Always stored explicitly, even
+        "Blank" - a deliberate choice always overrides the computed
+        default (see _default_gear_tag_for_item), so explicitly blanking
+        an Event item that would otherwise default to "Good Gear" actually
+        shows blank instead of immediately reverting."""
+        self.bank_gear_tags[item_name] = new_val
         self._save_config()
         self._refresh_bank_saved_tab()
         for char_name in list(self.bank_character_widgets):
             self._refresh_bank_character_tab(char_name)
+
+    def _default_gear_tag_for_item(self, item_name):
+        """Default Gear Tag for an item with no explicit tag of its own
+        (i.e. absent from self.bank_gear_tags) - "Good Gear" for anything
+        whose master-database Realm is an Event realm (see
+        _is_event_realm), "Blank" for everything else. Only used as the
+        .get() fallback everywhere self.bank_gear_tags is read - once an
+        item has an explicit tag (including an explicit "Blank"), that
+        always wins over this."""
+        name = (item_name or '').strip().lower()
+        for item in self.master_data:
+            if (item.get('Item') or '').strip().lower() == name:
+                return 'Good Gear' if _is_event_realm(item.get('Realm')) else 'Blank'
+        return 'Blank'
 
     def _bank_saved_display_rows(self, order, sources):
         """Row tuples (Slot, Drop, Item, Type, Spell, Sigil, Level, Area,
@@ -12198,8 +12222,10 @@ class App(tk.Tk):
         beyond the first are appended at the bottom, prefixed "::extra::".
         Drop reads "No Drop" for a Kaid-realm item (Kaid gear doesn't drop
         when you die), "Drop" for everything else. Tag is whatever's in
-        self.bank_gear_tags for that name, defaulting to "Blank" - see
-        _open_gear_tag_editor. Returns (rows, extra_count)."""
+        self.bank_gear_tags for that name, defaulting to "Good Gear" for
+        an Event-realm item (see _is_event_realm) or "Blank" otherwise -
+        see _open_gear_tag_editor/_default_gear_tag_for_item. Returns
+        (rows, extra_count)."""
         master_by_name = {}
         for item in self.master_data:
             master_by_name.setdefault((item.get('Item') or '').strip().lower(), item)
@@ -12208,10 +12234,11 @@ class App(tk.Tk):
             m = master_by_name.get(name, {})
             display_name = f"::extra:: {name}" if extra else name
             is_kaid = 'kaid' in (m.get('Realm') or '').strip().lower()
+            default_tag = 'Good Gear' if _is_event_realm(m.get('Realm')) else 'Blank'
             return (
                 (m.get('Slot') or '').title(), 'No Drop' if is_kaid else 'Drop', display_name,
                 m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''), m.get('Level', ''), m.get('Area', ''),
-                self.bank_gear_tags.get(name, 'Blank'),
+                self.bank_gear_tags.get(name, default_tag),
             )
 
         total_counts = {
