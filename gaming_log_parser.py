@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.3.0"
+VERSION = "6.4.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -934,6 +934,20 @@ MULTI_SHEET_EXPORT_FORMATS = {'xlsx', 'xls', 'ods'}
 # file with neither.
 MAIN_EXPORT_TYPES = {'chat', 'combat', 'loot'}
 COUNTER_EXPORT_TYPES = {'xp', 'damage', 'pvp_dealt', 'pvp_taken'}
+
+# Appended to a mini-tab's own tab text (see _open_item_counter_mini_tab/
+# _open_item_counter_comparison_tab) as a clickable close marker - "All"
+# never carries it, so it's the only tab in that notebook that can't be
+# closed this way (see the click handler bound in _build_item_report_frame).
+ITEM_MINI_TAB_CLOSE_MARK = '  ✕'
+# How close to a mini-tab's right edge a click has to land to count as
+# hitting its close mark - see _item_mini_tab_close_click.
+ITEM_MINI_TAB_CLOSE_HIT_PX = 20
+
+# Shown as a note next to the Item Counter's Save/Delete button (see
+# _build_item_report_frame) - the exact 'Drop Rate %' formula, since the
+# column header itself just says "Drop Rate %" with no explanation.
+ITEM_DROP_RATE_FORMULA_NOTE = "Drop Rate % = (dcount / kcount * 100 / possible_items(mob))"
 
 # Plain (label, value) shape shared by every format's Summary sheet/file
 # except XLSX, which keeps its own more polished _write_summary instead
@@ -2282,6 +2296,20 @@ class App(tk.Tk):
                     # Parse tab's PvP Damage Counter - saved dealt/taken
                     # damage reports, same pattern as damage_reports above.
                     self._persisted_pvp_damage_reports = config.get('pvp_damage_reports', [])
+                    # Parse tab's Item Counter - saved drop-rate reports,
+                    # same pattern as damage_reports above.
+                    self._persisted_item_reports = config.get('item_reports', [])
+                    # Item Counter's "Consistent" checkbox - one running
+                    # tally per character (see _compute_item_drop_stats/
+                    # _extract_log_character/_item_tally_from_json), keyed
+                    # by whatever character name each log's own filename
+                    # carries ('Unknown' for files that don't fit that
+                    # pattern) - not tied to any particular saved/working
+                    # tab.
+                    self.item_consistent_tally_by_character = {
+                        char: self._item_tally_from_json(raw)
+                        for char, raw in config.get('item_consistent_tally_by_character', {}).items()
+                    }
                     # Counters sub-tab's resizable "Load Log Files" table -
                     # last row count the user dragged it to (see
                     # _build_file_list_section's resizable=True path).
@@ -2311,6 +2339,8 @@ class App(tk.Tk):
                 self._persisted_xp_reports = []
                 self._persisted_damage_reports = []
                 self._persisted_pvp_damage_reports = []
+                self._persisted_item_reports = []
+                self.item_consistent_tally_by_character = {}
                 self._persisted_counters_file_rows = COUNTERS_FILE_LIST_DEFAULT_ROWS
                 self._persisted_locker_groups = []
                 self._persisted_locker_group_counter = 0
@@ -2330,6 +2360,8 @@ class App(tk.Tk):
             self._persisted_xp_reports = []
             self._persisted_damage_reports = []
             self._persisted_pvp_damage_reports = []
+            self._persisted_item_reports = []
+            self.item_consistent_tally_by_character = {}
             self._persisted_counters_file_rows = COUNTERS_FILE_LIST_DEFAULT_ROWS
             self._persisted_locker_groups = []
             self._persisted_locker_group_counter = 0
@@ -2384,6 +2416,14 @@ class App(tk.Tk):
                     {'name': rep['name'], 'data': rep['data']}
                     for rep in getattr(self, 'pvp_damage_saved_reports', [])
                 ],
+                'item_reports': [
+                    {'name': rep['name'], 'data': rep['data']}
+                    for rep in getattr(self, 'item_saved_reports', [])
+                ],
+                'item_consistent_tally_by_character': {
+                    char: self._item_tally_to_json(raw)
+                    for char, raw in getattr(self, 'item_consistent_tally_by_character', {}).items()
+                },
                 'counters_file_list_rows': getattr(
                     self, '_counters_file_rows', COUNTERS_FILE_LIST_DEFAULT_ROWS),
             }
@@ -3266,9 +3306,11 @@ class App(tk.Tk):
         xp_tab = ttk.Frame(self.counters_notebook, padding=12)
         dmg_tab = ttk.Frame(self.counters_notebook, padding=12)
         pvp_dmg_tab = ttk.Frame(self.counters_notebook, padding=12)
+        item_tab = ttk.Frame(self.counters_notebook, padding=12)
         self.counters_notebook.add(xp_tab, text='🧮  XP Counter')
         self.counters_notebook.add(dmg_tab, text='⚔  Damage Counter')
         self.counters_notebook.add(pvp_dmg_tab, text='🗡  PvP Damage')
+        self.counters_notebook.add(item_tab, text='🎁  Item Counter')
 
         # ═══ SEARCH SECTION ═══
         # Search across every loaded file's actual lines - independent of Run
@@ -3545,6 +3587,69 @@ class App(tk.Tk):
                 self.pvp_damage_notebook, rep_data, is_saved=True, name=rep_name)
             self.pvp_damage_notebook.add(frame, text=rep_name)
             self.pvp_damage_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
+
+        # ═══ ITEM COUNTER TAB (inside the Counters sub-tab, below the
+        # shared "Load Log Files" section built above) ═══
+        ttk.Label(item_tab, text="Item Counter",
+                  font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0, 8))
+
+        item_top_row = ttk.Frame(item_tab)
+        item_top_row.pack(fill='x')
+        ttk.Button(item_top_row, text="🎁 Item Counter",
+                  command=self._open_item_counter).pack(side='left')
+        ttk.Label(item_top_row,
+                 text="Drop rate of every item, per mob, across the loaded log(s) - plus a "
+                      "daily/weekly/monthly/yearly breakdown when the log files' own creation dates span more than one.",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=10)
+
+        item_character_row = ttk.Frame(item_tab)
+        item_character_row.pack(fill='x', pady=(4,0))
+        ttk.Label(item_character_row, text="Character:").pack(side='left', padx=(0,6))
+        self.item_counter_character = tk.StringVar(value='All Characters')
+        self.item_counter_character_combo = ttk.Combobox(
+            item_character_row, textvariable=self.item_counter_character,
+            values=['All Characters'], state='readonly', width=20)
+        self.item_counter_character_combo.pack(side='left')
+        ttk.Label(item_character_row,
+                 text="💡 Extracted from each log filename's own character-name segment (e.g. "
+                      "...-GNAWBIE-<timestamp>.log) - files that don't fit that pattern count as "
+                      "'Unknown'. Applies the next time you click Item Counter.",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=10)
+
+        item_filter_row = ttk.Frame(item_tab)
+        item_filter_row.pack(fill='x', pady=(4,0))
+        ttk.Label(item_filter_row, text="Show:").pack(side='left', padx=(0,6))
+        self.item_counter_show_items = tk.BooleanVar(value=True)
+        ttk.Checkbutton(item_filter_row, text="Items",
+                       variable=self.item_counter_show_items).pack(side='left', padx=(0,12))
+        self.item_counter_show_junk = tk.BooleanVar(value=False)
+        ttk.Checkbutton(item_filter_row, text="Junk Loot",
+                       variable=self.item_counter_show_junk).pack(side='left', padx=(0,12))
+        self.item_counter_consistent = tk.BooleanVar(value=True)
+        ttk.Checkbutton(item_filter_row, text="Consistent",
+                       variable=self.item_counter_consistent,
+                       command=self._on_item_counter_consistent_toggle).pack(side='left')
+        ttk.Label(item_filter_row,
+                 text="💡 Items = found in the loaded master/community database; Junk Loot = everything "
+                      "else. Consistent = keep a running tally across every past click instead of "
+                      "starting over from just what's currently loaded - any log file already counted "
+                      "is skipped, not counted again. Applies the next time you click Item Counter.",
+                 font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=10)
+
+        self.item_notebook = ttk.Notebook(item_tab)
+        self.item_notebook.pack(fill='both', expand=True, pady=(10,0))
+
+        self.item_saved_reports = []
+        self._item_working_frame = None
+        for rep in getattr(self, '_persisted_item_reports', []):
+            rep_name = rep.get('name', '')
+            rep_data = rep.get('data', {})
+            if not rep_name or not rep_data:
+                continue
+            frame = self._build_item_report_frame(
+                self.item_notebook, rep_data, is_saved=True, name=rep_name)
+            self.item_notebook.add(frame, text=rep_name)
+            self.item_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
 
     # ── FIELDS TAB ────────────────────────────────────────────
     def _build_fields_tab(self):
@@ -4065,10 +4170,11 @@ class App(tk.Tk):
 
     def _update_parse_options(self):
         """Update parse checkboxes based on loaded files"""
+        self._refresh_item_counter_character_dropdown()
         # Check what types of files are loaded
         has_chat = any(f['type'] == 'chat' for f in self.files)
         has_action = any(f['type'] in ('combat', 'loot') for f in self.files)
-        
+
         if not self.files:
             # No files: uncheck and enable all
             self.do_chat.set(False)
@@ -5367,6 +5473,1224 @@ class App(tk.Tk):
                 self._save_config()
                 return
 
+    def _extract_log_date(self, path):
+        """The log file's own OS creation date (Windows file creation
+        time, via os.path.getctime) - this is per-file date information
+        without opening and reading each one's own in-game timestamps
+        (which have no date, only a time-of-day), and doesn't depend on
+        the filename following any particular naming pattern the way
+        parsing a date out of the name itself would. Returns a
+        datetime.date, or None if the file's creation time can't be read
+        at all (e.g. it no longer exists on disk). Backs the Item
+        Counter's daily/weekly/monthly/yearly drop-rate breakdowns."""
+        try:
+            return datetime.fromtimestamp(os.path.getctime(path)).date()
+        except (OSError, ValueError, OverflowError):
+            return None
+
+    def _extract_log_character(self, filename):
+        """Character name embedded in a log filename - the game names
+        its own logs "<TYPE>-<FORMAT>-<CHARNAME>-<epoch timestamp>.log"
+        (e.g. "ACTION-PDF-GNAWBIE-1785249871654.log" -> "GNAWBIE"), so
+        it's the second-to-last dash-separated segment, right before
+        that trailing timestamp. Returns None if the filename doesn't
+        have enough dash-separated segments to plausibly contain one -
+        callers bucket that as an "Unknown" character, the same way
+        _extract_log_date's own failures become an "Unknown" date.
+        Backs the Item Counter's Character dropdown (see
+        _group_files_by_character) and its per-character "Consistent"
+        tally (item_consistent_tally_by_character)."""
+        stem = os.path.splitext(filename)[0]
+        parts = stem.split('-')
+        if len(parts) < 2:
+            return None
+        return parts[-2] or None
+
+    def _group_files_by_character(self, files):
+        """Splits a list of loaded file dicts into {character_name:
+        [files...]}, using _extract_log_character - files whose name
+        doesn't fit that pattern land under 'Unknown', same as any other
+        per-file grouping in this app that can't always be determined."""
+        groups = {}
+        for f in files:
+            char = self._extract_log_character(f['name']) or 'Unknown'
+            groups.setdefault(char, []).append(f)
+        return groups
+
+    def _refresh_item_counter_character_dropdown(self):
+        """Repopulates the Item Counter's Character dropdown with 'All
+        Characters' plus every character name found among self.files
+        (see _group_files_by_character), sorted, "Unknown" last - called
+        whenever the loaded file list changes (_update_parse_options).
+        Preserves the current selection if it's still one of the options;
+        falls back to 'All Characters' otherwise (e.g. that character's
+        only file was just removed)."""
+        if not hasattr(self, 'item_counter_character_combo'):
+            return
+        characters = set(self._group_files_by_character(self.files).keys())
+        options = ['All Characters'] + sorted(characters - {'Unknown'}) + (['Unknown'] if 'Unknown' in characters else [])
+        self.item_counter_character_combo.config(values=options)
+        if self.item_counter_character.get() not in options:
+            self.item_counter_character.set('All Characters')
+
+    def _parse_item_events(self, files):
+        """Parses the given log files for mob kills ("<mob> dies!") and
+        item drops ("<mob> drops <item>.", the same shape LootParser/
+        _find_item_drops already use, including the same "bag of silver/
+        coins/gold" currency exclusion and flavor-text/player-name
+        exclusions - see _compute_item_drop_stats), returning a raw,
+        not-yet-formatted tally: per-mob kill counts and per-(mob, item)
+        drop counts, both overall, broken down by Area, and broken down
+        by day/week/month/year CROSSED with Area (so the Daily/Weekly/
+        Monthly/Yearly tabs can show the same Zone -> Mob -> Item tree
+        "All" does, just with Period as an extra outer level - see
+        _build_item_period_zone_mob_tree), plus one file_dates entry per
+        file. A kill/drop whose current [Area] bracket is really a class/
+        summon status display rather than a real zone (see
+        blocked_area_gap_re, below) still counts toward overall_kills/
+        overall_drops, but never toward any Area-based breakdown - that
+        "area" (and everything attributed to it) simply never appears in
+        the Item Counter's Zone charts.
+        This is the one thing both a plain one-off computation and the
+        "Consistent" persistent tally (see item_counter_consistent)
+        share - Consistent just calls this with whichever files haven't
+        already been tallied, then merges the result into what's already
+        persisted (see _merge_item_raw)."""
+        ts_re = re.compile(r'^<(\d{2}:\d{2}:\d{2})>\s*')
+        kill_re = re.compile(r'^(A |An |The )?(.+?) dies!')
+        drop_re = LootParser.DROP_RE
+        loc_re = LootParser.LOC_RE
+
+        # A bracket line like "[Sin      60]" or "[Demon        74]" is a
+        # class/summon status display (name column-padded with spaces
+        # before a trailing level/HP number), not a real zone transition
+        # - it just happens to match the same "[...]" shape LOC_RE looks
+        # for. Real zone names never have more than 2 consecutive spaces
+        # before a trailing number, so that's the signal used to tell
+        # the two apart, rather than trying to name every class/summon
+        # that could show up this way.
+        blocked_area_gap_re = re.compile(r' {3,}\d+$')
+
+        def is_blocked_area(area):
+            return bool(blocked_area_gap_re.search(area))
+
+        overall_kills = {}
+        overall_drops = {}
+        period_area_kills = {'daily': {}, 'weekly': {}, 'monthly': {}, 'yearly': {}}
+        period_area_drops = {'daily': {}, 'weekly': {}, 'monthly': {}, 'yearly': {}}
+        area_kills = {}
+        area_drops = {}
+        file_dates = []
+        any_found = False
+
+        for f in files:
+            file_date = self._extract_log_date(f['path'])
+            file_kills = 0
+            file_drops = 0
+
+            periods = {}
+            if file_date is not None:
+                iso_year, iso_week, _ = file_date.isocalendar()
+                periods = {
+                    'daily': file_date.isoformat(),
+                    'weekly': f"{iso_year}-W{iso_week:02d}",
+                    'monthly': file_date.strftime('%Y-%m'),
+                    'yearly': file_date.strftime('%Y'),
+                }
+
+            try:
+                with open(f['path'], 'r', encoding='utf-8', errors='ignore') as fh:
+                    lines = fh.readlines()
+            except Exception:
+                file_dates.append({'file': f['name'],
+                                   'date': file_date.isoformat() if file_date else 'Unknown',
+                                   'kills': 0, 'drops': 0})
+                continue
+
+            current_area = 'Unknown'
+            for raw_line in lines:
+                line = raw_line.rstrip('\r\n').strip()
+                line = ts_re.sub('', line)
+
+                loc_m = loc_re.match(line)
+                if loc_m:
+                    current_area = loc_m.group(1)
+                    continue
+
+                m_kill = kill_re.match(line)
+                if m_kill:
+                    mob = m_kill.group(2).strip()
+                    # A player's own name is a single bare word with no
+                    # article (mob names almost always carry one, e.g. "a
+                    # tortured spirit") - same heuristic used to separate
+                    # players from mobs in _compute_pvp_damage_stats. A
+                    # player death isn't a monster kill, so it's excluded
+                    # here entirely rather than polluting a mob's kill
+                    # count.
+                    if m_kill.group(1) is None and ' ' not in mob:
+                        continue
+                    any_found = True
+                    file_kills += 1
+                    overall_kills[mob] = overall_kills.get(mob, 0) + 1
+                    if not is_blocked_area(current_area):
+                        for gran, pkey in periods.items():
+                            area_bucket = period_area_kills[gran].setdefault(pkey, {}).setdefault(current_area, {})
+                            area_bucket[mob] = area_bucket.get(mob, 0) + 1
+                        area_bucket = area_kills.setdefault(current_area, {})
+                        area_bucket[mob] = area_bucket.get(mob, 0) + 1
+                    continue
+
+                m_drop = drop_re.match(line)
+                if m_drop:
+                    mob = m_drop.group(2).strip()
+                    # Same player-vs-mob check as above - a player
+                    # "dropping" something (e.g. dropping an item on the
+                    # ground) isn't a monster loot drop.
+                    if m_drop.group(1) is None and ' ' not in mob:
+                        continue
+                    item_raw = m_drop.group(3).strip()
+                    # DROP_RE's own pattern (".+? drops (.+?)\.") can false-
+                    # positive on room-description flavor text that happens
+                    # to contain " drops " followed eventually by a period
+                    # on the same line (e.g. "The track drops off sharply
+                    # to the east.") - a genuine item drop always names an
+                    # actual item, which always starts with an article, so
+                    # requiring that here rules those out without touching
+                    # DROP_RE itself (shared with LootParser/
+                    # _find_item_drops).
+                    if not re.match(r'(a|an|the)\s', item_raw, re.I):
+                        continue
+                    if re.match(r'a bag of (silver|coins?|gold)', item_raw, re.I):
+                        continue
+                    item = LootParser.clean_item_name(item_raw)
+                    any_found = True
+                    file_drops += 1
+                    pair = (mob, item)
+                    overall_drops[pair] = overall_drops.get(pair, 0) + 1
+                    if not is_blocked_area(current_area):
+                        for gran, pkey in periods.items():
+                            area_drop_bucket = period_area_drops[gran].setdefault(pkey, {}).setdefault(current_area, {})
+                            area_drop_bucket[pair] = area_drop_bucket.get(pair, 0) + 1
+                        area_drop_bucket = area_drops.setdefault(current_area, {})
+                        area_drop_bucket[pair] = area_drop_bucket.get(pair, 0) + 1
+
+            file_dates.append({'file': f['name'],
+                               'date': file_date.isoformat() if file_date else 'Unknown',
+                               'kills': file_kills, 'drops': file_drops})
+
+        return {
+            'overall_kills': overall_kills, 'overall_drops': overall_drops,
+            'period_area_kills': period_area_kills, 'period_area_drops': period_area_drops,
+            'area_kills': area_kills, 'area_drops': area_drops,
+            'file_dates': file_dates, 'any_found': any_found,
+        }
+
+    def _merge_item_raw(self, base, new):
+        """Adds a freshly-parsed raw tally (see _parse_item_events) into
+        an existing one - every kill/drop count summed, file_dates lists
+        concatenated. Used only by the "Consistent" persistent tally (see
+        item_counter_consistent) to combine newly-tallied files into
+        whatever was already persisted."""
+        def merge_depth(a, b, depth):
+            # depth = how many levels of {key: {...}} nesting sit above
+            # the leaf integer count - 0 means a/b ARE the plain
+            # key->count map; 2 means a/b are key->{key->{key->count}},
+            # e.g. period_area_kills[gran] (pkey -> area -> mob -> count).
+            if depth <= 0:
+                merged = dict(a)
+                for k, v in b.items():
+                    merged[k] = merged.get(k, 0) + v
+                return merged
+            merged = {k: merge_depth(v, {}, depth - 1) for k, v in a.items()}
+            for k, sub in b.items():
+                merged[k] = merge_depth(merged.get(k, {}), sub, depth - 1)
+            return merged
+
+        grans = ('daily', 'weekly', 'monthly', 'yearly')
+        return {
+            'overall_kills': merge_depth(base['overall_kills'], new['overall_kills'], 0),
+            'overall_drops': merge_depth(base['overall_drops'], new['overall_drops'], 0),
+            'period_area_kills': {g: merge_depth(base['period_area_kills'][g], new['period_area_kills'][g], 2)
+                                  for g in grans},
+            'period_area_drops': {g: merge_depth(base['period_area_drops'][g], new['period_area_drops'][g], 2)
+                                  for g in grans},
+            'area_kills': merge_depth(base['area_kills'], new['area_kills'], 1),
+            'area_drops': merge_depth(base['area_drops'], new['area_drops'], 1),
+            'file_dates': base['file_dates'] + new['file_dates'],
+            'any_found': base.get('any_found', False) or new.get('any_found', False),
+        }
+
+    def _item_tally_to_json(self, raw):
+        """Converts one character's raw tally dict (see
+        _parse_item_events/_merge_item_raw - (mob, item) pair maps use
+        tuple keys, which aren't valid JSON) into the JSON-safe shape
+        written to config under 'item_consistent_tally_by_character'
+        (one of these per character) - each pair map becomes a plain
+        list of {'mob','item','count'} records instead."""
+        def pairs(d):
+            return [{'mob': m, 'item': i, 'count': c} for (m, i), c in d.items()]
+        grans = ('daily', 'weekly', 'monthly', 'yearly')
+        return {
+            'overall_kills': dict(raw['overall_kills']),
+            'overall_drops': pairs(raw['overall_drops']),
+            'period_area_kills': {
+                g: {pkey: {area: dict(m) for area, m in areas.items()}
+                    for pkey, areas in raw['period_area_kills'][g].items()}
+                for g in grans
+            },
+            'period_area_drops': {
+                g: {pkey: {area: pairs(m) for area, m in areas.items()}
+                    for pkey, areas in raw['period_area_drops'][g].items()}
+                for g in grans
+            },
+            'area_kills': {area: dict(m) for area, m in raw['area_kills'].items()},
+            'area_drops': {area: pairs(m) for area, m in raw['area_drops'].items()},
+            'file_dates': list(raw['file_dates']),
+        }
+
+    def _item_tally_from_json(self, data):
+        """Inverse of _item_tally_to_json - rebuilds the in-memory raw
+        tally shape (tuple-keyed pair maps) from one character's own
+        entry under the 'item_consistent_tally_by_character' config key
+        (or {} for a character that's never been tallied yet, which this
+        turns into a properly-shaped empty tally). An older config saved
+        before the Daily/Weekly/Monthly/Yearly tabs gained their own
+        Area breakdown (see
+        _build_item_period_zone_mob_tree) simply has no
+        'period_area_kills'/'period_area_drops' key yet - that just
+        starts those breakdowns over empty going forward; the Overall/
+        Area tallies and already-processed file list carry over fine."""
+        def unpairs(records):
+            result = {}
+            for rec in records:
+                result[(rec['mob'], rec['item'])] = rec['count']
+            return result
+        grans = ('daily', 'weekly', 'monthly', 'yearly')
+        pak_in = data.get('period_area_kills', {})
+        pad_in = data.get('period_area_drops', {})
+        return {
+            'overall_kills': dict(data.get('overall_kills', {})),
+            'overall_drops': unpairs(data.get('overall_drops', [])),
+            'period_area_kills': {
+                g: {pkey: {area: dict(m) for area, m in areas.items()}
+                    for pkey, areas in pak_in.get(g, {}).items()}
+                for g in grans
+            },
+            'period_area_drops': {
+                g: {pkey: {area: unpairs(m) for area, m in areas.items()}
+                    for pkey, areas in pad_in.get(g, {}).items()}
+                for g in grans
+            },
+            'area_kills': {area: dict(m) for area, m in data.get('area_kills', {}).items()},
+            'area_drops': {area: unpairs(m) for area, m in data.get('area_drops', {}).items()},
+            'file_dates': list(data.get('file_dates', [])),
+            'any_found': bool(data.get('overall_kills') or data.get('overall_drops')),
+        }
+
+    def _compute_item_drop_stats(self):
+        """Parses every loaded file for mob kills ("<mob> dies!") and item
+        drops ("<mob> drops <item>.", the same shape LootParser/
+        _find_item_drops already use, including the same "bag of silver/
+        coins/gold" currency exclusion), returning drop-rate stats broken
+        down four ways:
+          - 'overall': every (mob, item) pair seen dropped at least once,
+            across all loaded files combined, with that item's drop
+            count, that mob's total kill count, and a 'rate' computed as
+            (drops / kills * 100) / possible_items - possible_items being
+            how many distinct items the master database lists for that
+            mob (1 if the mob isn't in the database at all). Dividing by
+            it means an item competing against a bigger loot table reads
+            as rarer even at the same drops/kills ratio, rather than
+            every item under a mob summing to a plain 100%.
+          - 'daily'/'weekly'/'monthly'/'yearly': each a dict shaped like
+            {'periods': [...], 'by_period': {pkey: {'by_area': ...,
+            'areas': ...}}} - the same Zone -> Mob -> Item breakdown
+            'by_area'/'areas' provide for the whole dataset, just scoped
+            to one calendar day/ISO week/month/year at a time (see
+            _extract_log_date). Only kills/drops from files with a
+            successfully-extracted date contribute to these; a mob
+            killed in two different files that share a period (e.g. both
+            logs from the same day) combine into that one period's own
+            entry. 'periods' is the sorted list of pkeys present, mirror-
+            ing 'areas' - the source for _build_item_period_zone_mob_tree.
+          - 'file_dates': one row per loaded file - its extracted date (or
+            "Unknown" if none could be read from the filename), plus how
+            many kills/drops were found in that file specifically.
+          - 'by_area': the same per-(mob, item) breakdown as 'overall',
+            but split per Area (tracked the same way LootParser does, via
+            each "[Area Name]" bracket line - sticky until the next one).
+            A kill/drop seen before any bracket line at all in a given
+            file falls under "Unknown".
+          - 'areas': sorted list of every area name appearing in
+            'by_area' - the "All" tree's own Mob -> Zone grouping (see
+            _build_item_zone_mob_tree), and the source for on-demand
+            Zone/Monster mini-tabs opened via right-click.
+        Every breakdown above also includes a row for any (mob, item) pair
+        that the loaded master database lists for a mob that WAS killed in
+        these logs, even if that item never actually dropped - shown with
+        drops=0/rate=0.0 so the full known loot table is visible, not just
+        what's been seen so far. Never junk (it came straight from the
+        master database).
+        The Character dropdown (item_counter_character - see
+        _extract_log_character/_group_files_by_character) scopes all of
+        this to one character's own logs at a time, or "All Characters"
+        (the default) for every currently-loaded file regardless of
+        which character it belongs to.
+        When the "Consistent" checkbox (item_counter_consistent) is
+        checked, the underlying tally isn't just what's parsed from
+        self.files right now - each character's own files are merged
+        into (and persisted back to) that character's own running total
+        (item_consistent_tally_by_character, config key
+        'item_consistent_tally_by_character'), and any currently-loaded
+        file whose name is already in ITS character's running total is
+        skipped entirely rather than re-parsed and double-counted. This
+        happens for every character present among self.files regardless
+        of which one is currently selected in the dropdown, so switching
+        characters never loses anything already tallied. "All
+        Characters" then displays every character's own persisted tally
+        combined; picking one specific character displays just its own.
+        Unchecked, behavior is exactly as if this persistence didn't
+        exist - a plain one-off computation over whichever files match
+        the current Character selection.
+        Returns None if no kills or drops were found in any loaded file at
+        all (an empty result would just be confusing, not informative)."""
+        consistent = bool(getattr(self, 'item_counter_consistent', None) and self.item_counter_consistent.get())
+        selected_character = (self.item_counter_character.get()
+                              if getattr(self, 'item_counter_character', None) else 'All Characters')
+        file_groups = self._group_files_by_character(self.files)
+
+        if consistent:
+            tally_by_char = self.item_consistent_tally_by_character
+            for char, char_files in file_groups.items():
+                persisted = tally_by_char.get(char) or self._item_tally_from_json({})
+                already_processed = {fd['file'] for fd in persisted['file_dates']}
+                files_to_parse = [f for f in char_files if f['name'] not in already_processed]
+                new_raw = self._parse_item_events(files_to_parse)
+                tally_by_char[char] = self._merge_item_raw(persisted, new_raw)
+            self.item_consistent_tally_by_character = tally_by_char
+            self._save_config()
+
+            if selected_character == 'All Characters':
+                raw = self._item_tally_from_json({})
+                for char_raw in tally_by_char.values():
+                    raw = self._merge_item_raw(raw, char_raw)
+            else:
+                raw = tally_by_char.get(selected_character) or self._item_tally_from_json({})
+        else:
+            if selected_character == 'All Characters':
+                files_for_computation = self.files
+            else:
+                files_for_computation = file_groups.get(selected_character, [])
+            raw = self._parse_item_events(files_for_computation)
+
+        if not raw['any_found']:
+            return None
+
+        overall_kills = raw['overall_kills']
+        overall_drops = raw['overall_drops']
+        period_area_kills = raw['period_area_kills']
+        period_area_drops = raw['period_area_drops']
+        area_kills = raw['area_kills']
+        area_drops = raw['area_drops']
+        file_dates = raw['file_dates']
+
+        # "Items" (see the Item Counter's own Items/Junk Loot checkboxes,
+        # applied by _apply_item_counter_filter at display time, not here)
+        # means "found in the currently loaded master/community
+        # database" - everything else is "Junk Loot". Built fresh each
+        # time rather than cached, since the loaded master database can
+        # change between one Item Counter click and the next.
+        master_item_names = {(item.get('Item') or '').strip().lower() for item in self.master_data}
+
+        # Mob -> every item the master database lists it as dropping
+        # (lowercased mob name for matching against log-observed mob
+        # names, which are article-free the same way LootParser's own
+        # Mob field is - see the DROP_RE-derived 'Mob' assignment in
+        # LootParser.parse_file).
+        master_items_by_mob = {}
+        for item in self.master_data:
+            mob_name = (item.get('Mob') or '').strip()
+            item_name = (item.get('Item') or '').strip()
+            if mob_name and item_name:
+                master_items_by_mob.setdefault(mob_name.lower(), set()).add(item_name)
+
+        def possible_items(mob):
+            # How many distinct items the master database lists for this
+            # mob - used to divide the raw drops/kills rate down further,
+            # so an item competing against a bigger loot table reads as
+            # rarer even at the same drops/kills ratio (see 'rate' below).
+            # Falls back to 1 (no adjustment) when the mob isn't in the
+            # database at all, since there's no known table size to
+            # divide by.
+            return len(master_items_by_mob.get(mob.lower(), ())) or 1
+
+        def build_rows(kills_map, drops_map):
+            rows = []
+            seen_pairs = set()
+            for (mob, item), dcount in drops_map.items():
+                kcount = kills_map.get(mob, 0)
+                rate = (dcount / kcount * 100 / possible_items(mob)) if kcount else 0.0
+                is_junk = item.strip().lower() not in master_item_names
+                rows.append({'mob': mob, 'item': item, 'drops': dcount, 'kills': kcount,
+                            'rate': rate, 'is_junk': is_junk})
+                seen_pairs.add((mob.lower(), item.strip().lower()))
+            # Items the master database lists for a killed mob that
+            # haven't actually dropped yet in these logs - always
+            # "Items", never junk, since they came straight from the
+            # master database.
+            for mob, kcount in kills_map.items():
+                for item in master_items_by_mob.get(mob.lower(), ()):
+                    key = (mob.lower(), item.strip().lower())
+                    if key in seen_pairs:
+                        continue
+                    seen_pairs.add(key)
+                    rows.append({'mob': mob, 'item': item, 'drops': 0, 'kills': kcount,
+                                'rate': 0.0, 'is_junk': False})
+            rows.sort(key=lambda r: r['rate'], reverse=True)
+            return rows
+
+        result = {
+            'overall': build_rows(overall_kills, overall_drops),
+            'file_dates': file_dates,
+        }
+        for gran in ('daily', 'weekly', 'monthly', 'yearly'):
+            by_period = {}
+            for pkey, area_kills_map in period_area_kills[gran].items():
+                area_drops_map = period_area_drops[gran].get(pkey, {})
+                period_areas = set(area_kills_map.keys()) | set(area_drops_map.keys())
+                by_area = {area: build_rows(area_kills_map.get(area, {}), area_drops_map.get(area, {}))
+                          for area in period_areas}
+                areas_sorted = (sorted(period_areas - {'Unknown'})
+                               + (['Unknown'] if 'Unknown' in period_areas else []))
+                by_period[pkey] = {'by_area': by_area, 'areas': areas_sorted}
+            result[gran] = {'by_period': by_period, 'periods': sorted(by_period.keys())}
+
+        all_areas = set(area_kills.keys()) | set(area_drops.keys())
+        result['by_area'] = {
+            area: build_rows(area_kills.get(area, {}), area_drops.get(area, {}))
+            for area in all_areas
+        }
+        # "Unknown" (nothing killed/dropped ever had a preceding [Area]
+        # bracket line) sorts last rather than alphabetically with
+        # everything else, since it's a fallback bucket, not a real place.
+        result['areas'] = sorted(all_areas - {'Unknown'}) + (['Unknown'] if 'Unknown' in all_areas else [])
+
+        return result
+
+    def _filter_item_drop_rows(self, rows, show_items, show_junk):
+        """Applies the Item Counter's Items/Junk Loot checkboxes to one
+        list of drop-rate rows (each already tagged 'is_junk' by
+        _compute_item_drop_stats)."""
+        if show_items and show_junk:
+            return rows
+        if not show_items and not show_junk:
+            return []
+        return [r for r in rows if r['is_junk'] != show_items]
+
+    def _apply_item_counter_filter(self, data, show_items, show_junk):
+        """Returns a copy of _compute_item_drop_stats' result with the
+        Items/Junk Loot checkboxes applied to every row list (Overall,
+        each Area, and each Daily/Weekly/Monthly/Yearly period's own
+        per-Area breakdown) - file dates and every area/period name list
+        itself is left untouched, so an area's or period's mini-tab/tree
+        node still exists (just possibly empty) rather than disappearing
+        based on the current filter."""
+        filtered = dict(data)
+        filtered['overall'] = self._filter_item_drop_rows(data['overall'], show_items, show_junk)
+        filtered['by_area'] = {
+            area: self._filter_item_drop_rows(rows, show_items, show_junk)
+            for area, rows in data['by_area'].items()
+        }
+        for gran in ('daily', 'weekly', 'monthly', 'yearly'):
+            period_block = data[gran]
+            filtered[gran] = {
+                'periods': period_block['periods'],
+                'by_period': {
+                    pkey: {
+                        'areas': period_data['areas'],
+                        'by_area': {
+                            area: self._filter_item_drop_rows(rows, show_items, show_junk)
+                            for area, rows in period_data['by_area'].items()
+                        },
+                    }
+                    for pkey, period_data in period_block['by_period'].items()
+                },
+            }
+        return filtered
+
+    def _on_item_counter_consistent_toggle(self):
+        """"Consistent" checkbox's own command - checked by default, since
+        that's the persistent running tally most people would want kept
+        up automatically (see item_counter_consistent/
+        _compute_item_drop_stats). Confirms before actually letting it be
+        unchecked, since a stray click here silently changes what future
+        Item Counter clicks do rather than anything immediately visible -
+        answering "No" re-checks it."""
+        if not self.item_counter_consistent.get():
+            if not messagebox.askyesno("Turn off Consistent?",
+                    'Turn off "Consistent"? Future Item Counter clicks will stop reading from and '
+                    "adding to the running tally, using only whatever's currently loaded instead."):
+                self.item_counter_consistent.set(True)
+
+    def _open_item_counter(self):
+        """Counters sub-tab's "Item Counter" button - computes mob kill/
+        item drop rates (see _compute_item_drop_stats), applies the
+        Items/Junk Loot checkboxes (see _apply_item_counter_filter), and
+        shows the result in an ephemeral working tab inside
+        self.item_notebook. Re-clicking replaces that same working tab
+        rather than stacking up duplicates."""
+        if not self.files:
+            messagebox.showwarning("No Files", "Load some log files first.")
+            return
+
+        show_items = self.item_counter_show_items.get()
+        show_junk = self.item_counter_show_junk.get()
+        if not show_items and not show_junk:
+            messagebox.showwarning("Nothing Selected",
+                'Check "Items" and/or "Junk Loot" above to see results.')
+            return
+
+        data = self._compute_item_drop_stats()
+        if data is None:
+            messagebox.showinfo("No Kills/Drops Found",
+                'No mob kills ("<mob> dies!") or item drops were found in the loaded file(s).')
+            return
+        data = self._apply_item_counter_filter(data, show_items, show_junk)
+
+        try:
+            if getattr(self, '_item_working_frame', None) is not None:
+                self.item_notebook.forget(self._item_working_frame)
+        except tk.TclError:
+            pass
+
+        frame = self._build_item_report_frame(self.item_notebook, data, is_saved=False)
+        if self.item_notebook.tabs():
+            self.item_notebook.insert(0, frame, text="Item Counter")
+        else:
+            self.item_notebook.add(frame, text="Item Counter")
+        self._item_working_frame = frame
+        self.item_notebook.select(frame)
+
+    def _item_instances(self, data, item_name):
+        """Every (mob, zone) instance of one specific item across the
+        whole dataset - used by the "All" tree's Item right-click ->
+        "Open item in new tab" (see _open_item_counter_comparison_tab).
+        Each returned row is a copy of its zone's own row dict plus a
+        'zone' key (the row dicts in data['by_area'] don't carry their
+        own zone name, since that's already the dict key they're under)."""
+        name_lower = item_name.strip().lower()
+        instances = []
+        for area in data.get('areas', []):
+            for r in data['by_area'].get(area, []):
+                if r['item'].strip().lower() == name_lower:
+                    instances.append({**r, 'zone': area})
+        return instances
+
+    def _mob_instances(self, data, mob_name):
+        """Every (zone, item) instance of one specific mob across the
+        whole dataset - used by the "All" tree's Mob right-click -> "Open
+        monster in new tab" (see _open_item_counter_monster_tab)."""
+        instances = []
+        for area in data.get('areas', []):
+            for r in data['by_area'].get(area, []):
+                if r['mob'] == mob_name:
+                    instances.append({**r, 'zone': area})
+        return instances
+
+    def _insert_zone_mob_item_nodes(self, tv, parent_iid, by_area, areas):
+        """Inserts Zone -> Mob -> Item nodes under parent_iid (an empty
+        string for a top-level tree, or a Period node's own iid for the
+        Daily/Weekly/Monthly/Yearly trees) - the nesting/aggregation
+        logic shared by _build_item_zone_mob_tree ("All") and
+        _build_item_period_zone_mob_tree (Daily/Weekly/Monthly/Yearly).
+        Zone and Mob header rows show their own summed Drops/total
+        Kills/blended Drop Rate % across whatever's nested under them.
+        Zones sort alphabetically; mobs within a zone and items within a
+        mob both sort by Drops descending. Returns this whole subtree's
+        own (drops, kills, rate) totals, summed across every zone
+        inserted, so a caller adding an outer Period node above this can
+        show that period's own header row without a second pass over the
+        same data."""
+        zone_mob_items = {}
+        for area in areas:
+            for r in by_area.get(area, []):
+                zone_mob_items.setdefault(area, {}).setdefault(r['mob'], []).append(r)
+
+        zones_summary = []
+        for zone, mob_map in zone_mob_items.items():
+            zone_drops, zone_kills = 0, 0
+            mob_entries = []
+            for mob, item_rows in mob_map.items():
+                # Every item row for the same mob within the same zone
+                # carries that mob's own kill count in that zone (not a
+                # per-item value), so it's taken once here rather than
+                # summed across items - summing would multiply it by
+                # however many distinct items that mob happened to drop.
+                mob_kills = item_rows[0]['kills']
+                mob_drops = sum(r['drops'] for r in item_rows)
+                zone_drops += mob_drops
+                zone_kills += mob_kills
+                # Summing the item rows' own already-adjusted 'rate'
+                # (each already divided by this mob's possible_items -
+                # see _compute_item_drop_stats) rather than recomputing
+                # mob_drops/mob_kills*100 from scratch keeps a header
+                # row's percentage equal to the sum of what's nested
+                # under it, at every level.
+                mob_rate = sum(r['rate'] for r in item_rows)
+                mob_entries.append((mob, mob_kills, mob_drops, mob_rate, item_rows))
+            zone_rate = sum(m[3] for m in mob_entries)
+            mob_entries.sort(key=lambda m: m[2], reverse=True)  # biggest droppers first
+            zones_summary.append((zone, zone_drops, zone_kills, zone_rate, mob_entries))
+
+        zones_summary.sort(key=lambda z: z[0])  # sorted by zone name
+
+        for zone, zone_drops, zone_kills, zone_rate, mob_entries in zones_summary:
+            zone_iid = tv.insert(parent_iid, 'end', text=zone,
+                                 values=(zone_drops, zone_kills, f"{zone_rate:.1f}"))
+            for mob, mob_kills, mob_drops, mob_rate, item_rows in mob_entries:
+                mob_iid = tv.insert(zone_iid, 'end', text=mob,
+                                    values=(mob_drops, mob_kills, f"{mob_rate:.1f}"))
+                for r in sorted(item_rows, key=lambda r: r['drops'], reverse=True):
+                    tv.insert(mob_iid, 'end', text=r['item'],
+                             values=(r['drops'], r['kills'], f"{r['rate']:.1f}"))
+
+        return (sum(z[1] for z in zones_summary),
+                sum(z[2] for z in zones_summary),
+                sum(z[3] for z in zones_summary))
+
+    def _build_item_zone_mob_tree(self, parent, data, overall_sub_nb):
+        """Builds the "All" tab's own tree, grouped Zone -> Mob -> Item -
+        expand a zone to see every mob killed there, expand a mob to see
+        that mob's own Item/Drops/Kills/Drop Rate % rows in that zone.
+        Zones come from the same per-area breakdown the Overall tab used
+        to split into one mini-tab per area (data['by_area']/
+        data['areas']) - those auto-built tabs are gone now, replaced by
+        right-click -> "Open into new tab" (see the on_right_click
+        handler below), which adds one on demand instead of always
+        showing every area whether you care about it or not. See
+        _insert_zone_mob_item_nodes for the actual nesting/sorting."""
+        cols = ('Drops', 'Kills', 'Drop Rate %')
+        tv_frame = ttk.Frame(parent)
+        tv_frame.pack(fill='both', expand=True)
+        tv = ttk.Treeview(tv_frame, columns=cols, show='tree headings', height=18)
+        tv.heading('#0', text='Zone / Mob / Item')
+        tv.column('#0', width=260, anchor='w')
+        for c, w in zip(cols, (70, 70, 90)):
+            tv.heading(c, text=c)
+            tv.column(c, width=w, anchor='center')
+        vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        tv.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        self._insert_zone_mob_item_nodes(tv, '', data['by_area'], data.get('areas', []))
+
+        def on_right_click(event):
+            iid = tv.identify_row(event.y)
+            if not iid:
+                return
+            tv.selection_set(iid)
+            menu = tk.Menu(tv, tearoff=0)
+            parent_iid = tv.parent(iid)
+            if parent_iid == '':
+                # Zone-level row - top-level, no parent.
+                zone_name = tv.item(iid)['text']
+                menu.add_command(label="Open into new tab",
+                                 command=lambda: self._open_item_counter_zone_tab(
+                                     overall_sub_nb, zone_name, data))
+                rows = [{**r, 'zone': zone_name} for r in data['by_area'].get(zone_name, [])]
+            elif tv.parent(parent_iid) == '':
+                # Mob-level row - its parent is a Zone row.
+                mob_name = tv.item(iid)['text']
+                menu.add_command(label="Open monster in new tab",
+                                 command=lambda: self._open_item_counter_monster_tab(
+                                     overall_sub_nb, mob_name, data))
+                rows = self._mob_instances(data, mob_name)
+            else:
+                # Item-level row - its parent is a Mob row.
+                item_name = tv.item(iid)['text']
+                menu.add_command(label="Open item in new tab",
+                                 command=lambda: self._open_item_counter_comparison_tab(
+                                     overall_sub_nb, item_name, data))
+                rows = self._item_instances(data, item_name)
+            self._build_add_to_menu(menu, overall_sub_nb, rows)
+            menu.add_separator()
+            menu.add_command(label="🗑 Delete", command=lambda: tv.delete(iid))
+            menu.tk_popup(event.x_root, event.y_root)
+
+        tv.bind('<Button-3>', on_right_click)
+        return tv
+
+    def _build_item_period_zone_mob_tree(self, parent, period_block, sub_nb):
+        """Same Zone -> Mob -> Item grouping/right-click/mini-tab
+        behavior as _build_item_zone_mob_tree ("All" - see its own
+        docstring and _insert_zone_mob_item_nodes for the shared nesting
+        logic), with one more level on top: Period. Used by each of the
+        Daily/Weekly/Monthly/Yearly tabs' own "All" sub-tab (see
+        _build_item_report_frame) instead of the old flat Period/Mob/
+        Item/Drops/Kills/Drop Rate % table. Zone/Monster/Item mini-tabs
+        opened from here are scoped to the specific period they were
+        opened from - their own titles include the period, so the same
+        zone/mob/item name under two different periods opens two
+        distinct mini-tabs rather than sharing one."""
+        cols = ('Drops', 'Kills', 'Drop Rate %')
+        tv_frame = ttk.Frame(parent)
+        tv_frame.pack(fill='both', expand=True)
+        tv = ttk.Treeview(tv_frame, columns=cols, show='tree headings', height=18)
+        tv.heading('#0', text='Period / Zone / Mob / Item')
+        tv.column('#0', width=260, anchor='w')
+        for c, w in zip(cols, (70, 70, 90)):
+            tv.heading(c, text=c)
+            tv.column(c, width=w, anchor='center')
+        vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        tv.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        for pkey in period_block.get('periods', []):
+            period_data = period_block['by_period'][pkey]
+            period_iid = tv.insert('', 'end', text=pkey, values=('', '', ''))
+            drops_total, kills_total, rate_total = self._insert_zone_mob_item_nodes(
+                tv, period_iid, period_data['by_area'], period_data.get('areas', []))
+            tv.item(period_iid, values=(drops_total, kills_total, f"{rate_total:.1f}"))
+
+        def on_right_click(event):
+            iid = tv.identify_row(event.y)
+            if not iid:
+                return
+            tv.selection_set(iid)
+            menu = tk.Menu(tv, tearoff=0)
+            parent_iid = tv.parent(iid)
+            rows = None
+            if parent_iid == '':
+                # Period-level row - no dedicated open-into-tab action,
+                # just Delete below.
+                pass
+            else:
+                grandparent_iid = tv.parent(parent_iid)
+                if grandparent_iid == '':
+                    # Zone-level row - its parent is the Period row.
+                    zone_name = tv.item(iid)['text']
+                    period_label = tv.item(parent_iid)['text']
+                    period_data = period_block['by_period'][period_label]
+                    menu.add_command(label="Open into new tab",
+                                     command=lambda: self._open_item_counter_zone_tab(
+                                         sub_nb, zone_name, period_data, period_label=period_label))
+                    rows = [{**r, 'zone': zone_name} for r in period_data['by_area'].get(zone_name, [])]
+                elif tv.parent(grandparent_iid) == '':
+                    # Mob-level row - its parent is Zone, grandparent Period.
+                    mob_name = tv.item(iid)['text']
+                    period_label = tv.item(grandparent_iid)['text']
+                    period_data = period_block['by_period'][period_label]
+                    menu.add_command(label="Open monster in new tab",
+                                     command=lambda: self._open_item_counter_monster_tab(
+                                         sub_nb, mob_name, period_data, period_label=period_label))
+                    rows = self._mob_instances(period_data, mob_name)
+                else:
+                    # Item-level row - its parent is Mob, three levels up is Period.
+                    item_name = tv.item(iid)['text']
+                    period_label = tv.item(tv.parent(grandparent_iid))['text']
+                    period_data = period_block['by_period'][period_label]
+                    menu.add_command(label="Open item in new tab",
+                                     command=lambda: self._open_item_counter_comparison_tab(
+                                         sub_nb, item_name, period_data, period_label=period_label))
+                    rows = self._item_instances(period_data, item_name)
+            if rows is not None:
+                self._build_add_to_menu(menu, sub_nb, rows)
+            menu.add_separator()
+            menu.add_command(label="🗑 Delete", command=lambda: tv.delete(iid))
+            menu.tk_popup(event.x_root, event.y_root)
+
+        tv.bind('<Button-3>', on_right_click)
+        return tv
+
+    def _insert_mini_tab_rows(self, tv, rows, value_fn):
+        """Inserts `rows` into a mini-tab's own Treeview (value_fn
+        formatting each row dict into that table's column values),
+        adding a single blank spacer row wherever the 'zone' field
+        changes from the previous row - including continuity with
+        whatever's already in tv, so appending more rows later (a
+        right-click "Add to", or re-adding to an already-open Item
+        Comparison tab) still separates correctly from what's already
+        there. Keeps a table spanning more than one zone visually
+        grouped by zone, whether that's because a Monster tab naturally
+        covers every zone that mob appeared in, an Item Comparison item
+        was seen in more than one zone, or rows from a different zone
+        were manually added via "Add to"."""
+        existing = tv.get_children()
+        last_zone = tv.set(existing[-1], 'Zone') if existing else None
+        for r in rows:
+            zone = r.get('zone', '')
+            if last_zone not in (None, '') and zone != last_zone:
+                tv.insert('', 'end', values=('',) * len(tv['columns']))
+            tv.insert('', 'end', values=value_fn(r))
+            last_zone = zone
+
+    def _build_item_flat_table(self, parent, cols, widths, anchors, rows, value_fn):
+        """Generic flat table for the Item Counter's on-demand mini-tabs
+        (Zone/Monster/Item Comparison - see _open_item_counter_zone_tab/
+        _open_item_counter_monster_tab/_open_item_counter_comparison_tab)
+        - each is just a differently-shaped subset of columns over the
+        same underlying row dicts, `value_fn` picking out and formatting
+        whichever fields that particular mini-tab shows. Right-clicking
+        any row offers "Delete" - removes just that row from THIS table
+        (a display-only, per-tab action; doesn't touch the underlying
+        computed data or any other already-open tab)."""
+        tv_frame = ttk.Frame(parent)
+        tv_frame.pack(fill='both', expand=True)
+        tv = ttk.Treeview(tv_frame, columns=cols, show='headings', height=16)
+        for c, w, anchor in zip(cols, widths, anchors):
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(tv, c, False))
+            tv.column(c, width=w, anchor=anchor)
+        vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        tv.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        self._insert_mini_tab_rows(tv, rows, value_fn)
+
+        def on_right_click(event):
+            iid = tv.identify_row(event.y)
+            if not iid:
+                return
+            tv.selection_set(iid)
+            menu = tk.Menu(tv, tearoff=0)
+            menu.add_command(label="🗑 Delete", command=lambda: tv.delete(iid))
+            menu.tk_popup(event.x_root, event.y_root)
+
+        tv.bind('<Button-3>', on_right_click)
+        return tv
+
+    def _item_mini_tab_close_click(self, event):
+        """Bound to every Item Counter overall_sub_nb/period_sub_nb's
+        <Button-1> (see _build_item_report_frame) - closes a Zone/
+        Monster/Item Comparison mini-tab only when the click actually
+        lands on its own trailing close mark (ITEM_MINI_TAB_CLOSE_MARK),
+        near the tab's right edge; clicking anywhere else on a tab (its
+        label text, or a tab that isn't closable at all - "All" never
+        carries the mark) just selects it as normal, via ttk's own
+        binding running after this one (since only an actual close-click
+        returns 'break' here).
+
+        ttk::notebook has no per-tab bbox command, so "near this tab's
+        own right edge" is approximated instead by probing a point
+        ITEM_MINI_TAB_CLOSE_HIT_PX to the right of the click: if that
+        probe still resolves to the SAME tab index, the click was
+        further left than the edge (not a close-click); if it resolves
+        to a different tab, the strip's own blank area past the last
+        tab, or off the strip entirely (raising TclError), the click was
+        close enough to the edge to count."""
+        nb = event.widget
+        try:
+            index = nb.index(f'@{event.x},{event.y}')
+        except tk.TclError:
+            return
+        tabs = nb.tabs()
+        if index >= len(tabs):
+            return
+        tab_id = tabs[index]
+        if not nb.tab(tab_id, 'text').endswith(ITEM_MINI_TAB_CLOSE_MARK):
+            return
+        try:
+            probe_index = nb.index(f'@{event.x + ITEM_MINI_TAB_CLOSE_HIT_PX},{event.y}')
+        except tk.TclError:
+            probe_index = None
+        if probe_index == index:
+            return
+        widget = nb.nametowidget(tab_id)
+        nb.forget(tab_id)
+        # ttk::notebook's own @x,y coordinate queries can read stale
+        # geometry for the rest of the strip until the next idle-tasks
+        # pass processes this removal - a real interactive click never
+        # notices (Tk's mainloop flushes idle tasks well before the next
+        # human click could possibly land), but flushing explicitly here
+        # costs nothing and removes any doubt for a rapid follow-up click.
+        nb.update_idletasks()
+        widget.destroy()
+        return 'break'
+
+    def _open_item_counter_mini_tab(self, overall_sub_nb, title, build_fn):
+        """Shared "does a mini-tab with this title already exist? select
+        it, otherwise build a new one" logic behind the Item Counter's
+        on-demand Zone/Monster mini-tabs - Item Comparison has its own
+        variant (_open_item_counter_comparison_tab) since it APPENDS to
+        an already-open tab instead of just selecting it. Every mini-tab
+        carries a trailing close mark (see ITEM_MINI_TAB_CLOSE_MARK) so it
+        can be closed with a click, unlike "All". build_fn's own return
+        value (the mini-tab's Treeview, from _build_item_flat_table) is
+        stashed on the frame as _mini_tab_tv, so the right-click "Add to"
+        action (_add_rows_to_mini_tab) can find it later regardless of
+        which kind of mini-tab this is."""
+        tab_text = title + ITEM_MINI_TAB_CLOSE_MARK
+        for tab_id in overall_sub_nb.tabs():
+            if overall_sub_nb.tab(tab_id, 'text') == tab_text:
+                overall_sub_nb.select(tab_id)
+                return
+        frame = ttk.Frame(overall_sub_nb, padding=8)
+        frame._mini_tab_tv = build_fn(frame)
+        overall_sub_nb.add(frame, text=tab_text)
+        overall_sub_nb.select(frame)
+
+    def _add_rows_to_mini_tab(self, overall_sub_nb, target_tab_id, rows):
+        """Right-click "Add to (name)" - appends `rows` (already in the
+        shared Zone/Mob/Item/Drops/Kills/Drop Rate % shape every mini-tab
+        kind uses - see _open_item_counter_zone_tab's own docstring) into
+        an already-open mini-tab's own table (its Treeview stashed as
+        _mini_tab_tv - see _open_item_counter_mini_tab). A blank spacer
+        row separates each distinct zone (see _insert_mini_tab_rows), not
+        just each "Add to" click, so rows are grouped by zone regardless
+        of whether that grouping came from this add or was already
+        there. No de-duplication - unlike the dedicated Item Comparison
+        tab's own accumulate-on-right-click, this is a manual, repeatable
+        action; adding the same thing twice adds it twice."""
+        frame = overall_sub_nb.nametowidget(target_tab_id)
+        tv = frame._mini_tab_tv
+        value_fn = lambda r: (r['zone'], r['mob'], r['item'], r['drops'], r['kills'], f"{r['rate']:.1f}")
+        self._insert_mini_tab_rows(tv, rows, value_fn)
+        overall_sub_nb.select(target_tab_id)
+
+    def _build_add_to_menu(self, menu, overall_sub_nb, rows):
+        """Adds an "Add to" submenu to a right-click `menu`, listing every
+        already-open closable mini-tab (Zone/Monster/Item Comparison -
+        "All" is never one of these) by its own title - picking one
+        appends `rows` into that tab (see _add_rows_to_mini_tab). Adds
+        nothing at all if there's no mini-tab open yet to add to."""
+        closable_tabs = [tid for tid in overall_sub_nb.tabs()
+                         if overall_sub_nb.tab(tid, 'text').endswith(ITEM_MINI_TAB_CLOSE_MARK)]
+        if not closable_tabs:
+            return
+        add_menu = tk.Menu(menu, tearoff=0)
+        for tab_id in closable_tabs:
+            label = overall_sub_nb.tab(tab_id, 'text')[:-len(ITEM_MINI_TAB_CLOSE_MARK)]
+            add_menu.add_command(label=label,
+                                 command=lambda tab_id=tab_id: self._add_rows_to_mini_tab(
+                                     overall_sub_nb, tab_id, rows))
+        menu.add_cascade(label="Add to", menu=add_menu)
+
+    def _open_item_counter_zone_tab(self, overall_sub_nb, zone_name, data, period_label=None):
+        """"All" tree's Zone right-click -> "Open into new tab" - adds a
+        mini-tab (inside the same Overall notebook as "All" itself)
+        showing just that zone's own Zone/Mob/Item/Drops/Kills/Drop
+        Rate % table (Zone repeats the same zone_name on every row -
+        every mini-tab kind shares this same column set, see
+        _open_item_counter_monster_tab/_open_item_counter_comparison_tab,
+        so the right-click "Add to" action can drop any level's rows
+        into any already-open mini-tab regardless of how it was
+        opened). Re-opening the same zone selects its existing mini-tab
+        instead of adding a duplicate. period_label, when given (the
+        Daily/Weekly/Monthly/Yearly tabs' own Period -> Zone -> Mob ->
+        Item trees only - see _build_item_period_zone_mob_tree), is
+        appended to the mini-tab's own title so the same zone name under
+        two different periods opens two distinct mini-tabs rather than
+        sharing one."""
+        rows = [{**r, 'zone': zone_name} for r in data['by_area'].get(zone_name, [])]
+        title = f"{zone_name} ({period_label})" if period_label else zone_name
+        self._open_item_counter_mini_tab(overall_sub_nb, title, lambda frame:
+            self._build_item_flat_table(frame, ('Zone', 'Mob', 'Item', 'Drops', 'Kills', 'Drop Rate %'),
+                                        (140, 160, 200, 70, 70, 90),
+                                        ('w', 'w', 'w', 'center', 'center', 'center'),
+                                        rows, lambda r: (r['zone'], r['mob'], r['item'], r['drops'],
+                                                         r['kills'], f"{r['rate']:.1f}")))
+
+    def _open_item_counter_monster_tab(self, overall_sub_nb, mob_name, data, period_label=None):
+        """"All" tree's Mob right-click -> "Open monster in new tab" -
+        adds a mini-tab showing every zone that mob was killed in and
+        what it dropped there (see _mob_instances), using the same
+        Zone/Mob/Item/Drops/Kills/Drop Rate % columns as every other
+        mini-tab kind (Mob repeats mob_name on every row). Re-opening the
+        same monster selects its existing mini-tab instead of adding a
+        duplicate. period_label - see _open_item_counter_zone_tab."""
+        rows = self._mob_instances(data, mob_name)
+        title = f"🐾 {mob_name} ({period_label})" if period_label else f"🐾 {mob_name}"
+        self._open_item_counter_mini_tab(overall_sub_nb, title, lambda frame:
+            self._build_item_flat_table(frame, ('Zone', 'Mob', 'Item', 'Drops', 'Kills', 'Drop Rate %'),
+                                        (140, 160, 200, 70, 70, 90),
+                                        ('w', 'w', 'w', 'center', 'center', 'center'),
+                                        rows, lambda r: (r['zone'], r['mob'], r['item'], r['drops'],
+                                                         r['kills'], f"{r['rate']:.1f}")))
+
+    def _open_item_counter_comparison_tab(self, overall_sub_nb, item_name, data, period_label=None):
+        """"All" tree's Item right-click -> "Open item in new tab" -
+        unlike Zone/Monster (one mini-tab per target, reused on repeat
+        clicks), every item added this way accumulates into the SAME
+        shared "Item Comparison" mini-tab instead of spawning a new one
+        each time, so a custom watchlist of specific items can be built
+        up to compare side by side. Adding the same item a second time is
+        a no-op (just selects the tab) rather than duplicating its rows.
+        period_label - see _open_item_counter_zone_tab - keeps each
+        Daily/Weekly/Monthly/Yearly period's own comparison watchlist
+        separate from "All"'s and from every other period's."""
+        title = f"🔍 Item Comparison ({period_label})" if period_label else "🔍 Item Comparison"
+        tab_text = title + ITEM_MINI_TAB_CLOSE_MARK
+        existing_tab = None
+        for tab_id in overall_sub_nb.tabs():
+            if overall_sub_nb.tab(tab_id, 'text') == tab_text:
+                existing_tab = tab_id
+                break
+
+        instances = self._item_instances(data, item_name)
+        value_fn = lambda r: (r['zone'], r['mob'], r['item'], r['drops'], r['kills'], f"{r['rate']:.1f}")
+
+        if existing_tab is not None:
+            frame = self.nametowidget(existing_tab)
+            already_added = getattr(frame, '_item_comparison_added', set())
+            if item_name not in already_added:
+                tv = frame._item_comparison_tv
+                self._insert_mini_tab_rows(tv, instances, value_fn)
+                already_added.add(item_name)
+                frame._item_comparison_added = already_added
+            overall_sub_nb.select(existing_tab)
+            return
+
+        frame = ttk.Frame(overall_sub_nb, padding=8)
+        tv = self._build_item_flat_table(frame, ('Zone', 'Mob', 'Item', 'Drops', 'Kills', 'Drop Rate %'),
+                                         (140, 160, 200, 70, 70, 90),
+                                         ('w', 'w', 'w', 'center', 'center', 'center'),
+                                         instances, value_fn)
+        frame._item_comparison_tv = tv
+        frame._mini_tab_tv = tv
+        frame._item_comparison_added = {item_name}
+        overall_sub_nb.add(frame, text=tab_text)
+        overall_sub_nb.select(frame)
+
+    def _build_item_log_files_table(self, parent, file_dates):
+        """File/Date/Kills/Drops table for the Item Counter's "Log Files"
+        tab - lets you see exactly which date each loaded file's own
+        kills/drops were attributed to (or "Unknown" if its creation
+        date couldn't be read - see _extract_log_date), same information
+        the Daily/Weekly/Monthly/Yearly breakdowns are built from."""
+        cols = ('File', 'Date', 'Kills', 'Drops')
+        tv_frame = ttk.Frame(parent)
+        tv_frame.pack(fill='both', expand=True)
+        tv = ttk.Treeview(tv_frame, columns=cols, show='headings', height=14)
+        for c, w, anchor in zip(cols, (280, 110, 70, 70), ('w', 'center', 'center', 'center')):
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column(tv, c, False))
+            tv.column(c, width=w, anchor=anchor)
+        vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        tv.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+        for fd in file_dates:
+            tv.insert('', 'end', values=(fd['file'], fd['date'], fd['kills'], fd['drops']))
+        return tv
+
+    def _build_item_report_frame(self, parent, data, is_saved, name=None):
+        """Builds one Item Counter tab's content - an Overall sub-notebook
+        starting with just "All" (the Zone -> Mob -> Item tree - see
+        _build_item_zone_mob_tree), with Zone/Monster/Item Comparison
+        mini-tabs added to it on demand via right-click rather than one
+        per Area built automatically. Each of Daily/Weekly/Monthly/Yearly
+        is set up the exact same way - its own sub-notebook starting with
+        an "All" tab (the Period -> Zone -> Mob -> Item tree - see
+        _build_item_period_zone_mob_tree) and its own on-demand Zone/
+        Monster/Item mini-tabs, just one level deeper and only
+        meaningfully populated when the loaded logs' filenames span more
+        than one of that period (see _extract_log_date). Finally a Log
+        Files tab lists every loaded file's own extracted date and kill/
+        drop counts. is_saved controls whether the tab gets a Delete
+        button (saved reports) or a Save button (the ephemeral working
+        tab)."""
+        frame = ttk.Frame(parent, padding=10)
+
+        header_row = ttk.Frame(frame)
+        header_row.pack(fill='x')
+        total_drops = sum(r['drops'] for r in data['overall'])
+        ttk.Label(header_row, text=f"Total Items Dropped: {total_drops:,}",
+                  font=('Arial', 13, 'bold')).pack(side='left')
+        # Packed before the note (both side='right') so the button stays
+        # at the outer right edge and the note sits just to its left.
+        if is_saved:
+            ttk.Button(header_row, text="🗑 Delete",
+                      command=lambda: self._delete_item_report(name)).pack(side='right')
+        else:
+            ttk.Button(header_row, text="💾 Save",
+                      command=lambda: self._save_item_report_prompt(data)).pack(side='right')
+        ttk.Label(header_row, text=ITEM_DROP_RATE_FORMULA_NOTE,
+                  foreground='#888').pack(side='right', padx=(0, 8))
+
+        inner_nb = ttk.Notebook(frame, style='RealmMini.TNotebook')
+        inner_nb.pack(fill='both', expand=True, pady=(10, 0))
+
+        overall_tab = ttk.Frame(inner_nb, padding=8)
+        inner_nb.add(overall_tab, text="Overall")
+
+        overall_sub_nb = ttk.Notebook(overall_tab, style='RealmMini.TNotebook')
+        overall_sub_nb.pack(fill='both', expand=True)
+        overall_sub_nb.bind('<Button-1>', self._item_mini_tab_close_click)
+
+        all_tab = ttk.Frame(overall_sub_nb, padding=8)
+        overall_sub_nb.add(all_tab, text="All")
+        self._build_item_zone_mob_tree(all_tab, data, overall_sub_nb)
+
+        for key, label in (('daily', 'Daily'), ('weekly', 'Weekly'),
+                           ('monthly', 'Monthly'), ('yearly', 'Yearly')):
+            tab = ttk.Frame(inner_nb, padding=8)
+            inner_nb.add(tab, text=label)
+            period_block = data.get(key, {'periods': [], 'by_period': {}})
+            if not period_block['periods']:
+                ttk.Label(tab,
+                         text="No dated log files to break this down by - none of the loaded "
+                              "files' creation dates could be read.",
+                         foreground='#888').pack(anchor='w', pady=20)
+                continue
+
+            period_sub_nb = ttk.Notebook(tab, style='RealmMini.TNotebook')
+            period_sub_nb.pack(fill='both', expand=True)
+            period_sub_nb.bind('<Button-1>', self._item_mini_tab_close_click)
+
+            period_all_tab = ttk.Frame(period_sub_nb, padding=8)
+            period_sub_nb.add(period_all_tab, text="All")
+            self._build_item_period_zone_mob_tree(period_all_tab, period_block, period_sub_nb)
+
+        files_tab = ttk.Frame(inner_nb, padding=8)
+        inner_nb.add(files_tab, text="Log Files")
+        self._build_item_log_files_table(files_tab, data['file_dates'])
+
+        return frame
+
+    def _save_item_report_prompt(self, data):
+        """Working tab's "Save" button - names and persists the current
+        Item Counter snapshot as its own tab, surviving a restart (see
+        item_saved_reports / _save_config). Saving under a name that
+        already exists overwrites that entry in place, after confirming."""
+        name = simpledialog.askstring("Save Item Report", "Save Name:", parent=self)
+        if name is None:
+            return
+        name = name.strip()
+        if not name:
+            return
+
+        for rep in self.item_saved_reports:
+            if rep['name'] == name:
+                if not messagebox.askyesno("Overwrite?",
+                        f'A saved item report named "{name}" already exists. Overwrite it?'):
+                    return
+                self.item_notebook.forget(rep['frame'])
+                rep['data'] = data
+                rep['frame'] = self._build_item_report_frame(self.item_notebook, data, is_saved=True, name=name)
+                self.item_notebook.add(rep['frame'], text=name)
+                self.item_notebook.select(rep['frame'])
+                self._save_config()
+                return
+
+        frame = self._build_item_report_frame(self.item_notebook, data, is_saved=True, name=name)
+        self.item_notebook.add(frame, text=name)
+        self.item_saved_reports.append({'name': name, 'data': data, 'frame': frame})
+        self.item_notebook.select(frame)
+        self._save_config()
+
+    def _delete_item_report(self, name):
+        """Saved Item report tab's "Delete" button - removes it from the
+        notebook and from persisted config."""
+        for i, rep in enumerate(self.item_saved_reports):
+            if rep['name'] == name:
+                if not messagebox.askyesno("Delete", f'Delete saved item report "{name}"?'):
+                    return
+                self.item_notebook.forget(rep['frame'])
+                del self.item_saved_reports[i]
+                self._save_config()
+                return
+
     def _find_raw_lines(self, query):
         """Plain substring search of every loaded file's raw lines"""
         case_sensitive = self.search_case_var.get()
@@ -5419,6 +6743,16 @@ class App(tk.Tk):
                     continue
 
                 item_raw = m.group(3).strip()
+                # DROP_RE can false-positive on room-description flavor
+                # text containing " drops " followed by a period on the
+                # same line (e.g. "The track drops off sharply to the
+                # east.") - a genuine dropped item always starts with an
+                # article, so require that here (LootParser.parse_file
+                # itself is already safe from this via its own
+                # delved_items cross-check - see _compute_item_drop_stats
+                # for the same guard applied there).
+                if not re.match(r'(a|an|the)\s', item_raw, re.I):
+                    continue
                 if re.match(r'a bag of (silver|coins?|gold)', item_raw, re.I):
                     continue
 

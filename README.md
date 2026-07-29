@@ -17,6 +17,7 @@ For installation steps, see **INSTALL_INSTRUCTIONS.txt**. This file covers how t
 - Parse options (Chat / Combat / Loot) automatically enable or disable based on which file types are loaded
 - Use the Snapshot buttons to preview parsed data before exporting
 - Export everything to a formatted Excel workbook
+- **Counters** sub-tab — XP Counter, Damage Counter, PvP Damage, and **Item Counter** (drop rate per mob/item, broken down by Zone and by Daily/Weekly/Monthly/Yearly period, with a Character filter and a persistent per-character "Consistent" tally — see Version History below for the full feature list)
 
 ### Settings (Parse sub-tab)
 A mini-notebook holding Fields and Export.
@@ -137,7 +138,19 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.3.0 (Current)
+### v6.4.0 (Current)
+- Added an **Item Counter** to the Counters sub-tab - drop rate of every item, per mob, across the loaded log(s), broken down by Zone and by Daily/Weekly/Monthly/Yearly period
+  - **Overall** tab is a nested tree: **Zone → Mob → Item**, each level showing its own Drops/Kills/Drop Rate % (Zone and Mob rows sum up whatever's nested under them). Daily/Weekly/Monthly/Yearly are each set up the exact same way, with Period as one more level on top - a **Log Files** tab lists every loaded file's own extracted date and kill/drop counts
+  - **Drop Rate %** = `(drops / kills * 100) / possible items` - possible items being how many distinct items the master/community database lists for that mob (1 if the mob isn't in the database), so an item competing against a bigger loot table reads as rarer at the same drops/kills ratio. The exact formula is spelled out as a note next to the tab's Save/Delete button
+  - Right-click a **Zone** for **Open into new tab**, a **Mob** for **Open monster in new tab** (every zone it was killed in), or an **Item** for **Open item in new tab** (accumulates every item added this way into one shared "Item Comparison" tab, for building a side-by-side watchlist) - every level also gets **Add to (name)**, appending that selection into any already-open tab instead of opening a new one, and **Delete** (removes just that row from wherever it was clicked). Mini-tabs get a **✕** to close them (click it specifically - clicking elsewhere on the tab just selects it), and a blank line automatically separates rows from different zones in any table that spans more than one
+  - **Items** / **Junk Loot** checkboxes - Items means "found in the loaded master/community database", Junk Loot is everything else (on/off by default respectively)
+  - **Character** dropdown - defaults to "All Characters"; extracted from each log filename's own character-name segment (e.g. `ACTION-PDF-GNAWBIE-<timestamp>.log` → "GNAWBIE"), files that don't fit that pattern count as "Unknown"
+  - **Consistent** checkbox (checked by default, confirms before letting you uncheck it) - keeps a running tally per character across every past click instead of starting over from just what's currently loaded; any log file already counted for that character is skipped, not counted again, so reloading the same logs across sessions never double-counts. "All Characters" shows every character's own tally combined
+  - Daily/Weekly/Monthly/Yearly bucket by each log file's actual **OS creation date**, not anything parsed from the filename
+  - A bracket like `[Sin      60]` (a class/summon status display, name padded with 3+ spaces before a trailing level number) is recognized as not a real zone - it's excluded from every Zone chart, though its kills/drops still count toward Overall totals
+  - Same Save/Delete-a-named-report pattern as the other Counters, surviving a restart
+
+### v6.3.0
 - Export (Settings sub-tab) gained a **File Format** dropdown - alongside the existing Excel Workbook (.xlsx), you can now export to **XLS** (Excel 97-2003), **ODS** (OpenDocument Spreadsheet), **CSV**, or **TSV**, each with a one-line explanation of what it is shown just below the dropdown. XLSX/XLS/ODS keep every checked type as a separate sheet in one file; CSV/TSV (which can't hold more than one table per file) write one file per checked type instead - picking either of those two now shows a folder picker instead of a misleading single-file "Save As" dialog
 - Added a **Sheets to Export** checklist - one entry per Chat file/Combat/Loot/XP Counter/Damage Counter/PvP Dealt/PvP Taken that currently has data, showing its row count, with Select All/Select None/Refresh buttons. This is what actually decides what gets exported, independent of Parse Options' own checkboxes (which only control what gets computed). It refreshes automatically after Run Parse, and now also after using any of the Counters sub-tab's own XP Counter/Damage Counter/PvP Damage Counter buttons directly - previously that data never made it into Export at all unless you separately ran Parse with the matching checkbox checked
 - Export now has **two entirely separate destinations**, each with its own Output filename and Export button: **Export Chat / Combat / Loot** (carries the Master Database section and the separate-files option, unchanged) and **Export Counters** (a plain snapshot file for the 4 Counters, with no master-database/accumulation behavior - just that export's own data, easy to hand to someone without needing this program to view it)
