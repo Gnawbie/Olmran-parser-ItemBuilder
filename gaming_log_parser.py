@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.4.0"
+VERSION = "6.4.1"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2198,6 +2198,13 @@ class App(tk.Tk):
         self.parsed = {'chat': [], 'combat': [], 'loot': [],
                        'xp': [], 'damage': [], 'pvp_dealt': [], 'pvp_taken': []}
         self.fields = {k: [dict(f) for f in v] for k, v in DEFAULT_FIELDS.items()}
+        # Real values are set later (Build tab's own setup, then
+        # _auto_load_community_list) - defaulted this early so anything
+        # touching them during _build_ui (e.g. the Item Counter's own
+        # startup auto-restore of a persisted "Consistent" tally - see
+        # _build_parse_tab) has something safe to read before then.
+        self.master_data = []
+        self.blocked_area_items = []
 
         # Config file for persistent settings
         self.config_file = (os.environ.get('OLMRAN_TEST_CONFIG')
@@ -2310,6 +2317,10 @@ class App(tk.Tk):
                         char: self._item_tally_from_json(raw)
                         for char, raw in config.get('item_consistent_tally_by_character', {}).items()
                     }
+                    # Item Counter's Character dropdown selection - applied
+                    # to the StringVar once it's created in _build_parse_tab.
+                    self._persisted_item_counter_character = config.get(
+                        'item_counter_character', 'All Characters')
                     # Counters sub-tab's resizable "Load Log Files" table -
                     # last row count the user dragged it to (see
                     # _build_file_list_section's resizable=True path).
@@ -2341,6 +2352,7 @@ class App(tk.Tk):
                 self._persisted_pvp_damage_reports = []
                 self._persisted_item_reports = []
                 self.item_consistent_tally_by_character = {}
+                self._persisted_item_counter_character = 'All Characters'
                 self._persisted_counters_file_rows = COUNTERS_FILE_LIST_DEFAULT_ROWS
                 self._persisted_locker_groups = []
                 self._persisted_locker_group_counter = 0
@@ -2362,6 +2374,7 @@ class App(tk.Tk):
             self._persisted_pvp_damage_reports = []
             self._persisted_item_reports = []
             self.item_consistent_tally_by_character = {}
+            self._persisted_item_counter_character = 'All Characters'
             self._persisted_counters_file_rows = COUNTERS_FILE_LIST_DEFAULT_ROWS
             self._persisted_locker_groups = []
             self._persisted_locker_group_counter = 0
@@ -2424,6 +2437,8 @@ class App(tk.Tk):
                     char: self._item_tally_to_json(raw)
                     for char, raw in getattr(self, 'item_consistent_tally_by_character', {}).items()
                 },
+                'item_counter_character': (self.item_counter_character.get()
+                                          if hasattr(self, 'item_counter_character') else 'All Characters'),
                 'counters_file_list_rows': getattr(
                     self, '_counters_file_rows', COUNTERS_FILE_LIST_DEFAULT_ROWS),
             }
@@ -3605,7 +3620,8 @@ class App(tk.Tk):
         item_character_row = ttk.Frame(item_tab)
         item_character_row.pack(fill='x', pady=(4,0))
         ttk.Label(item_character_row, text="Character:").pack(side='left', padx=(0,6))
-        self.item_counter_character = tk.StringVar(value='All Characters')
+        self.item_counter_character = tk.StringVar(
+            value=getattr(self, '_persisted_item_counter_character', 'All Characters'))
         self.item_counter_character_combo = ttk.Combobox(
             item_character_row, textvariable=self.item_counter_character,
             values=['All Characters'], state='readonly', width=20)
@@ -3650,6 +3666,21 @@ class App(tk.Tk):
                 self.item_notebook, rep_data, is_saved=True, name=rep_name)
             self.item_notebook.add(frame, text=rep_name)
             self.item_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
+
+        # Character dropdown needs its options populated from the
+        # persisted tally BEFORE restoring the working tab below - the
+        # restored selection (a past session's character, applied to the
+        # StringVar's own initial value above) otherwise wouldn't be a
+        # recognized option yet.
+        self._refresh_item_counter_character_dropdown()
+
+        # "Consistent" defaults to checked, and its whole point is a
+        # tally that persists across sessions - so if there's already
+        # one on disk, show it immediately as the working tab, without
+        # waiting for files to be reloaded and the button clicked again
+        # (see _open_item_counter's own silent=True handling).
+        if self.item_counter_consistent.get() and self.item_consistent_tally_by_character:
+            self._open_item_counter(silent=True)
 
     # ── FIELDS TAB ────────────────────────────────────────────
     def _build_fields_tab(self):
@@ -5520,14 +5551,20 @@ class App(tk.Tk):
     def _refresh_item_counter_character_dropdown(self):
         """Repopulates the Item Counter's Character dropdown with 'All
         Characters' plus every character name found among self.files
-        (see _group_files_by_character), sorted, "Unknown" last - called
-        whenever the loaded file list changes (_update_parse_options).
-        Preserves the current selection if it's still one of the options;
-        falls back to 'All Characters' otherwise (e.g. that character's
-        only file was just removed)."""
+        (see _group_files_by_character) UNION every character already in
+        the persisted "Consistent" tally (item_consistent_tally_by_
+        character) - sorted, "Unknown" last. Called whenever the loaded
+        file list changes (_update_parse_options) and once at startup
+        (_build_parse_tab), so a character tallied in a past session
+        stays selectable even before any matching file is reloaded this
+        session. Preserves the current selection if it's still one of
+        the options; falls back to 'All Characters' otherwise (e.g. that
+        character's only file was just removed and it was never
+        tallied)."""
         if not hasattr(self, 'item_counter_character_combo'):
             return
         characters = set(self._group_files_by_character(self.files).keys())
+        characters |= set(getattr(self, 'item_consistent_tally_by_character', {}).keys())
         options = ['All Characters'] + sorted(characters - {'Unknown'}) + (['Unknown'] if 'Unknown' in characters else [])
         self.item_counter_character_combo.config(values=options)
         if self.item_counter_character.get() not in options:
@@ -6032,28 +6069,43 @@ class App(tk.Tk):
                     "adding to the running tally, using only whatever's currently loaded instead."):
                 self.item_counter_consistent.set(True)
 
-    def _open_item_counter(self):
+    def _open_item_counter(self, silent=False):
         """Counters sub-tab's "Item Counter" button - computes mob kill/
         item drop rates (see _compute_item_drop_stats), applies the
         Items/Junk Loot checkboxes (see _apply_item_counter_filter), and
         shows the result in an ephemeral working tab inside
         self.item_notebook. Re-clicking replaces that same working tab
-        rather than stacking up duplicates."""
-        if not self.files:
-            messagebox.showwarning("No Files", "Load some log files first.")
+        rather than stacking up duplicates.
+        Normally requires at least one loaded file - but with
+        "Consistent" checked and a persisted tally already on disk (see
+        item_consistent_tally_by_character), that alone is enough to
+        show something even with nothing currently loaded, so the
+        Consistent chart itself persists across closing and reopening
+        the program, not just the numbers waiting silently in the
+        background for the next click. silent=True (used only for the
+        automatic restore-on-startup call - see _build_parse_tab)
+        skips every warning/info popup, quietly showing whatever there
+        is to show or quietly doing nothing."""
+        consistent = self.item_counter_consistent.get()
+        has_persisted_tally = bool(getattr(self, 'item_consistent_tally_by_character', None))
+        if not self.files and not (consistent and has_persisted_tally):
+            if not silent:
+                messagebox.showwarning("No Files", "Load some log files first.")
             return
 
         show_items = self.item_counter_show_items.get()
         show_junk = self.item_counter_show_junk.get()
         if not show_items and not show_junk:
-            messagebox.showwarning("Nothing Selected",
-                'Check "Items" and/or "Junk Loot" above to see results.')
+            if not silent:
+                messagebox.showwarning("Nothing Selected",
+                    'Check "Items" and/or "Junk Loot" above to see results.')
             return
 
         data = self._compute_item_drop_stats()
         if data is None:
-            messagebox.showinfo("No Kills/Drops Found",
-                'No mob kills ("<mob> dies!") or item drops were found in the loaded file(s).')
+            if not silent:
+                messagebox.showinfo("No Kills/Drops Found",
+                    'No mob kills ("<mob> dies!") or item drops were found in the loaded file(s).')
             return
         data = self._apply_item_counter_filter(data, show_items, show_junk)
 
@@ -6574,6 +6626,36 @@ class App(tk.Tk):
             tv.insert('', 'end', values=(fd['file'], fd['date'], fd['kills'], fd['drops']))
         return tv
 
+    def _item_counter_summary_text(self, data):
+        """Builds the small note shown next to "Total Items Dropped" in
+        the Item Counter's own header row - always the number of loaded
+        logs (data['file_dates']), plus the earliest-to-latest date
+        range and how many days that spans, whenever at least one loaded
+        file had a readable creation date (see _extract_log_date) -
+        "Unknown"-dated files still count toward the log total, just not
+        the date range itself."""
+        file_dates = data.get('file_dates', [])
+        log_count = len(file_dates)
+        log_word = "log" if log_count == 1 else "logs"
+        real_dates = []
+        for fd in file_dates:
+            if fd.get('date') in (None, 'Unknown'):
+                continue
+            try:
+                real_dates.append(datetime.strptime(fd['date'], '%Y-%m-%d').date())
+            except ValueError:
+                continue
+        if not real_dates:
+            return f"{log_count} {log_word} loaded"
+        earliest, latest = min(real_dates), max(real_dates)
+        date_fmt = lambda d: f"{d.month}/{d.day}/{d.year}"
+        if earliest == latest:
+            date_part = date_fmt(earliest)
+        else:
+            span_days = (latest - earliest).days
+            date_part = f"{date_fmt(earliest)} to {date_fmt(latest)} ({span_days} day{'s' if span_days != 1 else ''})"
+        return f"{date_part}  •  {log_count} {log_word} loaded"
+
     def _build_item_report_frame(self, parent, data, is_saved, name=None):
         """Builds one Item Counter tab's content - an Overall sub-notebook
         starting with just "All" (the Zone -> Mob -> Item tree - see
@@ -6597,6 +6679,8 @@ class App(tk.Tk):
         total_drops = sum(r['drops'] for r in data['overall'])
         ttk.Label(header_row, text=f"Total Items Dropped: {total_drops:,}",
                   font=('Arial', 13, 'bold')).pack(side='left')
+        ttk.Label(header_row, text=self._item_counter_summary_text(data),
+                  foreground='#666').pack(side='left', padx=(10, 0))
         # Packed before the note (both side='right') so the button stays
         # at the outer right edge and the note sits just to its left.
         if is_saved:
@@ -8493,8 +8577,8 @@ class App(tk.Tk):
                 },
                 'order': list(_cdata.get('order', [])),
                 # A Locker character (see the Import tab's Locker checkbox)
-                # is just another character entry, flagged so its non-Kaid
-                # gear gets folded into every OTHER character's search pool
+                # is just another character entry, flagged so its gear
+                # gets folded into every OTHER character's search pool
                 # automatically - see _find_character_saved_items_build.
                 'is_locker': bool(_cdata.get('is_locker', False)),
                 # Opt-out for a Locker specifically (see the "Exclude this
@@ -8582,9 +8666,9 @@ class App(tk.Tk):
 
         # A Locker isn't a character you play - it's extra bank space (many
         # players make a spare character just to hold overflow gear). Its
-        # non-Kaid items automatically get folded into every other
-        # character's search pool - see _find_character_saved_items_build -
-        # rather than needing "Search all characters" checked.
+        # items automatically get folded into every other character's
+        # search pool - see _find_character_saved_items_build - rather
+        # than needing "Search all characters" checked.
         self.bank_import_locker_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(bank_import_char_frame, text="Locker",
                        variable=self.bank_import_locker_var).pack(side='left', padx=(16,0))
@@ -12638,12 +12722,9 @@ class App(tk.Tk):
         checkbox) whose saved list contains `item`, or None if it isn't in
         any locker - checked unconditionally everywhere the Bank column
         shows up, same as _is_saved_item, and takes priority over it (a
-        locker-sourced row shows a bold "L" there instead of 📦). Kaid-realm
-        items never count, even if a locker happens to have one saved -
-        lockers only ever contribute non-Kaid gear to the search pool (see
-        _find_character_saved_items_build)."""
-        if 'kaid' in (item.get('Realm') or '').strip().lower():
-            return None
+        locker-sourced row shows a bold "L" there instead of 📦). Kaid
+        items count same as anything else here now that Kaid is
+        tradeable (see _find_character_saved_items_build)."""
         name = (item.get('Item') or '').strip().lower()
         for char_name, cdata in self.bank_characters.items():
             if cdata.get('is_locker') and name in cdata['order']:
@@ -12708,10 +12789,10 @@ class App(tk.Tk):
 
         # Only shown/relevant for a Locker character (see _refresh_bank_
         # character_tab, which packs/forgets this based on is_locker) -
-        # unchecked by default, so a Locker's non-Kaid gear keeps folding
-        # into every other character's search the way it always has;
-        # checking this opts just THIS locker out of that, for a character
-        # you want to keep as pure overflow storage without it silently
+        # unchecked by default, so a Locker's gear keeps folding into
+        # every other character's search the way it always has; checking
+        # this opts just THIS locker out of that, for a character you
+        # want to keep as pure overflow storage without it silently
         # feeding everyone else's builds.
         exclude_var = tk.BooleanVar(value=False)
         exclude_cb = ttk.Checkbutton(tab,
@@ -13255,9 +13336,8 @@ class App(tk.Tk):
         otherwise (e.g. triggered after the legacy Saved Items tab's own
         search, which has no one character to speak of) falls back to
         pooling from every saved item anywhere (the legacy pool plus
-        every character, Lockers' Kaid items excluded, an excluded
-        Locker's gear left out entirely) - same fallback pool
-        _rebuild_saved_items_first uses. Still honors
+        every character, an excluded Locker's gear left out entirely) -
+        same fallback pool _rebuild_saved_items_first uses. Still honors
         self.excluded_item_keys, same as the other two Rebuild actions.
 
         Rather than a single search, generates one build variant per
@@ -13285,12 +13365,7 @@ class App(tk.Tk):
                         locker_names.update(cdata['order'])
                 else:
                     non_locker_names.update(cdata['order'])
-            kaid_names = {
-                (item.get('Item') or '').strip().lower()
-                for item in self.master_data
-                if 'kaid' in (item.get('Realm') or '').strip().lower()
-            }
-            effective_names = non_locker_names | (locker_names - kaid_names)
+            effective_names = non_locker_names | locker_names
 
             if not effective_names:
                 messagebox.showwarning("No Saved Items",
@@ -13527,16 +13602,11 @@ class App(tk.Tk):
         character's CURRENT Search all characters/Good Gear only/Invasion
         Gear only settings via _compute_bank_character_pool instead -
         otherwise falls back to pooling from every saved item anywhere
-        (the legacy pool plus every character). A Locker's Kaid items are
-        left out of that fallback pool, same as every per-character
-        search already does (see _find_character_saved_items_build) - a
-        Locker only ever contributes non-Kaid gear. A non-Locker
-        character's own Kaid items still count fully; that's real gear
-        they actually own. A Locker flagged "Exclude this Locker from
-        other characters' Bank Build searches" is left out of the
-        fallback pool entirely - there's no "this search's own character"
-        here to exempt it for, so an excluded Locker just never
-        contributes anything to a global rebuild."""
+        (the legacy pool plus every character). A Locker flagged
+        "Exclude this Locker from other characters' Bank Build searches"
+        is left out of the fallback pool entirely - there's no "this
+        search's own character" here to exempt it for, so an excluded
+        Locker just never contributes anything to a global rebuild."""
         last_char = self._last_bank_build_char
         if last_char and last_char in self.bank_characters:
             effective_names, tag_filter = self._compute_bank_character_pool(last_char)
@@ -13557,12 +13627,7 @@ class App(tk.Tk):
                         locker_names.update(cdata['order'])
                 else:
                     non_locker_names.update(cdata['order'])
-            kaid_names = {
-                (item.get('Item') or '').strip().lower()
-                for item in self.master_data
-                if 'kaid' in (item.get('Realm') or '').strip().lower()
-            }
-            effective_names = non_locker_names | (locker_names - kaid_names)
+            effective_names = non_locker_names | locker_names
 
             if not effective_names:
                 messagebox.showwarning("No Saved Items",
@@ -13760,6 +13825,19 @@ class App(tk.Tk):
         w = self.bank_character_widgets[char_name]
         own_names = set(self.bank_characters.get(char_name, {}).get('order', []))
 
+        # Kaid became tradeable (v6.4.1), so a Locker's Kaid items fold in
+        # like any other gear now (see _rebuild_full_database_prefer_owned/
+        # _rebuild_saved_items_first for the same change to their own
+        # fallback pools). This is a live in-game balance change still
+        # being tested and could be reverted - if Kaid goes back to
+        # non-tradeable, restore the exclusion here (and in those two
+        # functions) by folding `n not in kaid_names` back into
+        # locker_names' own update below. kaid_names is still needed
+        # below for Search all characters, which rests on a different,
+        # still-true rule - Kaid gear doesn't drop when you die, so it's
+        # meant to represent what THIS character is actually carrying,
+        # not what's spread across the whole roster - unrelated to
+        # tradeability either way.
         kaid_names = {
             (item.get('Item') or '').strip().lower()
             for item in self.master_data
@@ -13768,7 +13846,7 @@ class App(tk.Tk):
         locker_names = set()
         for cname, cdata in self.bank_characters.items():
             if cname != char_name and cdata.get('is_locker') and not cdata.get('exclude_from_others'):
-                locker_names.update(n for n in cdata['order'] if n not in kaid_names)
+                locker_names.update(cdata['order'])
 
         if w['search_all_var'].get():
             all_names = set()
@@ -13799,9 +13877,9 @@ class App(tk.Tk):
         character's own tab (Kaid gear doesn't drop when you die, so it's
         meant to represent what THIS character is actually carrying, not
         what's spread across the whole roster). Every Locker character's
-        non-Kaid gear (see the Import tab's Locker checkbox) is ALWAYS
-        folded in on top of that, regardless of Search all characters - a
-        Locker isn't a roster member you opt into, it's just this player's
+        gear (see the Import tab's Locker checkbox) is ALWAYS folded in
+        on top of that, regardless of Search all characters - a Locker
+        isn't a roster member you opt into, it's just this player's
         overflow bank space. Matched by name only, same wildcard matching
         as an Inventory/Items-in-use paste line (see _bank_owned_match).
         "Prioritize" searches everything, favoring these items when tied.
@@ -14517,7 +14595,7 @@ class App(tk.Tk):
 
         if cdata.get('is_locker'):
             desc = (f"{char_name} is a Locker - not a character you play, just extra bank space. Its "
-                    "non-Kaid gear is automatically folded into every other character's search pool. A "
+                    "gear is automatically folded into every other character's search pool. A "
                     "second copy of the same item is listed at the bottom, prefixed \"::extra::\".")
         else:
             desc = (f"{char_name}'s saved items - kept up to date from the Import tab. A second copy of "

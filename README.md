@@ -138,7 +138,13 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.4.0 (Current)
+### v6.4.1 (Current)
+- **Item Counter**: the "Consistent" chart itself now persists across closing and reopening the program - previously the running tally saved correctly, but nothing re-displayed it until you reloaded logs and clicked the button again; now it rebuilds automatically on startup if Consistent is checked and a tally is on disk
+- **Item Counter**: the Character dropdown's selection, and every character it lists, now persist across restarts too - previously it reset to "All Characters" and forgot any character not tied to a currently-loaded file
+- **Item Counter**: added a date range (earliest–latest log date and the span in days) and a log count next to "Total Items Dropped", e.g. `1/15/2026 to 2/20/2026 (36 days)  •  2 logs loaded`
+- **Bank Build**: a Locker's Kaid-realm items now fold into every other character's search pool like any other gear, instead of being silently excluded - Kaid became tradeable in-game, so the old "Lockers only share non-Kaid gear" restriction (from when Kaid items couldn't actually be handed to another character) no longer applies. This is a live in-game change still being tested and could be reverted later
+
+### v6.4.0
 - Added an **Item Counter** to the Counters sub-tab - drop rate of every item, per mob, across the loaded log(s), broken down by Zone and by Daily/Weekly/Monthly/Yearly period
   - **Overall** tab is a nested tree: **Zone → Mob → Item**, each level showing its own Drops/Kills/Drop Rate % (Zone and Mob rows sum up whatever's nested under them). Daily/Weekly/Monthly/Yearly are each set up the exact same way, with Period as one more level on top - a **Log Files** tab lists every loaded file's own extracted date and kill/drop counts
   - **Drop Rate %** = `(drops / kills * 100) / possible items` - possible items being how many distinct items the master/community database lists for that mob (1 if the mob isn't in the database), so an item competing against a bigger loot table reads as rarer at the same drops/kills ratio. The exact formula is spelled out as a note next to the tab's Save/Delete button
