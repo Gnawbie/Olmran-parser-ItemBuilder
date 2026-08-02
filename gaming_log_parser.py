@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.4.1"
+VERSION = "6.4.2"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -1630,6 +1630,30 @@ def _sort_treeview_column(tv, col, reverse):
     tv.heading(col, command=lambda: _sort_treeview_column(tv, col, not reverse))
 
 
+def _sort_treeview_column_recursive(tv, col, reverse):
+    """Same click-to-sort behavior as _sort_treeview_column, but for a
+    nested Treeview (Zone -> Mob -> Item, optionally under a Period
+    level on top) - sorts every level of the tree by the same column,
+    not just the top-level rows, so expanding a zone/mob after sorting
+    still shows its own children in the chosen order. Used by
+    _build_item_zone_mob_tree and _build_item_period_zone_mob_tree."""
+    def sort_key(iid):
+        val = tv.set(iid, col)
+        try:
+            return (0, float(val))
+        except ValueError:
+            return (1, val.lower())
+
+    def sort_level(parent_iid):
+        children = sorted(tv.get_children(parent_iid), key=sort_key, reverse=reverse)
+        for index, iid in enumerate(children):
+            tv.move(iid, parent_iid, index)
+            sort_level(iid)
+
+    sort_level('')
+    tv.heading(col, command=lambda: _sort_treeview_column_recursive(tv, col, not reverse))
+
+
 CREDITS = [
     ("Gnawbie", "Majority of Content"),
     ("Claude", "Programming"),
@@ -3098,6 +3122,19 @@ class App(tk.Tk):
 
         def _on_canvas_configure(event):
             canvas.itemconfig(content_window, width=event.width)
+            # content's height is otherwise purely "natural" (sum of
+            # children) since only width gets synced above - meaning any
+            # pack(fill='both', expand=True) deep inside a tab (e.g. the
+            # Manual tab's results Treeview) never actually had extra
+            # vertical space to expand into, even in a maximized window,
+            # since its parent chain always stayed exactly as tall as it
+            # needed to be. Stretching content to the taller of its own
+            # natural height or the canvas's current viewport height (never
+            # shorter, so a big tab still scrolls exactly as before) gives
+            # those expand=True widgets real room to grow when the window
+            # is bigger than the current tab actually needs.
+            natural_height = content.winfo_reqheight()
+            canvas.itemconfig(content_window, height=max(natural_height, event.height))
         canvas.bind('<Configure>', _on_canvas_configure)
 
         self_scrolling_classes = {'Treeview', 'Text', 'Listbox', 'TCombobox', 'ComboboxPopdownFrame'}
@@ -3274,6 +3311,40 @@ class App(tk.Tk):
         self._persisted_counters_file_rows = self._counters_file_rows
         self._save_config()
 
+    def _mask_notebook_side_borders(self, nb):
+        """Hides the left/right/bottom segments of nb's own default
+        border, leaving just the top segment - it already runs the full
+        width flush with the tab strip's own bottom edge, which is the
+        one line worth keeping; the rest just boxes in an otherwise
+        near-empty pane (the Counters sub-tab's own notebook, and each
+        individual XP/Damage/PvP/Item Counter's own results notebook).
+        Done by overlaying background-colored frames rather than via
+        style, since ttk's Notebook.client element (clam theme) has no
+        borderwidth/relief option to turn off in the first place - only
+        background/bordercolor/lightcolor/darkcolor, which draw a fixed-
+        width groove regardless. Call once right after creating nb (to
+        mask its initial state) and bind <<NotebookTabChanged>> to this
+        same method separately (see call sites) so the mask keeps up
+        whenever nb goes from having no tabs at all (tab strip height 0)
+        to having its first one (every tab here shares one font/padding,
+        so height is otherwise the same no matter how many tabs follow).
+        Deliberately does NOT bind itself - re-binding on every refresh
+        would stack a duplicate callback each time instead of replacing
+        it."""
+        for m in getattr(nb, '_border_masks', []):
+            m.destroy()
+        nb.update_idletasks()
+        tabs = nb.tabs()
+        tab_h = nb.nametowidget(tabs[0]).winfo_y() if tabs else 0
+        bg = '#dcdad5'
+        bmask = tk.Frame(nb, bg=bg, height=3, bd=0, highlightthickness=0)
+        bmask.place(in_=nb, x=0, rely=1.0, y=-3, relwidth=1.0, anchor='nw')
+        lmask = tk.Frame(nb, bg=bg, width=3, bd=0, highlightthickness=0)
+        lmask.place(in_=nb, x=0, y=tab_h, relheight=1.0, height=-tab_h, anchor='nw')
+        rmask = tk.Frame(nb, bg=bg, width=3, bd=0, highlightthickness=0)
+        rmask.place(in_=nb, relx=1.0, x=-3, y=tab_h, relheight=1.0, height=-tab_h, anchor='nw')
+        nb._border_masks = [bmask, lmask, rmask]
+
     # ── PARSE TAB (FILES + PARSING) ───────────────────────────
     def _build_parse_tab(self):
         # Parse gets its own inner notebook: "Files & Search" holds
@@ -3326,6 +3397,9 @@ class App(tk.Tk):
         self.counters_notebook.add(dmg_tab, text='⚔  Damage Counter')
         self.counters_notebook.add(pvp_dmg_tab, text='🗡  PvP Damage')
         self.counters_notebook.add(item_tab, text='🎁  Item Counter')
+        self._mask_notebook_side_borders(self.counters_notebook)
+        self.counters_notebook.bind('<<NotebookTabChanged>>',
+                                    lambda e: self._mask_notebook_side_borders(self.counters_notebook))
 
         # ═══ SEARCH SECTION ═══
         # Search across every loaded file's actual lines - independent of Run
@@ -3534,7 +3608,7 @@ class App(tk.Tk):
         # on every click; saved reports (via that tab's own Save button)
         # get their own persistent, named tab with a Delete button,
         # restored from config below.
-        self.xp_notebook = ttk.Notebook(xp_tab)
+        self.xp_notebook = ttk.Notebook(xp_tab, style='RealmMini.TNotebook')
         self.xp_notebook.pack(fill='both', expand=True, pady=(10,0))
 
         self.xp_saved_reports = []
@@ -3547,6 +3621,9 @@ class App(tk.Tk):
             frame = self._build_xp_report_frame(self.xp_notebook, rep_data, is_saved=True, name=rep_name)
             self.xp_notebook.add(frame, text=rep_name)
             self.xp_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
+        self._mask_notebook_side_borders(self.xp_notebook)
+        self.xp_notebook.bind('<<NotebookTabChanged>>',
+                             lambda e: self._mask_notebook_side_borders(self.xp_notebook))
 
         # ═══ DAMAGE COUNTER TAB (inside the Counters sub-tab, below the
         # shared "Load Log Files" section built above) ═══
@@ -3561,7 +3638,7 @@ class App(tk.Tk):
                  text="Totals up damage dealt to every mob across the loaded log(s). Click any column header to sort.",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=10)
 
-        self.damage_notebook = ttk.Notebook(dmg_tab)
+        self.damage_notebook = ttk.Notebook(dmg_tab, style='RealmMini.TNotebook')
         self.damage_notebook.pack(fill='both', expand=True, pady=(10,0))
 
         self.damage_saved_reports = []
@@ -3574,6 +3651,9 @@ class App(tk.Tk):
             frame = self._build_damage_report_frame(self.damage_notebook, rep_data, is_saved=True, name=rep_name)
             self.damage_notebook.add(frame, text=rep_name)
             self.damage_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
+        self._mask_notebook_side_borders(self.damage_notebook)
+        self.damage_notebook.bind('<<NotebookTabChanged>>',
+                                 lambda e: self._mask_notebook_side_borders(self.damage_notebook))
 
         # ═══ PVP DAMAGE TAB (inside the Counters sub-tab, below the
         # shared "Load Log Files" section built above) ═══
@@ -3588,7 +3668,7 @@ class App(tk.Tk):
                  text="Totals up damage dealt to and taken from other players across the loaded log(s).",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=10)
 
-        self.pvp_damage_notebook = ttk.Notebook(pvp_dmg_tab)
+        self.pvp_damage_notebook = ttk.Notebook(pvp_dmg_tab, style='RealmMini.TNotebook')
         self.pvp_damage_notebook.pack(fill='both', expand=True, pady=(10,0))
 
         self.pvp_damage_saved_reports = []
@@ -3602,6 +3682,9 @@ class App(tk.Tk):
                 self.pvp_damage_notebook, rep_data, is_saved=True, name=rep_name)
             self.pvp_damage_notebook.add(frame, text=rep_name)
             self.pvp_damage_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
+        self._mask_notebook_side_borders(self.pvp_damage_notebook)
+        self.pvp_damage_notebook.bind('<<NotebookTabChanged>>',
+                                     lambda e: self._mask_notebook_side_borders(self.pvp_damage_notebook))
 
         # ═══ ITEM COUNTER TAB (inside the Counters sub-tab, below the
         # shared "Load Log Files" section built above) ═══
@@ -3652,7 +3735,7 @@ class App(tk.Tk):
                       "is skipped, not counted again. Applies the next time you click Item Counter.",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=10)
 
-        self.item_notebook = ttk.Notebook(item_tab)
+        self.item_notebook = ttk.Notebook(item_tab, style='RealmMini.TNotebook')
         self.item_notebook.pack(fill='both', expand=True, pady=(10,0))
 
         self.item_saved_reports = []
@@ -3666,6 +3749,9 @@ class App(tk.Tk):
                 self.item_notebook, rep_data, is_saved=True, name=rep_name)
             self.item_notebook.add(frame, text=rep_name)
             self.item_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
+        self._mask_notebook_side_borders(self.item_notebook)
+        self.item_notebook.bind('<<NotebookTabChanged>>',
+                               lambda e: self._mask_notebook_side_borders(self.item_notebook))
 
         # Character dropdown needs its options populated from the
         # persisted tally BEFORE restoring the working tab below - the
@@ -4776,6 +4862,7 @@ class App(tk.Tk):
             if getattr(self, '_xp_working_frame', None) is not None:
                 try:
                     self.xp_notebook.forget(self._xp_working_frame)
+                    self._xp_working_frame.destroy()
                 except tk.TclError:
                     pass
 
@@ -4888,6 +4975,7 @@ class App(tk.Tk):
                         f'A saved XP report named "{name}" already exists. Overwrite it?'):
                     return
                 self.xp_notebook.forget(rep['frame'])
+                rep['frame'].destroy()
                 rep['data'] = data
                 rep['frame'] = self._build_xp_report_frame(self.xp_notebook, data, is_saved=True, name=name)
                 self.xp_notebook.add(rep['frame'], text=name)
@@ -4909,6 +4997,7 @@ class App(tk.Tk):
                 if not messagebox.askyesno("Delete", f'Delete saved XP report "{name}"?'):
                     return
                 self.xp_notebook.forget(rep['frame'])
+                rep['frame'].destroy()
                 del self.xp_saved_reports[i]
                 self._save_config()
                 return
@@ -5210,6 +5299,7 @@ class App(tk.Tk):
             if getattr(self, '_damage_working_frame', None) is not None:
                 try:
                     self.damage_notebook.forget(self._damage_working_frame)
+                    self._damage_working_frame.destroy()
                 except tk.TclError:
                     pass
 
@@ -5315,6 +5405,7 @@ class App(tk.Tk):
                         f'A saved damage report named "{name}" already exists. Overwrite it?'):
                     return
                 self.damage_notebook.forget(rep['frame'])
+                rep['frame'].destroy()
                 rep['data'] = data
                 rep['frame'] = self._build_damage_report_frame(self.damage_notebook, data, is_saved=True, name=name)
                 self.damage_notebook.add(rep['frame'], text=name)
@@ -5336,6 +5427,7 @@ class App(tk.Tk):
                 if not messagebox.askyesno("Delete", f'Delete saved damage report "{name}"?'):
                     return
                 self.damage_notebook.forget(rep['frame'])
+                rep['frame'].destroy()
                 del self.damage_saved_reports[i]
                 self._save_config()
                 return
@@ -5367,6 +5459,7 @@ class App(tk.Tk):
         try:
             if getattr(self, '_pvp_damage_working_frame', None) is not None:
                 self.pvp_damage_notebook.forget(self._pvp_damage_working_frame)
+                self._pvp_damage_working_frame.destroy()
         except Exception:
             pass
 
@@ -5478,6 +5571,7 @@ class App(tk.Tk):
                         f'A saved PvP damage report named "{name}" already exists. Overwrite it?'):
                     return
                 self.pvp_damage_notebook.forget(rep['frame'])
+                rep['frame'].destroy()
                 rep['data'] = data
                 rep['frame'] = self._build_pvp_damage_report_frame(
                     self.pvp_damage_notebook, data, is_saved=True, name=name)
@@ -5500,6 +5594,7 @@ class App(tk.Tk):
                 if not messagebox.askyesno("Delete", f'Delete saved PvP damage report "{name}"?'):
                     return
                 self.pvp_damage_notebook.forget(rep['frame'])
+                rep['frame'].destroy()
                 del self.pvp_damage_saved_reports[i]
                 self._save_config()
                 return
@@ -6112,6 +6207,7 @@ class App(tk.Tk):
         try:
             if getattr(self, '_item_working_frame', None) is not None:
                 self.item_notebook.forget(self._item_working_frame)
+                self._item_working_frame.destroy()
         except tk.TclError:
             pass
 
@@ -6228,7 +6324,7 @@ class App(tk.Tk):
         tv.heading('#0', text='Zone / Mob / Item')
         tv.column('#0', width=260, anchor='w')
         for c, w in zip(cols, (70, 70, 90)):
-            tv.heading(c, text=c)
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column_recursive(tv, c, False))
             tv.column(c, width=w, anchor='center')
         vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
         tv.configure(yscrollcommand=vsb.set)
@@ -6292,7 +6388,7 @@ class App(tk.Tk):
         tv.heading('#0', text='Period / Zone / Mob / Item')
         tv.column('#0', width=260, anchor='w')
         for c, w in zip(cols, (70, 70, 90)):
-            tv.heading(c, text=c)
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column_recursive(tv, c, False))
             tv.column(c, width=w, anchor='center')
         vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
         tv.configure(yscrollcommand=vsb.set)
@@ -6750,6 +6846,7 @@ class App(tk.Tk):
                         f'A saved item report named "{name}" already exists. Overwrite it?'):
                     return
                 self.item_notebook.forget(rep['frame'])
+                rep['frame'].destroy()
                 rep['data'] = data
                 rep['frame'] = self._build_item_report_frame(self.item_notebook, data, is_saved=True, name=name)
                 self.item_notebook.add(rep['frame'], text=name)
@@ -6771,6 +6868,7 @@ class App(tk.Tk):
                 if not messagebox.askyesno("Delete", f'Delete saved item report "{name}"?'):
                     return
                 self.item_notebook.forget(rep['frame'])
+                rep['frame'].destroy()
                 del self.item_saved_reports[i]
                 self._save_config()
                 return
@@ -7268,6 +7366,11 @@ class App(tk.Tk):
         self.build_sub_notebook = ttk.Notebook(self.tab_build)
         self.build_sub_notebook.pack(fill='x')
         self.build_sub_notebook.bind('<<NotebookTabChanged>>', self._on_build_subtab_changed)
+        # Resizing/maximizing the window changes tab_build's own height
+        # without changing which sub-tab is selected, so <<NotebookTabChanged>>
+        # alone wouldn't notice there's now more (or less) room to fill -
+        # see _on_build_subtab_changed's docstring.
+        self.tab_build.bind('<Configure>', self._on_build_subtab_changed)
 
         build_search_subtab = ttk.Frame(self.build_sub_notebook)
         self.build_sub_notebook.add(build_search_subtab, text='Basic Constraints')
@@ -9255,9 +9358,11 @@ class App(tk.Tk):
         ttk.Button(manual_chip_btn_row, text="🔄 Refresh",
                   command=self._refresh_manual_lookup_results).pack(side='left', padx=(6,0))
 
+        ttk.Separator(manual_tab, orient='horizontal').pack(fill='x', pady=(8, 0))
+
         self.manual_results_status = ttk.Label(manual_tab, foreground='#666',
                                                text="Add a spell/tier above to see matching items")
-        self.manual_results_status.pack(anchor='w', pady=(8,4))
+        self.manual_results_status.pack(anchor='w', pady=(4,4))
 
         manual_tree_frame = ttk.Frame(manual_tab)
         manual_tree_frame.pack(fill='both', expand=True)
@@ -9416,6 +9521,12 @@ class App(tk.Tk):
         comment above self.build_sub_notebook's creation for why that
         default left a large blank gap under any shorter tab (Basic/Armor/
         Weapon Constraints) once Bank Build's Saved Items grew tall.
+        build_sub_notebook is tab_build's only child (padding=12 aside), so
+        whenever the window is taller than the selected sub-tab actually
+        needs, this also grows it to fill the rest of tab_build's own
+        height instead of leaving that space blank below it - the same
+        "never shrink below natural, but claim any extra room" rule
+        _build_scrollable_root's own <Configure> handler uses.
 
         Also hides Find Optimal Build/Show All Matches while Bank Build or
         Manual is selected - Bank Build has its own Find Best Bank Build per
@@ -9427,7 +9538,8 @@ class App(tk.Tk):
         except (tk.TclError, KeyError):
             return
         selected.update_idletasks()
-        self.build_sub_notebook.configure(height=selected.winfo_reqheight())
+        available = max(0, self.tab_build.winfo_height() - 24)
+        self.build_sub_notebook.configure(height=max(selected.winfo_reqheight(), available))
 
         if selected in (self.build_bank_subtab, self.build_manual_subtab):
             self.shared_search_buttons_frame.pack_forget()
@@ -9670,7 +9782,9 @@ class App(tk.Tk):
         own renamable name field (mirrored into the tab label itself), its
         own results table, and Load/Export/Remove buttons."""
         for tab_id in self.saved_builds_notebook.tabs():
+            widget = self.saved_builds_notebook.nametowidget(tab_id)
             self.saved_builds_notebook.forget(tab_id)
+            widget.destroy()
 
         if not self.saved_builds:
             self.saved_builds_notebook.pack_forget()

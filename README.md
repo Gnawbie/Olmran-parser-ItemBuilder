@@ -138,7 +138,14 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.4.1 (Current)
+### v6.4.2 (Current)
+- **Item Counter**: the Overall/Daily/Weekly/Monthly/Yearly Zone → Mob → Item trees are now sortable by clicking any column header, same as every other table in the app - this was an oversight in v6.4.0, they'd never actually been wired up. Sorting one level (e.g. Zone) also re-sorts everything nested under it recursively
+- Fixed a build-up of stale widgets behind the scenes every time a Counter's results tab got replaced (re-clicking XP/Damage/PvP/Item Counter, or the Item Counter auto-restoring on startup) - the old tab was being hidden but never actually destroyed, which could show up visually as extra stacked border lines the more times it happened
+- Removed the box border that used to sit around the Counters sub-tab's own notebook (XP/Damage/PvP/Item Counter) and each individual Counter's own results notebook, since it mostly just boxed in empty space - kept the one line under the tab strip
+- **Manual tab**: several tables (its own results list, Bank Build's Import/Character Items/Lockers tables, and others under Build) now stretch to fill the rest of the window instead of stopping short and leaving blank space below them whenever the window is taller than the tab actually needs
+- **Manual tab**: added a separator line above the "N matching items found" count, matching the line style used elsewhere
+
+### v6.4.1
 - **Item Counter**: the "Consistent" chart itself now persists across closing and reopening the program - previously the running tally saved correctly, but nothing re-displayed it until you reloaded logs and clicked the button again; now it rebuilds automatically on startup if Consistent is checked and a tally is on disk
 - **Item Counter**: the Character dropdown's selection, and every character it lists, now persist across restarts too - previously it reset to "All Characters" and forgot any character not tied to a currently-loaded file
 - **Item Counter**: added a date range (earliest–latest log date and the span in days) and a log count next to "Total Items Dropped", e.g. `1/15/2026 to 2/20/2026 (36 days)  •  2 logs loaded`
