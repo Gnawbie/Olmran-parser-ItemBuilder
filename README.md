@@ -138,7 +138,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.4.2 (Current)
+### v6.4.3 (Current)
+- **Bank Build**: each non-Locker character's own Character Items tab has a new **Share** column (a checkbox, after Gear Tag) - checking it flags that one item as shareable, folding it into every other character's Bank Build search automatically, regardless of that character's own "Search all characters" setting. This is the per-item equivalent of what a whole Locker already does for its entire list - useful for sharing just a few spare items without turning the character itself into overflow storage. Persists across restarts; not shown on Locker tabs, since a Locker already shares everything
+
+### v6.4.2
 - **Item Counter**: the Overall/Daily/Weekly/Monthly/Yearly Zone → Mob → Item trees are now sortable by clicking any column header, same as every other table in the app - this was an oversight in v6.4.0, they'd never actually been wired up. Sorting one level (e.g. Zone) also re-sorts everything nested under it recursively
 - Fixed a build-up of stale widgets behind the scenes every time a Counter's results tab got replaced (re-clicking XP/Damage/PvP/Item Counter, or the Item Counter auto-restoring on startup) - the old tab was being hidden but never actually destroyed, which could show up visually as extra stacked border lines the more times it happened
 - Removed the box border that used to sit around the Counters sub-tab's own notebook (XP/Damage/PvP/Item Counter) and each individual Counter's own results notebook, since it mostly just boxed in empty space - kept the one line under the tab strip

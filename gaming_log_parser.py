@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.4.2"
+VERSION = "6.4.3"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2428,6 +2428,7 @@ class App(tk.Tk):
                         'is_locker': bool(cdata.get('is_locker', False)),
                         'exclude_from_others': bool(cdata.get('exclude_from_others', False)),
                         'group_id': cdata.get('group_id'),
+                        'shared_items': sorted(cdata.get('shared_items', set())),
                     }
                     for char, cdata in getattr(self, 'bank_characters', {}).items()
                 },
@@ -8696,6 +8697,14 @@ class App(tk.Tk):
                 # character - _relocate_bank_character_tab_if_needed
                 # clears it if is_locker ever gets unchecked.
                 'group_id': _cdata.get('group_id'),
+                # Per-item opt-in (see the "Share" column, non-Locker
+                # character tabs only) - unlike is_locker (folds this
+                # character's WHOLE list into everyone else's search),
+                # this lets a normal character share just specific items
+                # one at a time, without turning the whole character into
+                # overflow storage. Meaningless for a Locker (already
+                # folds in everything). See _compute_bank_character_pool.
+                'shared_items': set(_cdata.get('shared_items', [])),
             }
         # Populated per character name by _create_bank_character_tab - widget
         # refs (treeview, checkboxes/vars, status labels) needed to read from
@@ -12918,8 +12927,15 @@ class App(tk.Tk):
         tree_frame.pack(fill='both', expand=True)
         saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
         saved_col_widths = {'Slot': 55, 'Drop': 60, 'Item': 220, 'Type': 60, 'Spell': 100, 'Sigil': 60,
-                           'Level': 45, 'Area': 140, 'Tag': 110}
+                           'Level': 45, 'Area': 140, 'Tag': 110, 'Share': 55}
         saved_col_headings = {'Tag': 'Gear Tag'}
+        # A Locker already folds its ENTIRE list into every other
+        # character's search unconditionally (is_locker) - the Share
+        # column is the equivalent opt-in for one item at a time on a
+        # normal character, so it only makes sense here, not on a Locker.
+        is_locker = cdata.get('is_locker', False)
+        if not is_locker:
+            saved_cols = saved_cols + ('Share',)
         tv = ttk.Treeview(tree_frame, columns=saved_cols, show='headings', height=12)
         for col in saved_cols:
             heading_anchor = 'w' if col == 'Item' else 'center'
@@ -12927,6 +12943,11 @@ class App(tk.Tk):
                       command=lambda c=col, t=tv: _sort_treeview_column(t, c, False))
             tv.column(col, width=saved_col_widths[col], stretch=False, anchor=('w' if col == 'Item' else 'center'))
         tv.bind('<Button-1>', self._on_saved_tv_click)
+        # _on_saved_tv_click/_toggle_shared_item need to know which
+        # character this particular treeview belongs to - Main's own tree
+        # has no single owning character (it's every character's items
+        # combined, read-only) so it never gets this attribute at all.
+        tv.bank_char_name = char_name
         vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tv.yview)
         hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=tv.xview)
         tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -13016,11 +13037,15 @@ class App(tk.Tk):
         ttk.Button(controls_frame, text="Clear Saved List",
                   command=lambda: self._clear_bank_character_list(char_name)).pack(side='left', padx=4)
 
+        share_sentence = (
+            " Checking an item's Share box folds just that one item into every other character's "
+            "search too, regardless of Search all characters." if not is_locker else "")
         search_status_label = ttk.Label(tab, text=(
             "\"Hard Search\": only this character's Saved Items are considered - any wanted spell/tier with "
             "nothing available shows \"No available item\". \"Prioritize\": searches everything, just "
             "favoring these Saved Items when otherwise close. \"Search all characters\": pools every "
-            "character's non-Kaid items together, but Kaid items still only come from this tab."),
+            "character's non-Kaid items together, but Kaid items still only come from this tab."
+            + share_sentence),
             foreground='#666', wraplength=760, justify='left')
         search_status_label.pack(anchor='w', pady=(6,0))
 
@@ -13962,13 +13987,25 @@ class App(tk.Tk):
             if cname != char_name and cdata.get('is_locker') and not cdata.get('exclude_from_others'):
                 locker_names.update(cdata['order'])
 
+        # A normal character's individually-flagged Share items (see the
+        # Share column, _toggle_shared_item) fold in unconditionally too,
+        # same as a whole Locker's gear - this is the equivalent opt-in
+        # for one item at a time instead of a character's entire list.
+        # Intersected with that character's own order in case a shared
+        # item was later removed from their list without the flag itself
+        # getting cleared.
+        shared_names = set()
+        for cname, cdata in self.bank_characters.items():
+            if cname != char_name and not cdata.get('is_locker'):
+                shared_names.update(cdata.get('shared_items', set()) & set(cdata.get('order', [])))
+
         if w['search_all_var'].get():
             all_names = set()
             for cdata in self.bank_characters.values():
                 all_names.update(cdata['order'])
-            effective_names = {n for n in all_names if n not in kaid_names or n in own_names} | locker_names
+            effective_names = {n for n in all_names if n not in kaid_names or n in own_names} | locker_names | shared_names
         else:
-            effective_names = own_names | locker_names
+            effective_names = own_names | locker_names | shared_names
 
         tag_filter = set()
         if w['good_gear_var'].get():
@@ -14296,11 +14333,14 @@ class App(tk.Tk):
     def _on_saved_tv_click(self, event):
         """Click handler shared by every Saved Items treeview (Main and
         every character) - opens the Gear Tag editor (see
-        _open_gear_tag_editor) only when the click actually landed in the
-        Tag column's cell area; everything else (other columns, the
-        heading row, empty space below the last row) falls through to the
-        Treeview's own normal handling (selection, the column-sort heading
-        command, etc.)."""
+        _open_gear_tag_editor) for a click landing on the Tag column, or
+        toggles that row's Share flag (see _toggle_shared_item) for a
+        click on the Share column (non-Locker character tabs only - Main
+        and every Locker never have that column at all, so this branch
+        simply never matches for them); everything else (other columns,
+        the heading row, empty space below the last row) falls through to
+        the Treeview's own normal handling (selection, the column-sort
+        heading command, etc.)."""
         tv = event.widget
         if tv.identify_region(event.x, event.y) != 'cell':
             return
@@ -14313,9 +14353,13 @@ class App(tk.Tk):
         except ValueError:
             return
         columns = tv['columns']
-        if col_index < 0 or col_index >= len(columns) or columns[col_index] != 'Tag':
+        if col_index < 0 or col_index >= len(columns):
             return
-        self._open_gear_tag_editor(tv, row_iid, col_id)
+        col_name = columns[col_index]
+        if col_name == 'Tag':
+            self._open_gear_tag_editor(tv, row_iid, col_id)
+        elif col_name == 'Share':
+            self._toggle_shared_item(tv, row_iid)
 
     def _open_gear_tag_editor(self, tv, row_iid, col_id):
         """Floating, temporary Combobox placed exactly over one Tag cell -
@@ -14364,6 +14408,33 @@ class App(tk.Tk):
         combo.bind('<<ComboboxSelected>>', commit)
         combo.bind('<FocusOut>', commit)
 
+    def _toggle_shared_item(self, tv, row_iid):
+        """Flips one item's Share flag for the ONE character whose tab
+        this treeview is (see tv.bank_char_name, set in
+        _create_bank_character_tab) - unlike Gear Tag (global per item
+        name, same value everywhere), this is scoped to just this
+        character's own copy of the item, since sharing is a choice that
+        character's owner makes about their own gear, not a property of
+        the item itself. A plain boolean toggle, not a floating editor
+        like _open_gear_tag_editor - there's only two states, so no
+        picker widget is needed. Folds straight into
+        _compute_bank_character_pool's union for every OTHER character's
+        search the same way a whole Locker's gear already does, just
+        scoped to this one item instead of the character's entire list."""
+        char_name = getattr(tv, 'bank_char_name', None)
+        if not char_name:
+            return
+        display_name = tv.set(row_iid, 'Item')
+        item_name = display_name.removeprefix('::extra:: ')
+        cdata = self.bank_characters.setdefault(char_name, {})
+        shared = cdata.setdefault('shared_items', set())
+        if item_name in shared:
+            shared.discard(item_name)
+        else:
+            shared.add(item_name)
+        self._save_config()
+        self._refresh_bank_character_tab(char_name)
+
     def _set_gear_tag(self, item_name, new_val):
         """Write one item's Gear Tag - global per item name, so this
         redraws every Saved Items treeview (Main and every character), not
@@ -14392,18 +14463,22 @@ class App(tk.Tk):
                 return 'Good Gear' if _is_event_realm(item.get('Realm')) else 'Blank'
         return 'Blank'
 
-    def _bank_saved_display_rows(self, order, sources):
+    def _bank_saved_display_rows(self, order, sources, shared_items=None):
         """Row tuples (Slot, Drop, Item, Type, Spell, Sigil, Level, Area,
-        Tag) for a Saved Items treeview - shared by the Main aggregate tab
-        and every per-character tab. Each unique name gets one row
-        (enriched from master_data when a name match is found); any copies
-        beyond the first are appended at the bottom, prefixed "::extra::".
-        Drop reads "No Drop" for a Kaid-realm item (Kaid gear doesn't drop
-        when you die), "Drop" for everything else. Tag is whatever's in
-        self.bank_gear_tags for that name, defaulting to "Good Gear" for
-        an Event-realm item (see _is_event_realm) or "Blank" otherwise -
-        see _open_gear_tag_editor/_default_gear_tag_for_item. Returns
-        (rows, extra_count)."""
+        Tag[, Share]) for a Saved Items treeview - shared by the Main
+        aggregate tab and every per-character tab. Each unique name gets
+        one row (enriched from master_data when a name match is found);
+        any copies beyond the first are appended at the bottom, prefixed
+        "::extra::". Drop reads "No Drop" for a Kaid-realm item (Kaid gear
+        doesn't drop when you die), "Drop" for everything else. Tag is
+        whatever's in self.bank_gear_tags for that name, defaulting to
+        "Good Gear" for an Event-realm item (see _is_event_realm) or
+        "Blank" otherwise - see _open_gear_tag_editor/_default_gear_tag_
+        for_item. shared_items is None for Main/a Locker (no Share column
+        at all - see _create_bank_character_tab); for a normal character
+        it's that character's own cdata['shared_items'] set, and a
+        trailing Share cell ('☑'/'☐') gets appended per row - see
+        _toggle_shared_item. Returns (rows, extra_count)."""
         master_by_name = {}
         for item in self.master_data:
             master_by_name.setdefault((item.get('Item') or '').strip().lower(), item)
@@ -14413,11 +14488,14 @@ class App(tk.Tk):
             display_name = f"::extra:: {name}" if extra else name
             is_kaid = 'kaid' in (m.get('Realm') or '').strip().lower()
             default_tag = 'Good Gear' if _is_event_realm(m.get('Realm')) else 'Blank'
-            return (
+            row = (
                 (m.get('Slot') or '').title(), 'No Drop' if is_kaid else 'Drop', display_name,
                 m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''), m.get('Level', ''), m.get('Area', ''),
                 self.bank_gear_tags.get(name, default_tag),
             )
+            if shared_items is not None:
+                row = row + ('☑' if name in shared_items else '☐',)
+            return row
 
         total_counts = {
             name: sources['bank'].get(name, 0) + sources['inventory'].get(name, 0)
@@ -14699,7 +14777,8 @@ class App(tk.Tk):
         if not w:
             return
         cdata = self.bank_characters.get(char_name, {'sources': {'bank': {}, 'inventory': {}}, 'order': []})
-        rows, extra_count = self._bank_saved_display_rows(cdata['order'], cdata['sources'])
+        shared_items = None if cdata.get('is_locker') else cdata.get('shared_items', set())
+        rows, extra_count = self._bank_saved_display_rows(cdata['order'], cdata['sources'], shared_items)
         w['tv'].delete(*w['tv'].get_children())
         for row in rows:
             w['tv'].insert('', 'end', values=row)
