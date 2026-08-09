@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.4.4"
+VERSION = "6.4.5"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2429,6 +2429,7 @@ class App(tk.Tk):
                         'exclude_from_others': bool(cdata.get('exclude_from_others', False)),
                         'group_id': cdata.get('group_id'),
                         'shared_items': sorted(cdata.get('shared_items', set())),
+                        'trade_items': sorted(cdata.get('trade_items', set())),
                     }
                     for char, cdata in getattr(self, 'bank_characters', {}).items()
                 },
@@ -7400,6 +7401,14 @@ class App(tk.Tk):
         self.build_manual_subtab = ttk.Frame(self.build_sub_notebook, padding=8)
         self.build_sub_notebook.add(self.build_manual_subtab, text='Manual')
 
+        # Trade - a flat, read-only chart of every item any character or
+        # Locker has flagged Trade=Yes (see the Trade column on their own
+        # tabs, and _toggle_trade_item) - not a build tool either, purely
+        # a place to see everything currently up for trade in one list
+        # without hunting through every character/Locker tab separately.
+        self.build_trade_subtab = ttk.Frame(self.build_sub_notebook, padding=8)
+        self.build_sub_notebook.add(self.build_trade_subtab, text='Trade')
+
         # Armor type constraints - built now (into the Armor Constraints
         # sub-tab above) even though the rest of the Search sub-tab's
         # widgets are constructed further below; order of construction
@@ -8705,6 +8714,12 @@ class App(tk.Tk):
                 # overflow storage. Meaningless for a Locker (already
                 # folds in everything). See _compute_bank_character_pool.
                 'shared_items': set(_cdata.get('shared_items', [])),
+                # Per-item "available to trade" flag (see the "Trade"
+                # column, shown on every character AND Locker tab) - pure
+                # bookkeeping, feeds only the Trade tab's own chart (see
+                # _refresh_trade_tab); doesn't affect Bank Build's search
+                # pooling at all, unlike shared_items above.
+                'trade_items': set(_cdata.get('trade_items', [])),
             }
         # Populated per character name by _create_bank_character_tab - widget
         # refs (treeview, checkboxes/vars, status labels) needed to read from
@@ -9517,6 +9532,43 @@ class App(tk.Tk):
             text="🎲 Generate multiple build options", variable=self.generate_multi_builds_var)
         self.generate_multi_builds_checkbox.pack(side='left', padx=(12,4))
 
+        # ── TRADE TAB ──
+        # Flat, read-only chart of every item any character or Locker has
+        # flagged Trade = Yes on their own tab (see the Trade column,
+        # _toggle_trade_item) - just a consolidated place to see
+        # everything currently up for trade, not a build tool.
+        trade_tab = self.build_trade_subtab
+        ttk.Label(trade_tab, text="Trade", font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0,10))
+        ttk.Label(trade_tab, text="Every item any character or Locker has flagged Trade = Yes on their "
+                 "own tab - check/uncheck it there to add or remove it here.",
+                 foreground='#666', wraplength=760, justify='left').pack(anchor='w', pady=(0,8))
+
+        trade_tree_frame = ttk.Frame(trade_tab)
+        trade_tree_frame.pack(fill='both', expand=True)
+        trade_cols = ('Character', 'Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
+        trade_col_widths = {'Character': 100, 'Slot': 55, 'Item': 220, 'Type': 110,
+                            'Spell': 110, 'Sigil': 60, 'Level': 45, 'Area': 140}
+        self.trade_tv = ttk.Treeview(trade_tree_frame, columns=trade_cols, show='headings', height=20)
+        for col in trade_cols:
+            heading_anchor = 'w' if col in ('Character', 'Item') else 'center'
+            self.trade_tv.heading(col, text=col, anchor=heading_anchor,
+                                  command=lambda c=col: _sort_treeview_column(self.trade_tv, c, False))
+            self.trade_tv.column(col, width=trade_col_widths[col], stretch=False,
+                                 anchor=('w' if col in ('Character', 'Item') else 'center'))
+        trade_vsb = ttk.Scrollbar(trade_tree_frame, orient='vertical', command=self.trade_tv.yview)
+        trade_hsb = ttk.Scrollbar(trade_tree_frame, orient='horizontal', command=self.trade_tv.xview)
+        self.trade_tv.configure(yscrollcommand=trade_vsb.set, xscrollcommand=trade_hsb.set)
+        self.trade_tv.grid(row=0, column=0, sticky='nsew')
+        trade_vsb.grid(row=0, column=1, sticky='ns')
+        trade_hsb.grid(row=1, column=0, sticky='ew')
+        trade_tree_frame.rowconfigure(0, weight=1)
+        trade_tree_frame.columnconfigure(0, weight=1)
+
+        self.trade_status = ttk.Label(trade_tab, text="", foreground='#666')
+        self.trade_status.pack(anchor='w', pady=(6,0))
+
+        self._refresh_trade_tab()
+
         # Every sub-tab is fully built by now - set the notebook's initial
         # height to match whichever tab is selected first (Basic
         # Constraints), same as _on_build_subtab_changed does on every
@@ -9537,11 +9589,12 @@ class App(tk.Tk):
         "never shrink below natural, but claim any extra room" rule
         _build_scrollable_root's own <Configure> handler uses.
 
-        Also hides Find Optimal Build/Show All Matches while Bank Build or
-        Manual is selected - Bank Build has its own Find Best Bank Build per
-        character tab, and Manual is a live spell/tier lookup with no
-        "build" concept of its own. "Generate multiple build options" stays
-        visible either way since it's not specific to either of those."""
+        Also hides Find Optimal Build/Show All Matches while Bank Build,
+        Manual, or Trade is selected - Bank Build has its own Find Best
+        Bank Build per character tab, Manual is a live spell/tier lookup,
+        and Trade is a plain read-only chart - none of the three have a
+        "build" concept of their own. "Generate multiple build options"
+        stays visible either way since it's not specific to any of them."""
         try:
             selected = self.build_sub_notebook.nametowidget(self.build_sub_notebook.select())
         except (tk.TclError, KeyError):
@@ -9550,7 +9603,7 @@ class App(tk.Tk):
         available = max(0, self.tab_build.winfo_height() - 24)
         self.build_sub_notebook.configure(height=max(selected.winfo_reqheight(), available))
 
-        if selected in (self.build_bank_subtab, self.build_manual_subtab):
+        if selected in (self.build_bank_subtab, self.build_manual_subtab, self.build_trade_subtab):
             self.shared_search_buttons_frame.pack_forget()
         else:
             self.shared_search_buttons_frame.pack(side='left', before=self.generate_multi_builds_checkbox)
@@ -13090,7 +13143,7 @@ class App(tk.Tk):
         tree_frame.pack(fill='both', expand=True)
         saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
         saved_col_widths = {'Slot': 55, 'Drop': 60, 'Item': 220, 'Type': 60, 'Spell': 100, 'Sigil': 60,
-                           'Level': 45, 'Area': 140, 'Tag': 110, 'Share': 55}
+                           'Level': 45, 'Area': 140, 'Tag': 110, 'Share': 55, 'Trade': 55}
         saved_col_headings = {'Tag': 'Gear Tag'}
         # A Locker already folds its ENTIRE list into every other
         # character's search unconditionally (is_locker) - the Share
@@ -13099,6 +13152,11 @@ class App(tk.Tk):
         is_locker = cdata.get('is_locker', False)
         if not is_locker:
             saved_cols = saved_cols + ('Share',)
+        # Trade, unlike Share, is shown on BOTH characters and Lockers -
+        # purely a "flag this as available to trade" bookkeeping marker
+        # (see _toggle_trade_item/the Trade tab), not a search-pooling
+        # mechanic, so there's no reason to withhold it from either kind.
+        saved_cols = saved_cols + ('Trade',)
         tv = ttk.Treeview(tree_frame, columns=saved_cols, show='headings', height=12)
         for col in saved_cols:
             heading_anchor = 'w' if col == 'Item' else 'center'
@@ -14495,15 +14553,18 @@ class App(tk.Tk):
 
     def _on_saved_tv_click(self, event):
         """Click handler shared by every Saved Items treeview (Main and
-        every character) - opens the Gear Tag editor (see
-        _open_gear_tag_editor) for a click landing on the Tag column, or
+        every character/Locker) - opens the Gear Tag editor (see
+        _open_gear_tag_editor) for a click landing on the Tag column,
         toggles that row's Share flag (see _toggle_shared_item) for a
         click on the Share column (non-Locker character tabs only - Main
         and every Locker never have that column at all, so this branch
-        simply never matches for them); everything else (other columns,
-        the heading row, empty space below the last row) falls through to
-        the Treeview's own normal handling (selection, the column-sort
-        heading command, etc.)."""
+        simply never matches for them), or toggles its Trade flag (see
+        _toggle_trade_item) for a click on the Trade column (every
+        character AND Locker tab has this one - Main is still the only
+        exception); everything else (other columns, the heading row,
+        empty space below the last row) falls through to the Treeview's
+        own normal handling (selection, the column-sort heading command,
+        etc.)."""
         tv = event.widget
         if tv.identify_region(event.x, event.y) != 'cell':
             return
@@ -14523,6 +14584,8 @@ class App(tk.Tk):
             self._open_gear_tag_editor(tv, row_iid, col_id)
         elif col_name == 'Share':
             self._toggle_shared_item(tv, row_iid)
+        elif col_name == 'Trade':
+            self._toggle_trade_item(tv, row_iid)
 
     def _open_gear_tag_editor(self, tv, row_iid, col_id):
         """Floating, temporary Combobox placed exactly over one Tag cell -
@@ -14598,6 +14661,59 @@ class App(tk.Tk):
         self._save_config()
         self._refresh_bank_character_tab(char_name)
 
+    def _toggle_trade_item(self, tv, row_iid):
+        """Flips one item's Trade flag ("No"/"Yes", defaulting to "No")
+        for the ONE character or Locker whose tab this treeview is (see
+        tv.bank_char_name) - shown on every character AND Locker tab,
+        unlike Share (non-Locker only), since Trade is purely a "this is
+        available to trade" bookkeeping marker with no effect on Bank
+        Build's own search pooling at all - it only feeds the Trade
+        tab's own chart (see _refresh_trade_tab), which this also
+        refreshes so it never goes stale."""
+        char_name = getattr(tv, 'bank_char_name', None)
+        if not char_name:
+            return
+        display_name = tv.set(row_iid, 'Item')
+        item_name = display_name.removeprefix('::extra:: ')
+        cdata = self.bank_characters.setdefault(char_name, {})
+        trade = cdata.setdefault('trade_items', set())
+        if item_name in trade:
+            trade.discard(item_name)
+        else:
+            trade.add(item_name)
+        self._save_config()
+        self._refresh_bank_character_tab(char_name)
+        self._refresh_trade_tab()
+
+    def _refresh_trade_tab(self):
+        """Rebuild the Trade tab's flat chart from every character/
+        Locker's own cdata['trade_items'] (see the Trade column,
+        _toggle_trade_item) - one row per (character, item), enriched
+        from master_data the same way _bank_saved_display_rows is.
+        Guarded with hasattr since this can run (via _toggle_trade_item)
+        before self.trade_tv exists yet isn't actually possible in
+        practice, but costs nothing to guard against regardless."""
+        if not hasattr(self, 'trade_tv'):
+            return
+        self.trade_tv.delete(*self.trade_tv.get_children())
+        master_by_name = {}
+        for item in self.master_data:
+            master_by_name.setdefault((item.get('Item') or '').strip().lower(), item)
+
+        rows = []
+        for char_name, cdata in self.bank_characters.items():
+            for name in cdata.get('trade_items', set()):
+                m = master_by_name.get(name, {})
+                rows.append((
+                    char_name, (m.get('Slot') or '').title(), name,
+                    m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''),
+                    m.get('Level', ''), m.get('Area', ''),
+                ))
+        rows.sort(key=lambda r: (r[0].lower(), r[2].lower()))
+        for row in rows:
+            self.trade_tv.insert('', 'end', values=row)
+        self.trade_status.config(text=f"{len(rows)} item(s) up for trade.")
+
     def _set_gear_tag(self, item_name, new_val):
         """Write one item's Gear Tag - global per item name, so this
         redraws every Saved Items treeview (Main and every character), not
@@ -14626,22 +14742,26 @@ class App(tk.Tk):
                 return 'Good Gear' if _is_event_realm(item.get('Realm')) else 'Blank'
         return 'Blank'
 
-    def _bank_saved_display_rows(self, order, sources, shared_items=None):
+    def _bank_saved_display_rows(self, order, sources, shared_items=None, trade_items=None):
         """Row tuples (Slot, Drop, Item, Type, Spell, Sigil, Level, Area,
-        Tag[, Share]) for a Saved Items treeview - shared by the Main
-        aggregate tab and every per-character tab. Each unique name gets
-        one row (enriched from master_data when a name match is found);
-        any copies beyond the first are appended at the bottom, prefixed
-        "::extra::". Drop reads "No Drop" for a Kaid-realm item (Kaid gear
-        doesn't drop when you die), "Drop" for everything else. Tag is
-        whatever's in self.bank_gear_tags for that name, defaulting to
-        "Good Gear" for an Event-realm item (see _is_event_realm) or
-        "Blank" otherwise - see _open_gear_tag_editor/_default_gear_tag_
-        for_item. shared_items is None for Main/a Locker (no Share column
-        at all - see _create_bank_character_tab); for a normal character
-        it's that character's own cdata['shared_items'] set, and a
-        trailing Share cell ('☑'/'☐') gets appended per row - see
-        _toggle_shared_item. Returns (rows, extra_count)."""
+        Tag[, Share][, Trade]) for a Saved Items treeview - shared by the
+        Main aggregate tab and every per-character/Locker tab. Each
+        unique name gets one row (enriched from master_data when a name
+        match is found); any copies beyond the first are appended at the
+        bottom, prefixed "::extra::". Drop reads "No Drop" for a Kaid-
+        realm item (Kaid gear doesn't drop when you die), "Drop" for
+        everything else. Tag is whatever's in self.bank_gear_tags for
+        that name, defaulting to "Good Gear" for an Event-realm item (see
+        _is_event_realm) or "Blank" otherwise - see _open_gear_tag_editor/
+        _default_gear_tag_for_item. shared_items is None for Main/a
+        Locker (no Share column at all - see _create_bank_character_tab);
+        for a normal character it's that character's own cdata
+        ['shared_items'] set, and a trailing Share cell ('☑'/'☐') gets
+        appended per row - see _toggle_shared_item. trade_items is None
+        for Main only (every character AND Locker gets a Trade column);
+        otherwise it's that character/Locker's own cdata['trade_items']
+        set, appending a trailing "Yes"/"No" cell - see
+        _toggle_trade_item. Returns (rows, extra_count)."""
         master_by_name = {}
         for item in self.master_data:
             master_by_name.setdefault((item.get('Item') or '').strip().lower(), item)
@@ -14658,6 +14778,8 @@ class App(tk.Tk):
             )
             if shared_items is not None:
                 row = row + ('☑' if name in shared_items else '☐',)
+            if trade_items is not None:
+                row = row + ('Yes' if name in trade_items else 'No',)
             return row
 
         total_counts = {
@@ -14941,7 +15063,8 @@ class App(tk.Tk):
             return
         cdata = self.bank_characters.get(char_name, {'sources': {'bank': {}, 'inventory': {}}, 'order': []})
         shared_items = None if cdata.get('is_locker') else cdata.get('shared_items', set())
-        rows, extra_count = self._bank_saved_display_rows(cdata['order'], cdata['sources'], shared_items)
+        trade_items = cdata.get('trade_items', set())
+        rows, extra_count = self._bank_saved_display_rows(cdata['order'], cdata['sources'], shared_items, trade_items)
         w['tv'].delete(*w['tv'].get_children())
         for row in rows:
             w['tv'].insert('', 'end', values=row)

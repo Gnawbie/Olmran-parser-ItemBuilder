@@ -138,7 +138,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.4.4 (Current)
+### v6.4.5 (Current)
+- **Bank Build**: added a **Trade** column (Character Items and Lockers alike) - a checkbox-style "No"/"Yes" flag, defaulting to No, marking one item as available to trade. Purely bookkeeping - it doesn't affect Bank Build's own search pooling at all, unlike the Share column
+- **Bank Build**: added a new **Trade** tab (next to Manual) - a flat, read-only chart of every item any character or Locker has flagged Trade = Yes, with a Character column showing who owns each one, so there's one place to see everything currently up for trade instead of checking every tab separately
+
+### v6.4.4
 - **Area Items**: added a navigation tree on the left, grouping every Area into its base zone with a child per sub-zone (e.g. "City of Zhak-Tor" → "Temple"/"Tower") - click a sub-zone to browse just that part, or the base zone itself if it's also its own standalone Area. Stays in sync with the search box either direction - picking one updates the other
 - **Area Items**: added Kaid/Chaos/Good/Evil/GB (Glory Bea) checkboxes next to the search box, narrowing which areas the navigation tree shows (an area appears if at least one of its own items matches a checked realm) - the results table itself is unaffected, still scoped to whichever one area is picked
 
