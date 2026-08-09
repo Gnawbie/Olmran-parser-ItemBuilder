@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.4.3"
+VERSION = "6.4.4"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -9874,6 +9874,26 @@ class App(tk.Tk):
         self.area_items_entry.bind('<FocusIn>', self._update_area_suggestions)
         self.area_items_entry.bind('<Button-1>', self._update_area_suggestions)
 
+        # Realm filter for the left-side navigation tree ONLY - narrows
+        # which areas appear there (an area shows if at least one of its
+        # own items' Realm matches a checked box) to just Kaid/Chaos/
+        # Good/Evil/Glory Bea, the realms actually worth filtering here.
+        # The results table on the right is unaffected by these - it's
+        # already scoped to whichever one area is picked, same as always.
+        # None checked shows every area, same "no restriction" default as
+        # Only Found In elsewhere. Matching is substring-containment on
+        # the item's own Realm string, same convention Only Found In uses
+        # (e.g. "Kaid" matches "Kaid Red"/"Kaid White"/etc.).
+        self.area_items_realm_filters = {
+            label: tk.BooleanVar(value=False) for label in ('Kaid', 'Chaos', 'Good', 'Evil', 'Glory Bea')
+        }
+        realm_filter_row = ttk.Frame(picker_frame)
+        realm_filter_row.pack(side='left', padx=(8,0))
+        realm_checkbox_text = {'Glory Bea': 'GB (Glory Bea)'}
+        for label, var in self.area_items_realm_filters.items():
+            ttk.Checkbutton(realm_filter_row, text=realm_checkbox_text.get(label, label), variable=var,
+                           command=self._refresh_area_nav_tree).pack(side='left', padx=(0,6))
+
         self.area_items_status = ttk.Label(picker_frame, text="", foreground='#666')
         self.area_items_status.pack(side='left', padx=(8,0))
 
@@ -9885,8 +9905,37 @@ class App(tk.Tk):
         self._area_suggest_popup = None
         self._area_suggest_listbox = None
 
-        tree_frame = ttk.Frame(t)
-        tree_frame.pack(fill='both', expand=True)
+        split_frame = ttk.Frame(t)
+        split_frame.pack(fill='both', expand=True)
+
+        # Left-side navigation tree - groups every Area string that
+        # follows the "<Base Area> - <Sub-zone>" convention (the only
+        # real precedent for this is AREA_TO_REALM, e.g. "Forests of
+        # Shalifi's Demise - Mine") under one parent node per base name,
+        # with a child per sub-zone. See _refresh_area_nav_tree.
+        nav_frame = ttk.Frame(split_frame, width=220)
+        nav_frame.pack(side='left', fill='y', padx=(0,8))
+        nav_frame.pack_propagate(False)
+        ttk.Label(nav_frame, text="Areas", font=('Arial', 9, 'bold')).pack(anchor='w')
+        nav_tree_frame = ttk.Frame(nav_frame)
+        nav_tree_frame.pack(fill='both', expand=True, pady=(2,0))
+        self.area_nav_tv = ttk.Treeview(nav_tree_frame, show='tree', height=20)
+        nav_vsb = ttk.Scrollbar(nav_tree_frame, orient='vertical', command=self.area_nav_tv.yview)
+        self.area_nav_tv.configure(yscrollcommand=nav_vsb.set)
+        self.area_nav_tv.pack(side='left', fill='both', expand=True)
+        nav_vsb.pack(side='right', fill='y')
+        self.area_nav_tv.bind('<<TreeviewSelect>>', self._on_area_nav_select)
+        # Tree iids aren't Area strings themselves (a base name and its
+        # own sub-zone could otherwise collide with plain text matching),
+        # so both directions are tracked explicitly - see
+        # _refresh_area_nav_tree/_on_area_nav_select and the reverse
+        # lookup in _refresh_area_items_results (keeps the tree's
+        # selection in sync with the entry/autocomplete picking an area).
+        self._area_nav_iid_to_area = {}
+        self._area_nav_area_to_iid = {}
+
+        tree_frame = ttk.Frame(split_frame)
+        tree_frame.pack(side='left', fill='both', expand=True)
 
         cols = ('Realm', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Sigil', 'Level')
         col_widths = {'Realm': 70, 'Mob': 160, 'Item': 220, 'Slot': 55, 'Type': 110,
@@ -9965,10 +10014,115 @@ class App(tk.Tk):
         database finishes loading (including the silent startup auto-load)."""
         areas = sorted({(item.get('Area') or '').strip() for item in self.master_data} - {''})
         self._all_area_names = areas
+        self._refresh_area_nav_tree()
         if self.area_items_var.get() not in areas:
             self.area_items_var.set('')
             self.area_items_tv.delete(*self.area_items_tv.get_children())
             self.area_items_status.config(text='')
+
+    def _split_area_subzone(self, area):
+        """Splits an Area string into (base, sub) at its own sub-zone
+        delimiter, or (area, None) if it has none. The real community
+        database uses "<Base Area>: <Sub-zone>" (e.g. "City of Zhak-Tor:
+        Temple", "City of Zhak-Tor: Tower") - checked first since that's
+        the confirmed, actually-used convention; " - " is checked as a
+        fallback since it's the delimiter AREA_TO_REALM's own room-name
+        matching uses instead (e.g. "Forests of Shalifi's Demise -
+        Mine") - a different data source (parsed log room names, not
+        this master-database Area column) that might still show up here
+        if the two ever get entered inconsistently. Splits at the LAST
+        occurrence, so a base name that itself legitimately contains the
+        delimiter (unlikely, but cheap to guard) still splits sensibly."""
+        for delim in (': ', ' - '):
+            if delim in area:
+                return area.rsplit(delim, 1)
+        return area, None
+
+    def _refresh_area_nav_tree(self):
+        """Rebuild the Area Items tab's left-side navigation tree from
+        self._all_area_names - every Area string with a sub-zone
+        delimiter (see _split_area_subzone) groups under one parent node
+        per base name, with a child per sub-zone; anything with no
+        delimiter of its own becomes a plain, childless top-level node. A
+        base name that's ALSO its own standalone Area value (e.g. both
+        "City of Zhak-Tor" and "City of Zhak-Tor: Temple" exist) is both
+        a parent AND directly selectable in its own right, same as any
+        leaf; a parent that exists purely to group children, with no
+        bare value of its own, does nothing when clicked directly (see
+        _on_area_nav_select) since there's no single Area string it
+        could mean - only its children are selectable.
+
+        Also applies the Kaid/Chaos/Good/Evil/Glory Bea checkboxes (see
+        self.area_items_realm_filters) - an area only appears if at
+        least one of its own items' Realm matches a checked box (none
+        checked shows every area, unrestricted). This only affects which
+        areas show up here; the results table on the right stays scoped
+        to whichever single area is picked, unaffected by these."""
+        tv = self.area_nav_tv
+        tv.delete(*tv.get_children())
+        self._area_nav_iid_to_area = {}
+        self._area_nav_area_to_iid = {}
+
+        checked_realms = [label for label, var in self.area_items_realm_filters.items() if var.get()]
+        if checked_realms:
+            qualifying_areas = set()
+            for item in self.master_data:
+                area = (item.get('Area') or '').strip()
+                realm = (item.get('Realm') or '').strip().lower()
+                if area and any(label.lower() in realm for label in checked_realms):
+                    qualifying_areas.add(area)
+            area_names = [a for a in self._all_area_names if a in qualifying_areas]
+        else:
+            area_names = self._all_area_names
+
+        bases = {}
+        for area in area_names:
+            base, sub = self._split_area_subzone(area)
+            entry = bases.setdefault(base, {'own': None, 'subs': []})
+            if sub is None:
+                entry['own'] = area
+            else:
+                entry['subs'].append((sub, area))
+
+        for base in sorted(bases):
+            info = bases[base]
+            parent_iid = tv.insert('', 'end', text=base)
+            if info['own'] is not None:
+                self._area_nav_iid_to_area[parent_iid] = info['own']
+                self._area_nav_area_to_iid[info['own']] = parent_iid
+            for sub, full_area in sorted(info['subs']):
+                child_iid = tv.insert(parent_iid, 'end', text=sub)
+                self._area_nav_iid_to_area[child_iid] = full_area
+                self._area_nav_area_to_iid[full_area] = child_iid
+
+    def _on_area_nav_select(self, event):
+        """Clicking a navigation tree node looks up that exact Area
+        string, same as picking it from the autocomplete entry - see
+        _refresh_area_nav_tree for how nodes map to real Area values.
+        Also expands the clicked node if it has children, so browsing
+        into a base area's sub-zones doesn't need a separate click on
+        its twisty first.
+
+        _refresh_area_items_results re-selects this same node to keep
+        the tree in sync when an area is picked some other way (typing/
+        autocomplete) - which would otherwise re-trigger this handler
+        and loop the two methods back and forth forever. Bailing out
+        once the area already matches what's showing breaks that loop
+        (the second, re-entrant firing always finds a no-op here) without
+        needing a separate reentrancy flag."""
+        tv = self.area_nav_tv
+        selection = tv.selection()
+        if not selection:
+            return
+        iid = selection[0]
+        if tv.get_children(iid):
+            tv.item(iid, open=True)
+        area = self._area_nav_iid_to_area.get(iid)
+        if not area or area == self.area_items_var.get().strip():
+            return
+        self.area_items_var.set(area)
+        self._hide_area_suggestions()
+        self._refresh_area_items_results()
 
     def _on_area_items_type(self, event):
         """Type-ahead: narrow the suggestion popup to Areas whose name
@@ -10083,12 +10237,21 @@ class App(tk.Tk):
 
     def _refresh_area_items_results(self):
         """Fill the Area Items table with every master-database item whose
-        Area matches the one currently picked in the dropdown."""
+        Area matches the one currently picked in the dropdown. Also syncs
+        the left-side navigation tree's own selection to match, so typing
+        an area directly (or picking one from the autocomplete popup)
+        highlights the same node clicking it in the tree would have -
+        see _area_nav_area_to_iid/_refresh_area_nav_tree."""
         self.area_items_tv.delete(*self.area_items_tv.get_children())
         area = self.area_items_var.get().strip()
         if not area:
             self.area_items_status.config(text='')
             return
+
+        nav_iid = self._area_nav_area_to_iid.get(area)
+        if nav_iid:
+            self.area_nav_tv.selection_set(nav_iid)
+            self.area_nav_tv.see(nav_iid)
 
         matches = [item for item in self.master_data if (item.get('Area') or '').strip() == area]
         # Armor slots first (grouped together, not just one), then jewels,

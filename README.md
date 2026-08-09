@@ -138,7 +138,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.4.3 (Current)
+### v6.4.4 (Current)
+- **Area Items**: added a navigation tree on the left, grouping every Area into its base zone with a child per sub-zone (e.g. "City of Zhak-Tor" → "Temple"/"Tower") - click a sub-zone to browse just that part, or the base zone itself if it's also its own standalone Area. Stays in sync with the search box either direction - picking one updates the other
+- **Area Items**: added Kaid/Chaos/Good/Evil/GB (Glory Bea) checkboxes next to the search box, narrowing which areas the navigation tree shows (an area appears if at least one of its own items matches a checked realm) - the results table itself is unaffected, still scoped to whichever one area is picked
+
+### v6.4.3
 - **Bank Build**: each non-Locker character's own Character Items tab has a new **Share** column (a checkbox, after Gear Tag) - checking it flags that one item as shareable, folding it into every other character's Bank Build search automatically, regardless of that character's own "Search all characters" setting. This is the per-item equivalent of what a whole Locker already does for its entire list - useful for sharing just a few spare items without turning the character itself into overflow storage. Persists across restarts; not shown on Locker tabs, since a Locker already shares everything
 
 ### v6.4.2
