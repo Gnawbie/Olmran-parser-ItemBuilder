@@ -138,7 +138,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.5.0 (Current)
+### v6.5.1 (Current)
+- **Bank Build**: added a leading **Bank** icon column (📦, or a bold "L" for anything also available via a Locker) to Main, every character tab, every Locker tab, and the Trade tab - same convention already used on Results/Manual.
+- **Bank Build**: Share and Trade flags now persist independently of each character's item list - Clear Saved List, Delete Character, or re-importing after a data wipe no longer loses them, so a big list of items never needs to be re-flagged from scratch.
+
+### v6.5.0
 - **Bank Build**: added an **Enchant** column (Character Items, Lockers, and Main alike, between Drop and Item) - shows whatever quality/material prefix (e.g. "Bright", "Shining Mithril") was stripped off the item's name when it was imported, so that text isn't lost even though the cleaned name remains the actual matching key everywhere else (Gear Tag, Share, Trade, and every search/build pool)
 - **Build → Trade**: added a clickable "Olmran Trading Post" link next to the Trade heading, opening https://www.olmrantradingpost.com/ in your browser
 - **Parse → PvP**: added a Kills/Deaths count (e.g. "10/4") next to the Search button for Your Deaths

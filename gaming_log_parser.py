@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.5.0"
+VERSION = "6.5.1"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2407,6 +2407,15 @@ class App(tk.Tk):
                     # Saved Items' Gear Tag column - one tag per item name,
                     # shared across the Main tab and every character.
                     self._persisted_bank_gear_tags = config.get('bank_gear_tags', {})
+                    # Share/Trade flags - kept separately from
+                    # self.bank_characters (character_name -> set of item
+                    # names) rather than inside each character's own cdata,
+                    # so Clear Saved List/Delete Character/a fresh re-Import
+                    # under the same name never loses them - the whole point
+                    # being nobody has to re-flag a big list of items after
+                    # any of that. See _toggle_shared_item/_toggle_trade_item.
+                    self._persisted_bank_shared_items = config.get('bank_shared_items', {})
+                    self._persisted_bank_trade_items = config.get('bank_trade_items', {})
                     # Named, full snapshots of every Basic/Armor/Weapon
                     # Constraints selection (Basic Constraints tab's "Save
                     # Constraints" button) - real app, persists for every
@@ -2475,6 +2484,8 @@ class App(tk.Tk):
                 self._persisted_bank_saved_order = []
                 self._persisted_bank_characters = {}
                 self._persisted_bank_gear_tags = {}
+                self._persisted_bank_shared_items = {}
+                self._persisted_bank_trade_items = {}
                 self._persisted_constraint_sets = []
                 self._persisted_test_basic_constraints = {}
                 self._persisted_xp_reports = []
@@ -2497,6 +2508,8 @@ class App(tk.Tk):
             self._persisted_bank_saved_order = []
             self._persisted_bank_characters = {}
             self._persisted_bank_gear_tags = {}
+            self._persisted_bank_shared_items = {}
+            self._persisted_bank_trade_items = {}
             self._persisted_constraint_sets = []
             self._persisted_test_basic_constraints = {}
             self._persisted_xp_reports = []
@@ -2534,13 +2547,21 @@ class App(tk.Tk):
                         'is_locker': bool(cdata.get('is_locker', False)),
                         'exclude_from_others': bool(cdata.get('exclude_from_others', False)),
                         'group_id': cdata.get('group_id'),
-                        'shared_items': sorted(cdata.get('shared_items', set())),
-                        'trade_items': sorted(cdata.get('trade_items', set())),
                         'enchants': dict(cdata.get('enchants', {})),
                     }
                     for char, cdata in getattr(self, 'bank_characters', {}).items()
                 },
                 'bank_gear_tags': dict(getattr(self, 'bank_gear_tags', {})),
+                # Kept by character NAME rather than inside bank_characters'
+                # own per-character dict, specifically so Clear Saved List/
+                # Delete Character/a fresh re-Import never loses them - see
+                # _toggle_shared_item/_toggle_trade_item's docstrings.
+                'bank_shared_items': {
+                    char: sorted(names) for char, names in getattr(self, 'bank_shared_items_by_char', {}).items()
+                },
+                'bank_trade_items': {
+                    char: sorted(names) for char, names in getattr(self, 'bank_trade_items_by_char', {}).items()
+                },
                 'locker_groups': [
                     {'id': g['id'], 'name': g['name']}
                     for g in getattr(self, 'bank_locker_groups', [])
@@ -8957,20 +8978,6 @@ class App(tk.Tk):
                 # character - _relocate_bank_character_tab_if_needed
                 # clears it if is_locker ever gets unchecked.
                 'group_id': _cdata.get('group_id'),
-                # Per-item opt-in (see the "Share" column, non-Locker
-                # character tabs only) - unlike is_locker (folds this
-                # character's WHOLE list into everyone else's search),
-                # this lets a normal character share just specific items
-                # one at a time, without turning the whole character into
-                # overflow storage. Meaningless for a Locker (already
-                # folds in everything). See _compute_bank_character_pool.
-                'shared_items': set(_cdata.get('shared_items', [])),
-                # Per-item "available to trade" flag (see the "Trade"
-                # column, shown on every character AND Locker tab) - pure
-                # bookkeeping, feeds only the Trade tab's own chart (see
-                # _refresh_trade_tab); doesn't affect Bank Build's search
-                # pooling at all, unlike shared_items above.
-                'trade_items': set(_cdata.get('trade_items', [])),
                 # Quality/material prefix stripped off each name at Import
                 # time (see the Enchant column, LootParser.extract_
                 # enchant_prefix) - {name: prefix, or ''}. Purely display;
@@ -8997,6 +9004,22 @@ class App(tk.Tk):
         # checkboxes filter down to nothing for it, same as not having used
         # the Gear Tag feature at all.
         self.bank_gear_tags = dict(getattr(self, '_persisted_bank_gear_tags', {}))
+
+        # Share/Trade flags, keyed by character name -> set of item names -
+        # kept separately from self.bank_characters itself (rather than
+        # inside each character's own cdata) specifically so Clear Saved
+        # List, Delete Character, or a fresh re-Import under the same name
+        # never loses them - same durability Gear Tag already has, just
+        # scoped per-character instead of globally per item name (since
+        # Share/Trade really are one character's own choice about their own
+        # copy, not a property of the item itself). See
+        # _toggle_shared_item/_toggle_trade_item.
+        self.bank_shared_items_by_char = {
+            char: set(names) for char, names in getattr(self, '_persisted_bank_shared_items', {}).items()
+        }
+        self.bank_trade_items_by_char = {
+            char: set(names) for char, names in getattr(self, '_persisted_bank_trade_items', {}).items()
+        }
 
         # Bank Build - two inner tabs: "Import" parses a pasted bank/
         # inventory listing and saves it to a named character's own Saved
@@ -9086,10 +9109,10 @@ class App(tk.Tk):
         bank_saved_frame = ttk.Frame(bank_saved_main_tab)
         bank_saved_frame.pack(fill='both', expand=True)
 
-        saved_cols = ('Slot', 'Drop', 'Enchant', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
-        saved_col_widths = {'Slot': 55, 'Drop': 60, 'Enchant': 90, 'Item': 220, 'Type': 60, 'Spell': 100,
+        saved_cols = ('Bank', 'Slot', 'Drop', 'Enchant', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
+        saved_col_widths = {'Bank': 28, 'Slot': 55, 'Drop': 60, 'Enchant': 90, 'Item': 220, 'Type': 60, 'Spell': 100,
                            'Sigil': 60, 'Level': 45, 'Area': 140, 'Tag': 110}
-        saved_col_headings = {'Tag': 'Gear Tag'}
+        saved_col_headings = {'Tag': 'Gear Tag', 'Bank': '📦'}
         self.bank_saved_tv = ttk.Treeview(bank_saved_frame, columns=saved_cols, show='headings', height=14)
         for col in saved_cols:
             heading_anchor = 'w' if col == 'Item' else 'center'
@@ -9817,13 +9840,14 @@ class App(tk.Tk):
 
         trade_tree_frame = ttk.Frame(trade_tab)
         trade_tree_frame.pack(fill='both', expand=True)
-        trade_cols = ('Character', 'Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
-        trade_col_widths = {'Character': 100, 'Slot': 55, 'Item': 220, 'Type': 110,
+        trade_cols = ('Bank', 'Character', 'Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
+        trade_col_widths = {'Bank': 28, 'Character': 100, 'Slot': 55, 'Item': 220, 'Type': 110,
                             'Spell': 110, 'Sigil': 60, 'Level': 45, 'Area': 140}
         self.trade_tv = ttk.Treeview(trade_tree_frame, columns=trade_cols, show='headings', height=20)
         for col in trade_cols:
             heading_anchor = 'w' if col in ('Character', 'Item') else 'center'
-            self.trade_tv.heading(col, text=col, anchor=heading_anchor,
+            heading_text = '📦' if col == 'Bank' else col
+            self.trade_tv.heading(col, text=heading_text, anchor=heading_anchor,
                                   command=lambda c=col: _sort_treeview_column(self.trade_tv, c, False))
             self.trade_tv.column(col, width=trade_col_widths[col], stretch=False,
                                  anchor=('w' if col in ('Character', 'Item') else 'center'))
@@ -13339,6 +13363,22 @@ class App(tk.Tk):
                 return char_name
         return None
 
+    def _bank_vault_icon(self, name):
+        """📦, or a bold "L" (Unicode Mathematical Bold, same trick
+        _unicode_bold uses for the Class Items dropdown) if a Locker's own
+        list also contains this exact name - the leading Bank icon column
+        on Bank Build's own charts (Main, every character tab, every
+        Locker tab) and the Trade tab, mirroring the same convention
+        _bank_and_locker_cells already uses for search-result tables
+        (Results/Manual). Every row on these particular charts is already
+        a saved item by definition (that's the whole list), so unlike
+        _bank_and_locker_cells there's no plain "not saved at all" case to
+        handle here - the only real question is whether it's ALSO
+        available via a Locker, which folds into every other character's
+        Bank Build search automatically regardless of whose own tab is
+        showing it."""
+        return _unicode_bold('L') if self._locker_source_for_item({'Item': name}) else '📦'
+
     def _bank_and_locker_cells(self, item):
         """(bank_cell, locker_cell) pair for one Results-table row - a
         locker-sourced item shows a bold "L" (Unicode Mathematical Bold,
@@ -13410,10 +13450,10 @@ class App(tk.Tk):
 
         tree_frame = ttk.Frame(tab)
         tree_frame.pack(fill='both', expand=True)
-        saved_cols = ('Slot', 'Drop', 'Enchant', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
-        saved_col_widths = {'Slot': 55, 'Drop': 60, 'Enchant': 90, 'Item': 220, 'Type': 60, 'Spell': 100,
+        saved_cols = ('Bank', 'Slot', 'Drop', 'Enchant', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
+        saved_col_widths = {'Bank': 28, 'Slot': 55, 'Drop': 60, 'Enchant': 90, 'Item': 220, 'Type': 60, 'Spell': 100,
                            'Sigil': 60, 'Level': 45, 'Area': 140, 'Tag': 110, 'Share': 55, 'Trade': 55}
-        saved_col_headings = {'Tag': 'Gear Tag'}
+        saved_col_headings = {'Tag': 'Gear Tag', 'Bank': '📦'}
         # A Locker already folds its ENTIRE list into every other
         # character's search unconditionally (is_locker) - the Share
         # column is the equivalent opt-in for one item at a time on a
@@ -14487,7 +14527,8 @@ class App(tk.Tk):
         shared_names = set()
         for cname, cdata in self.bank_characters.items():
             if cname != char_name and not cdata.get('is_locker'):
-                shared_names.update(cdata.get('shared_items', set()) & set(cdata.get('order', [])))
+                shared_names.update(
+                    self.bank_shared_items_by_char.get(cname, set()) & set(cdata.get('order', [])))
 
         if w['search_all_var'].get():
             all_names = set()
@@ -14915,14 +14956,16 @@ class App(tk.Tk):
         picker widget is needed. Folds straight into
         _compute_bank_character_pool's union for every OTHER character's
         search the same way a whole Locker's gear already does, just
-        scoped to this one item instead of the character's entire list."""
+        scoped to this one item instead of the character's entire list.
+        Stored in self.bank_shared_items_by_char, NOT this character's own
+        cdata - so Clear Saved List/Delete Character/a fresh re-Import
+        under the same name never loses it (see __init__)."""
         char_name = getattr(tv, 'bank_char_name', None)
         if not char_name:
             return
         display_name = tv.set(row_iid, 'Item')
         item_name = display_name.removeprefix('::extra:: ')
-        cdata = self.bank_characters.setdefault(char_name, {})
-        shared = cdata.setdefault('shared_items', set())
+        shared = self.bank_shared_items_by_char.setdefault(char_name, set())
         if item_name in shared:
             shared.discard(item_name)
         else:
@@ -14938,14 +14981,16 @@ class App(tk.Tk):
         available to trade" bookkeeping marker with no effect on Bank
         Build's own search pooling at all - it only feeds the Trade
         tab's own chart (see _refresh_trade_tab), which this also
-        refreshes so it never goes stale."""
+        refreshes so it never goes stale. Stored in
+        self.bank_trade_items_by_char, NOT this character/Locker's own
+        cdata - so Clear Saved List/Delete Character/a fresh re-Import
+        under the same name never loses it (see __init__)."""
         char_name = getattr(tv, 'bank_char_name', None)
         if not char_name:
             return
         display_name = tv.set(row_iid, 'Item')
         item_name = display_name.removeprefix('::extra:: ')
-        cdata = self.bank_characters.setdefault(char_name, {})
-        trade = cdata.setdefault('trade_items', set())
+        trade = self.bank_trade_items_by_char.setdefault(char_name, set())
         if item_name in trade:
             trade.discard(item_name)
         else:
@@ -14955,13 +15000,21 @@ class App(tk.Tk):
         self._refresh_trade_tab()
 
     def _refresh_trade_tab(self):
-        """Rebuild the Trade tab's flat chart from every character/
-        Locker's own cdata['trade_items'] (see the Trade column,
+        """Rebuild the Trade tab's flat chart from every currently-
+        existing character/Locker's own entry in
+        self.bank_trade_items_by_char (see the Trade column,
         _toggle_trade_item) - one row per (character, item), enriched
-        from master_data the same way _bank_saved_display_rows is.
-        Guarded with hasattr since this can run (via _toggle_trade_item)
-        before self.trade_tv exists yet isn't actually possible in
-        practice, but costs nothing to guard against regardless."""
+        from master_data the same way _bank_saved_display_rows is. Leads
+        with the same Bank icon cell as Bank Build's own charts (see
+        _bank_vault_icon). Only characters/Lockers still in
+        self.bank_characters are shown - a deleted character's own Trade
+        flags stay in bank_trade_items_by_char in case that same name gets
+        re-created later (see _delete_bank_character), but there's no tab
+        left to attribute an orphaned row to in the meantime, so it's
+        simply not shown until then. Guarded with hasattr since this can
+        run (via _toggle_trade_item) before self.trade_tv exists yet isn't
+        actually possible in practice, but costs nothing to guard against
+        regardless."""
         if not hasattr(self, 'trade_tv'):
             return
         self.trade_tv.delete(*self.trade_tv.get_children())
@@ -14970,15 +15023,16 @@ class App(tk.Tk):
             master_by_name.setdefault((item.get('Item') or '').strip().lower(), item)
 
         rows = []
-        for char_name, cdata in self.bank_characters.items():
-            for name in cdata.get('trade_items', set()):
+        for char_name in self.bank_characters:
+            for name in self.bank_trade_items_by_char.get(char_name, set()):
                 m = master_by_name.get(name, {})
                 rows.append((
+                    self._bank_vault_icon(name),
                     char_name, (m.get('Slot') or '').title(), name,
                     m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''),
                     m.get('Level', ''), m.get('Area', ''),
                 ))
-        rows.sort(key=lambda r: (r[0].lower(), r[2].lower()))
+        rows.sort(key=lambda r: (r[1].lower(), r[3].lower()))
         for row in rows:
             self.trade_tv.insert('', 'end', values=row)
         self.trade_status.config(text=f"{len(rows)} item(s) up for trade.")
@@ -15012,12 +15066,14 @@ class App(tk.Tk):
         return 'Blank'
 
     def _bank_saved_display_rows(self, order, sources, shared_items=None, trade_items=None, enchants=None):
-        """Row tuples (Slot, Drop, Enchant, Item, Type, Spell, Sigil,
-        Level, Area, Tag[, Share][, Trade]) for a Saved Items treeview -
-        shared by the Main aggregate tab and every per-character/Locker
-        tab. Each unique name gets one row (enriched from master_data
-        when a name match is found); any copies beyond the first are
-        appended at the bottom, prefixed "::extra::". Drop reads "No
+        """Row tuples (Bank, Slot, Drop, Enchant, Item, Type, Spell,
+        Sigil, Level, Area, Tag[, Share][, Trade]) for a Saved Items
+        treeview - shared by the Main aggregate tab and every per-
+        character/Locker tab. Bank is the leading icon cell (see
+        _bank_vault_icon) - 📦, or a bold "L" if a Locker's own list also
+        has this same name. Each unique name gets one row (enriched from
+        master_data when a name match is found); any copies beyond the
+        first are appended at the bottom, prefixed "::extra::". Drop reads "No
         Drop" for a Kaid-realm item (Kaid gear doesn't drop when you
         die), "Drop" for everything else. Enchant is whatever quality/
         material prefix Import parsing stripped off that name (see
@@ -15029,12 +15085,13 @@ class App(tk.Tk):
         _is_event_realm) or "Blank" otherwise - see _open_gear_tag_editor/
         _default_gear_tag_for_item. shared_items is None for Main/a
         Locker (no Share column at all - see _create_bank_character_tab);
-        for a normal character it's that character's own cdata
-        ['shared_items'] set, and a trailing Share cell ('☑'/'☐') gets
-        appended per row - see _toggle_shared_item. trade_items is None
-        for Main only (every character AND Locker gets a Trade column);
-        otherwise it's that character/Locker's own cdata['trade_items']
-        set, appending a trailing "Yes"/"No" cell - see
+        for a normal character it's that character's own entry in
+        self.bank_shared_items_by_char, and a trailing Share cell
+        ('☑'/'☐') gets appended per row - see _toggle_shared_item.
+        trade_items is None for Main only (every character AND Locker
+        gets a Trade column); otherwise it's that character/Locker's own
+        entry in self.bank_trade_items_by_char, appending a trailing
+        "Yes"/"No" cell - see
         _toggle_trade_item. Returns (rows, extra_count)."""
         master_by_name = {}
         for item in self.master_data:
@@ -15046,6 +15103,7 @@ class App(tk.Tk):
             is_kaid = 'kaid' in (m.get('Realm') or '').strip().lower()
             default_tag = 'Good Gear' if _is_event_realm(m.get('Realm')) else 'Blank'
             row = (
+                self._bank_vault_icon(name),
                 (m.get('Slot') or '').title(), 'No Drop' if is_kaid else 'Drop',
                 (enchants or {}).get(name, ''), display_name,
                 m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''), m.get('Level', ''), m.get('Area', ''),
@@ -15338,13 +15396,15 @@ class App(tk.Tk):
 
     def _refresh_bank_character_tab(self, char_name):
         """Redraw one character's own Saved Items tab from
-        self.bank_characters[char_name]."""
+        self.bank_characters[char_name] - Share/Trade come from the
+        separate self.bank_shared_items_by_char/bank_trade_items_by_char
+        instead (see _toggle_shared_item/_toggle_trade_item)."""
         w = self.bank_character_widgets.get(char_name)
         if not w:
             return
         cdata = self.bank_characters.get(char_name, {'sources': {'bank': {}, 'inventory': {}}, 'order': []})
-        shared_items = None if cdata.get('is_locker') else cdata.get('shared_items', set())
-        trade_items = cdata.get('trade_items', set())
+        shared_items = None if cdata.get('is_locker') else self.bank_shared_items_by_char.get(char_name, set())
+        trade_items = self.bank_trade_items_by_char.get(char_name, set())
         enchants = cdata.get('enchants', {})
         rows, extra_count = self._bank_saved_display_rows(
             cdata['order'], cdata['sources'], shared_items, trade_items, enchants)
@@ -15384,6 +15444,10 @@ class App(tk.Tk):
         self._refresh_bank_saved_tab()
 
     def _clear_bank_character_list(self, char_name):
+        """Empties char_name's item list only - self.bank_shared_items_by_
+        char/bank_trade_items_by_char aren't touched, so re-importing the
+        same items later brings their old Share/Trade flags right back
+        instead of needing them re-flagged one by one."""
         if not messagebox.askyesno("Clear Saved List",
                 f"Clear {char_name}'s entire Saved Items list? This can't be undone."):
             return
@@ -15401,7 +15465,12 @@ class App(tk.Tk):
         Main's aggregate view and every other character's own tab are
         unaffected beyond no longer folding this one's gear into their
         searches (for a Locker) or it no longer appearing in Main (either
-        kind)."""
+        kind). Deliberately does NOT touch self.bank_shared_items_by_char/
+        bank_trade_items_by_char - if this exact name gets re-created later
+        (a fresh Import), its old Share/Trade flags reappear automatically
+        instead of needing to be redone across a possibly large item list;
+        they just don't show anywhere while no tab of that name exists (see
+        _refresh_trade_tab)."""
         if not messagebox.askyesno("Delete Character",
                 f'Permanently delete "{char_name}" and all its saved items? This can\'t be undone.'):
             return
