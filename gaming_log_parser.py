@@ -7,7 +7,7 @@ Parses Chat, Combat, and Loot from action and chat .log files
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from tkinter import font as tkfont
-import re, os, sys, json, difflib, threading, tempfile, subprocess, webbrowser, urllib.request, urllib.error, zipfile, shutil, traceback
+import re, os, sys, json, difflib, threading, tempfile, subprocess, webbrowser, urllib.request, urllib.error, zipfile, shutil, traceback, ctypes
 from pathlib import Path
 from datetime import datetime
 import csv
@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.4.5"
+VERSION = "6.5.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -503,7 +503,32 @@ class LootParser:
             result = after_quality.strip()
         
         return result if result else cleaned.strip()
-    
+
+    @staticmethod
+    def extract_enchant_prefix(item_name: str) -> str:
+        """Whatever quality/material text clean_item_name would strip
+        from item_name (e.g. "Bright", "Shining Mithril"), or '' if
+        nothing would be stripped - mirrors clean_item_name's own "down
+        to one word means back off, keep the material word" rule so the
+        two never disagree about where the real item name starts. A
+        separate method rather than changing clean_item_name's own
+        return value, since that method is used everywhere else (Loot
+        parsing, delve stats, _find_item_drops) and none of those need
+        the stripped text preserved - only Bank Build's Import parsing
+        does (see _parse_bank_paste_text/the Enchant column)."""
+        cleaned = re.sub(r'^(a|an|the)\s+', '', item_name, flags=re.IGNORECASE)
+        quality_match = LootParser.QUALITY_PREFIXES.match(cleaned)
+        after_quality = LootParser.QUALITY_PREFIXES.sub('', cleaned)
+        material_match = LootParser.MATERIAL_PREFIXES.match(after_quality)
+        after_material = LootParser.MATERIAL_PREFIXES.sub('', after_quality)
+        if after_material.strip() and len(after_material.split()) == 1:
+            # Back-off case (see clean_item_name) - the material word
+            # gets kept as part of the real name, so only quality (if
+            # matched at all) actually ends up stripped.
+            return quality_match.group(0).strip().title() if quality_match else ''
+        parts = [m.group(0).strip() for m in (quality_match, material_match) if m]
+        return ' '.join(parts).title()
+
     @staticmethod
     def parse_delve_stats(lines: list) -> dict:
         """Extract stats from delve output in the log."""
@@ -1468,15 +1493,15 @@ _BANK_EQUIPPED_SLOT_MAP = {
 
 def _parse_bank_paste_text(text, master_data=None):
     """Parse a pasted bank/inventory listing into (owned_keys, recognized,
-    name_counts_by_type). owned_keys is a set of (cleaned item name lower,
-    slot or None, level string or None) tuples - None marks a field the
-    paste format doesn't provide, matched as a wildcard by
-    _bank_owned_match. recognized is how many lines qualified across all
-    four supported formats (see the module comment above); everything else
-    - format headers like "Items in Strongbox..."/"Inventory:", consumables,
-    "nothing" equip slots, and an unmarked/quantity Inventory line that
-    doesn't match anything in master_data - is silently skipped, not
-    counted as an error.
+    name_counts_by_type, enchants_by_name). owned_keys is a set of
+    (cleaned item name lower, slot or None, level string or None) tuples -
+    None marks a field the paste format doesn't provide, matched as a
+    wildcard by _bank_owned_match. recognized is how many lines qualified
+    across all four supported formats (see the module comment above);
+    everything else - format headers like "Items in Strongbox..."/
+    "Inventory:", consumables, "nothing" equip slots, and an unmarked/
+    quantity Inventory line that doesn't match anything in master_data -
+    is silently skipped, not counted as an error.
 
     master_data, when given, lets an Inventory listing recognize a real
     piece of gear even without a "(w)"/"(h)" marker (e.g. it's sitting in
@@ -1492,10 +1517,19 @@ def _parse_bank_paste_text(text, master_data=None):
     lets _save_bank_import_to_character reconcile a fresh bank paste
     without wiping out inventory-sourced items still on the list, and vice
     versa: a paste that happens to contain none of one type simply leaves
-    that bucket alone instead of clearing it."""
+    that bucket alone instead of clearing it.
+
+    enchants_by_name is {cleaned name: quality/material prefix text (see
+    LootParser.extract_enchant_prefix), or ''} for every recognized line -
+    the Enchant column (see _bank_saved_display_rows) shows this rather
+    than silently discarding it the way clean_item_name's own callers
+    always have. Keyed the same as name_counts_by_type's buckets but kept
+    flat (not split by content type) since the enchant is a property of
+    the pasted text, not of which listing it came from."""
     owned_keys = set()
     recognized = 0
     name_counts_by_type = {'bank': {}, 'inventory': {}}
+    enchants_by_name = {}
     known_item_names = (
         {(item.get('Item') or '').strip().lower() for item in master_data}
         if master_data is not None else None
@@ -1526,6 +1560,7 @@ def _parse_bank_paste_text(text, master_data=None):
             owned_keys.add((cleaned, slot, level))
             recognized += 1
             _count('bank', cleaned)
+            enchants_by_name[cleaned] = LootParser.extract_enchant_prefix(raw_name)
             continue
 
         m = _BANK_EQUIPPED_RE.match(line)
@@ -1544,6 +1579,7 @@ def _parse_bank_paste_text(text, master_data=None):
                 owned_keys.add((cleaned, slot, None))
                 recognized += 1
                 _count('inventory', cleaned)
+                enchants_by_name[cleaned] = LootParser.extract_enchant_prefix(value)
             continue
 
         # Inventory listing - checked last since it's the most permissive
@@ -1561,9 +1597,10 @@ def _parse_bank_paste_text(text, master_data=None):
                 owned_keys.add((cleaned, None, None))
                 recognized += 1
                 _count('inventory', cleaned)
+                enchants_by_name[cleaned] = LootParser.extract_enchant_prefix(raw_name)
             continue
 
-    return owned_keys, recognized, name_counts_by_type
+    return owned_keys, recognized, name_counts_by_type, enchants_by_name
 
 
 def _is_event_realm(realm):
@@ -1618,8 +1655,12 @@ def _sort_treeview_column(tv, col, reverse):
     maps a click back to self.files by treeview position)."""
     def sort_key(iid):
         val = tv.set(iid, col)
+        # Strip thousands-separator commas first (e.g. XP Counter's "XP
+        # Gained"/"XP/Hour" columns) - float() rejects a comma outright,
+        # which silently fell through to the string-sort branch below and
+        # ordered these columns alphabetically instead of numerically.
         try:
-            return (0, float(val))
+            return (0, float(val.replace(',', '')))
         except ValueError:
             return (1, val.lower())
 
@@ -1639,8 +1680,11 @@ def _sort_treeview_column_recursive(tv, col, reverse):
     _build_item_zone_mob_tree and _build_item_period_zone_mob_tree."""
     def sort_key(iid):
         val = tv.set(iid, col)
+        # See _sort_treeview_column's own comment - strip thousands-
+        # separator commas before parsing, or a comma-formatted number
+        # silently falls back to alphabetical string sort instead.
         try:
-            return (0, float(val))
+            return (0, float(val.replace(',', '')))
         except ValueError:
             return (1, val.lower())
 
@@ -2178,6 +2222,19 @@ def _patch_widgets_for_debug_logging():
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+        # OLMRAN_HEADLESS_TEST is set only by the scratchpad regression
+        # scripts (never by a real user, and never by the TEST BUILD exe
+        # itself - that one only sets OLMRAN_TEST_CONFIG, which stays
+        # visible on purpose) - withdrawing THIS early, before any of
+        # _build_ui's widget construction below, means the window is
+        # never actually mapped/shown at all, instead of being visible
+        # for the second or so construction takes and only hidden
+        # afterward (which is what every regression script's own
+        # app.withdraw() call - still there, now redundant but harmless -
+        # was doing). Real users and the real TEST BUILD never set this,
+        # so this has zero effect on anything they see.
+        if os.environ.get('OLMRAN_HEADLESS_TEST'):
+            self.withdraw()
         if _DEBUG_CONSOLE_ENABLED:
             _start_debug_console()
             _patch_widgets_for_debug_logging()
@@ -2265,6 +2322,55 @@ class App(tk.Tk):
         if current_state != self._last_wm_state:
             self._last_wm_state = current_state
             self.after(50, self._force_full_redraw)
+            if current_state == 'normal':
+                self.after(50, self._clamp_to_workarea)
+
+    def _clamp_to_workarea(self):
+        """Restoring from maximized can leave the window positioned with
+        its bottom edge at the monitor's full pixel height rather than
+        its taskbar-adjusted work area - e.g. a 1920x1080 display with a
+        48px taskbar has a work area only 1032px tall, but Windows was
+        observed restoring this window to y=205 with an unchanged height
+        of 875, landing its bottom edge at 1080 - 48px of it permanently
+        hidden behind the taskbar, unreachable by any amount of internal
+        scrolling since the clipped strip is OUTSIDE the window itself.
+        Every tab is affected equally since it's the whole window that's
+        misplaced, not any one tab's content - matches reports of "every
+        tab clips, but only when not maximized". Coincides with adding
+        per-monitor DPI awareness (see main()) - Windows stops silently
+        correcting window placement for DPI-aware processes, so an app
+        has to do this itself. Only called right after a zoomed->normal
+        transition (see _on_root_configure) - a plain user resize/drag
+        already keeps the window on-screen on its own."""
+        if sys.platform != 'win32':
+            return
+        try:
+            hwnd = self.winfo_id()
+            MONITOR_DEFAULTTONEAREST = 2
+            monitor = ctypes.windll.user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+
+            class RECT(ctypes.Structure):
+                _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                           ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", RECT),
+                           ("rcWork", RECT), ("dwFlags", ctypes.c_ulong)]
+
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info))
+            work = info.rcWork
+            work_w, work_h = work.right - work.left, work.bottom - work.top
+            x, y = self.winfo_x(), self.winfo_y()
+            w, h = self.winfo_width(), self.winfo_height()
+            new_w, new_h = min(w, work_w), min(h, work_h)
+            new_x = min(max(x, work.left), work.right - new_w)
+            new_y = min(max(y, work.top), work.bottom - new_h)
+            if (new_x, new_y, new_w, new_h) != (x, y, w, h):
+                self.geometry(f"{new_w}x{new_h}+{new_x}+{new_y}")
+        except Exception:
+            pass
 
     def _force_full_redraw(self):
         try:
@@ -2430,6 +2536,7 @@ class App(tk.Tk):
                         'group_id': cdata.get('group_id'),
                         'shared_items': sorted(cdata.get('shared_items', set())),
                         'trade_items': sorted(cdata.get('trade_items', set())),
+                        'enchants': dict(cdata.get('enchants', {})),
                     }
                     for char, cdata in getattr(self, 'bank_characters', {}).items()
                 },
@@ -3164,6 +3271,97 @@ class App(tk.Tk):
         self._scroll_canvas = canvas
         self._scroll_content = content
 
+    def _track_notebook_selected_tab_height(self, nb, margin=0, available_widget=None, track_resize=True):
+        """Keeps nb sized to match only its CURRENTLY SELECTED tab's own
+        required height, instead of ttk.Notebook's default of sizing to
+        the largest tab across ALL of them. That default is what causes
+        the app-wide "extra scrolling to reach content that's already
+        on screen" symptom: a data-heavy tab (a generated report, a big
+        Saved Items list) inflates every sibling tab's own effective
+        height too, even while a much shorter one is actually showing -
+        and since ttk.Notebook always reports that inflated size as its
+        own natural request regardless of selection, it silently
+        propagates upward through however many parent frames/canvases
+        wrap it (see _build_scrollable_root's own <Configure> handler,
+        which has no way to tell an inflated request apart from a
+        genuine one). margin is subtracted from the "available" widget's
+        current height before treating it as free space to grow into.
+
+        track_resize=True (the default) additionally stretches nb to
+        fill any extra space its available_widget has beyond what the
+        selected tab itself needs, by also reacting to that widget's own
+        <Configure>. Pass False for any notebook nested inside another
+        notebook's own PAGE (i.e. nearly every nested notebook in this
+        app - build_sub_notebook is the one top-level exception, parented
+        directly to a plain tab frame that isn't itself managed by an
+        ancestor notebook). Reason: a notebook page's own winfo_reqheight
+        is still computed from its packed children as normal even though
+        its ACTUAL on-screen size is separately forced by whichever
+        notebook owns it - so nb.configure(height=...) here changes that
+        page's reqheight, which ttk::Notebook's C-level geometry-request
+        handling re-evaluates on every such change, re-firing <Configure>
+        on that same page even when its final on-screen size doesn't
+        actually change - which re-runs THIS function, forever (a real,
+        reproduced hang - see the Item/XP/Damage/Counters notebooks after
+        they were first wired up with track_resize left at its default).
+        track_resize=False sidesteps this entirely by only ever reacting
+        to <<NotebookTabChanged>> - it can't grow into extra window space
+        this way, but that's only actually needed at the outermost level;
+        every inner notebook still gets the core fix (shrinking to match
+        whichever of ITS OWN tabs is selected, rather than the largest).
+
+        available_widget (only consulted when track_resize=True) defaults
+        to nb's own direct parent - correct for a notebook nested inside
+        an ordinary Frame that ISN'T itself a page of another notebook
+        (build_sub_notebook inside tab_build), since that Frame's own
+        size never changes AS A RESULT of nb's configured height. Pass it
+        explicitly for the one exception: the top-level notebook's own
+        parent IS self._scroll_content, whose size DOES partly derive
+        from nb's own reqheight (see _build_scrollable_root's <Configure>
+        handler) - reading that same widget's height back out to decide
+        nb's height would be circular. Pass self._scroll_canvas there
+        instead - its own height comes from the actual window, never from
+        anything inside the canvas.
+
+        Call once, right after nb's initial tabs are added - it wires
+        up <<NotebookTabChanged>> (add='+', so it never clobbers another
+        handler already bound there) and keeps working for any tab added
+        to nb later too. Returns the update function itself, in case a
+        caller needs to run it immediately or add its own extra logic on
+        top (see _on_build_subtab_changed, which also hides/shows the
+        shared search buttons depending on which sub-tab is selected)."""
+        def _update(event=None):
+            try:
+                selected = nb.nametowidget(nb.select())
+            except (tk.TclError, KeyError):
+                return
+            selected.update_idletasks()
+            if not track_resize:
+                nb.configure(height=selected.winfo_reqheight())
+                return
+            try:
+                ref = available_widget if available_widget is not None else nb.nametowidget(nb.winfo_parent())
+                available = max(0, ref.winfo_height() - margin)
+            except tk.TclError:
+                available = 0
+            nb.configure(height=max(selected.winfo_reqheight(), available))
+        # add='+' - several notebooks (Counters' own sub-notebooks, etc.)
+        # already bind their own <<NotebookTabChanged>> handler (e.g. for
+        # border masking) before or after this call; a plain bind() would
+        # silently replace whichever one was bound first instead of both
+        # running.
+        nb.bind('<<NotebookTabChanged>>', _update, add='+')
+        if not track_resize:
+            nb.after_idle(_update)
+            return _update
+        try:
+            ref = available_widget if available_widget is not None else nb.nametowidget(nb.winfo_parent())
+            ref.bind('<Configure>', _update, add='+')
+        except tk.TclError:
+            pass
+        nb.after_idle(_update)
+        return _update
+
     def _register_scroll_canvas(self, canvas):
         """Registers a scrollable tk.Canvas built elsewhere (e.g. Saved
         Builds) with the single app-wide mouse wheel handler set up in
@@ -3209,6 +3407,8 @@ class App(tk.Tk):
         nb.add(self.tab_area_items, text='🗺  Area Items')
 
         self.notebook = nb  # Store reference to notebook
+        # 16 = the 8+8 padx/pady nb itself is packed with, just above.
+        self._track_notebook_selected_tab_height(nb, margin=16, available_widget=self._scroll_canvas)
 
         self._build_parse_tab()
         self._build_fields_tab()
@@ -3362,6 +3562,7 @@ class App(tk.Tk):
         self.parse_sub_notebook.add(t, text='📄  Files & Search')
         self.parse_sub_notebook.add(counters_tab, text='📊  Counters')
         self.parse_sub_notebook.add(settings_tab, text='⚙  Settings')
+        self._track_notebook_selected_tab_height(self.parse_sub_notebook, track_resize=False)
 
         # Settings sub-tab is just a mini-notebook holding Fields and
         # Export, both built by their own methods (called right after
@@ -3369,6 +3570,7 @@ class App(tk.Tk):
         # already exists by the time they run).
         self.settings_sub_notebook = ttk.Notebook(settings_tab, style='RealmMini.TNotebook')
         self.settings_sub_notebook.pack(fill='both', expand=True)
+        self._track_notebook_selected_tab_height(self.settings_sub_notebook, track_resize=False)
 
         # ═══ FILES SECTION ═══
         # Built via a shared helper so the exact same section (toolbar +
@@ -3401,7 +3603,8 @@ class App(tk.Tk):
         self.counters_notebook.add(item_tab, text='🎁  Item Counter')
         self._mask_notebook_side_borders(self.counters_notebook)
         self.counters_notebook.bind('<<NotebookTabChanged>>',
-                                    lambda e: self._mask_notebook_side_borders(self.counters_notebook))
+                                    lambda e: self._mask_notebook_side_borders(self.counters_notebook), add='+')
+        self._track_notebook_selected_tab_height(self.counters_notebook, margin=10, track_resize=False)
 
         # ═══ SEARCH SECTION ═══
         # Search across every loaded file's actual lines - independent of Run
@@ -3470,6 +3673,16 @@ class App(tk.Tk):
 
         pvp_death_row = ttk.Frame(pvp_death_col)
         pvp_death_row.pack(fill='x')
+        # K/D ratio - Kills / Deaths from whatever Your Kills/Your Deaths
+        # have each most recently found (see _update_pvp_kd_ratio, called
+        # from both _search_pvp_kills and _search_pvp_deaths so either
+        # search updates it). Blank until at least one of the two has
+        # actually been run.
+        self.pvp_deaths_count_var = tk.StringVar(value='')
+        self.pvp_kd_ratio_var = tk.StringVar(value='')
+        ttk.Entry(pvp_death_row, textvariable=self.pvp_kd_ratio_var, width=6,
+                 state='readonly', justify='center').pack(side='left')
+        ttk.Label(pvp_death_row, text="K/D").pack(side='left', padx=(4,8))
         ttk.Button(pvp_death_row, text="💀 Search",
                   command=self._search_pvp_deaths).pack(side='left')
 
@@ -3625,7 +3838,8 @@ class App(tk.Tk):
             self.xp_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
         self._mask_notebook_side_borders(self.xp_notebook)
         self.xp_notebook.bind('<<NotebookTabChanged>>',
-                             lambda e: self._mask_notebook_side_borders(self.xp_notebook))
+                             lambda e: self._mask_notebook_side_borders(self.xp_notebook), add='+')
+        self._track_notebook_selected_tab_height(self.xp_notebook, margin=10, track_resize=False)
 
         # ═══ DAMAGE COUNTER TAB (inside the Counters sub-tab, below the
         # shared "Load Log Files" section built above) ═══
@@ -3655,7 +3869,8 @@ class App(tk.Tk):
             self.damage_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
         self._mask_notebook_side_borders(self.damage_notebook)
         self.damage_notebook.bind('<<NotebookTabChanged>>',
-                                 lambda e: self._mask_notebook_side_borders(self.damage_notebook))
+                                 lambda e: self._mask_notebook_side_borders(self.damage_notebook), add='+')
+        self._track_notebook_selected_tab_height(self.damage_notebook, margin=10, track_resize=False)
 
         # ═══ PVP DAMAGE TAB (inside the Counters sub-tab, below the
         # shared "Load Log Files" section built above) ═══
@@ -3686,7 +3901,8 @@ class App(tk.Tk):
             self.pvp_damage_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
         self._mask_notebook_side_borders(self.pvp_damage_notebook)
         self.pvp_damage_notebook.bind('<<NotebookTabChanged>>',
-                                     lambda e: self._mask_notebook_side_borders(self.pvp_damage_notebook))
+                                     lambda e: self._mask_notebook_side_borders(self.pvp_damage_notebook), add='+')
+        self._track_notebook_selected_tab_height(self.pvp_damage_notebook, margin=10, track_resize=False)
 
         # ═══ ITEM COUNTER TAB (inside the Counters sub-tab, below the
         # shared "Load Log Files" section built above) ═══
@@ -3753,7 +3969,8 @@ class App(tk.Tk):
             self.item_saved_reports.append({'name': rep_name, 'data': rep_data, 'frame': frame})
         self._mask_notebook_side_borders(self.item_notebook)
         self.item_notebook.bind('<<NotebookTabChanged>>',
-                               lambda e: self._mask_notebook_side_borders(self.item_notebook))
+                               lambda e: self._mask_notebook_side_borders(self.item_notebook), add='+')
+        self._track_notebook_selected_tab_height(self.item_notebook, margin=10, track_resize=False)
 
         # Character dropdown needs its options populated from the
         # persisted tally BEFORE restoring the working tab below - the
@@ -3820,6 +4037,8 @@ class App(tk.Tk):
             
             self.field_frames[field_type] = frame
             self.field_tvs[field_type] = tv
+
+        self._track_notebook_selected_tab_height(self.fields_notebook, margin=6, track_resize=False)
 
         # Buttons (work on currently visible tab)
         btns = ttk.Frame(t)
@@ -4482,6 +4701,7 @@ class App(tk.Tk):
         results, errors, total_rp = self._find_pvp_kills()
         self.pvp_kills_rp_var.set(str(total_rp) if results else '')
         self.pvp_kills_count_var.set(str(len(results)) if results else '')
+        self._update_pvp_kd_ratio()
         if not results:
             msg = f"No PvP kills were found in {len(self.files)} file(s)."
             if errors:
@@ -4636,6 +4856,8 @@ class App(tk.Tk):
             return
 
         results, errors = self._find_pvp_deaths()
+        self.pvp_deaths_count_var.set(str(len(results)) if results else '')
+        self._update_pvp_kd_ratio()
         if not results:
             msg = f"No PvP deaths were found in {len(self.files)} file(s)."
             if errors:
@@ -4647,6 +4869,25 @@ class App(tk.Tk):
         if errors:
             messagebox.showwarning("Some Files Skipped",
                 f"{len(errors)} file(s) could not be read:\n" + "\n".join(errors))
+
+    def _update_pvp_kd_ratio(self):
+        """Recomputes the K/D ratio shown next to Your Deaths' own Search
+        button, from whatever Your Kills/Your Deaths have each most
+        recently found - called from both _search_pvp_kills and
+        _search_pvp_deaths so either one running updates it, regardless
+        of which order they're clicked in. Blank until at least one of
+        the two has actually been run. Shown as a plain "kills/deaths"
+        count (e.g. "10/4"), not a computed decimal - no division
+        happens at all, so 0 deaths is just "7/0", never a divide-by-
+        zero concern."""
+        kills_str = self.pvp_kills_count_var.get()
+        deaths_str = self.pvp_deaths_count_var.get()
+        if not kills_str and not deaths_str:
+            self.pvp_kd_ratio_var.set('')
+            return
+        kills = int(kills_str) if kills_str else 0
+        deaths = int(deaths_str) if deaths_str else 0
+        self.pvp_kd_ratio_var.set(f"{kills}/{deaths}")
 
     def _find_pvp_deaths(self):
         """Finds every killing-blow line ending in "damage!" immediately
@@ -4916,6 +5157,7 @@ class App(tk.Tk):
         gains_tab = ttk.Frame(inner_nb, padding=8)
         inner_nb.add(summary_tab, text="Per-Area Summary")
         inner_nb.add(gains_tab, text="Every Gain")
+        self._track_notebook_selected_tab_height(inner_nb, track_resize=False)
 
         cols = ('Area', 'XP Gained', 'Time', 'XP/Hour')
         tv_frame = ttk.Frame(summary_tab)
@@ -5347,6 +5589,7 @@ class App(tk.Tk):
         hits_tab = ttk.Frame(inner_nb, padding=8)
         inner_nb.add(summary_tab, text="Per-Mob Summary")
         inner_nb.add(hits_tab, text="Every Hit")
+        self._track_notebook_selected_tab_height(inner_nb, margin=10, track_resize=False)
 
         cols = ('Mob', 'Damage', 'Hits', 'Avg/Hit')
         tv_frame = ttk.Frame(summary_tab)
@@ -5485,6 +5728,7 @@ class App(tk.Tk):
         hits_tab = ttk.Frame(inner_nb, padding=8)
         inner_nb.add(summary_tab, text="Per-Player Summary")
         inner_nb.add(hits_tab, text="Every Hit")
+        self._track_notebook_selected_tab_height(inner_nb, margin=6, track_resize=False)
 
         cols = (player_label, 'Damage', 'Hits', 'Avg/Hit')
         tv_frame = ttk.Frame(summary_tab)
@@ -5548,6 +5792,7 @@ class App(tk.Tk):
         taken_tab = ttk.Frame(sides_nb, padding=8)
         sides_nb.add(dealt_tab, text="Damage Dealt")
         sides_nb.add(taken_tab, text="Damage Taken")
+        self._track_notebook_selected_tab_height(sides_nb, margin=10, track_resize=False)
 
         self._build_pvp_damage_side_table(dealt_tab, data['dealt'], 'Hit Player')
         self._build_pvp_damage_side_table(taken_tab, data['taken'], 'Attacking Player')
@@ -6803,6 +7048,7 @@ class App(tk.Tk):
         all_tab = ttk.Frame(overall_sub_nb, padding=8)
         overall_sub_nb.add(all_tab, text="All")
         self._build_item_zone_mob_tree(all_tab, data, overall_sub_nb)
+        self._track_notebook_selected_tab_height(overall_sub_nb, track_resize=False)
 
         for key, label in (('daily', 'Daily'), ('weekly', 'Weekly'),
                            ('monthly', 'Monthly'), ('yearly', 'Yearly')):
@@ -6823,10 +7069,12 @@ class App(tk.Tk):
             period_all_tab = ttk.Frame(period_sub_nb, padding=8)
             period_sub_nb.add(period_all_tab, text="All")
             self._build_item_period_zone_mob_tree(period_all_tab, period_block, period_sub_nb)
+            self._track_notebook_selected_tab_height(period_sub_nb, track_resize=False)
 
         files_tab = ttk.Frame(inner_nb, padding=8)
         inner_nb.add(files_tab, text="Log Files")
         self._build_item_log_files_table(files_tab, data['file_dates'])
+        self._track_notebook_selected_tab_height(inner_nb, margin=10, track_resize=False)
 
         return frame
 
@@ -7367,12 +7615,15 @@ class App(tk.Tk):
         # actually selected, instead of leaving it fixed at the tallest one.
         self.build_sub_notebook = ttk.Notebook(self.tab_build)
         self.build_sub_notebook.pack(fill='x')
-        self.build_sub_notebook.bind('<<NotebookTabChanged>>', self._on_build_subtab_changed)
-        # Resizing/maximizing the window changes tab_build's own height
-        # without changing which sub-tab is selected, so <<NotebookTabChanged>>
-        # alone wouldn't notice there's now more (or less) room to fill -
-        # see _on_build_subtab_changed's docstring.
-        self.tab_build.bind('<Configure>', self._on_build_subtab_changed)
+        # _track_notebook_selected_tab_height handles the actual resize
+        # (both on tab change and on tab_build's own <Configure>, e.g.
+        # window resize/maximize) - see its own docstring for why ttk.
+        # Notebook's default "size to the largest tab" default needs
+        # overriding here. 24 = tab_build's own padding=12 top+bottom.
+        self._track_notebook_selected_tab_height(self.build_sub_notebook, margin=24)
+        # add='+' - runs alongside the resize handler just wired up
+        # above, only adding the button show/hide logic on top of it.
+        self.build_sub_notebook.bind('<<NotebookTabChanged>>', self._on_build_subtab_changed, add='+')
 
         build_search_subtab = ttk.Frame(self.build_sub_notebook)
         self.build_sub_notebook.add(build_search_subtab, text='Basic Constraints')
@@ -8720,6 +8971,12 @@ class App(tk.Tk):
                 # _refresh_trade_tab); doesn't affect Bank Build's search
                 # pooling at all, unlike shared_items above.
                 'trade_items': set(_cdata.get('trade_items', [])),
+                # Quality/material prefix stripped off each name at Import
+                # time (see the Enchant column, LootParser.extract_
+                # enchant_prefix) - {name: prefix, or ''}. Purely display;
+                # the stripped name itself (not this) is always what
+                # matching/identity uses everywhere else.
+                'enchants': dict(_cdata.get('enchants', {})),
             }
         # Populated per character name by _create_bank_character_tab - widget
         # refs (treeview, checkboxes/vars, status labels) needed to read from
@@ -8818,6 +9075,7 @@ class App(tk.Tk):
 
         bank_saved_main_tab = ttk.Frame(self.bank_saved_sub_notebook, padding=8)
         self.bank_saved_sub_notebook.add(bank_saved_main_tab, text='Main')
+        self._track_notebook_selected_tab_height(self.bank_saved_sub_notebook, track_resize=False)
 
         ttk.Label(bank_saved_main_tab, text="Every item ever saved from the Import tab, across every "
                  "character, plus anything saved before character tracking existed. Read-only - use a "
@@ -8828,9 +9086,9 @@ class App(tk.Tk):
         bank_saved_frame = ttk.Frame(bank_saved_main_tab)
         bank_saved_frame.pack(fill='both', expand=True)
 
-        saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
-        saved_col_widths = {'Slot': 55, 'Drop': 60, 'Item': 220, 'Type': 60, 'Spell': 100, 'Sigil': 60,
-                           'Level': 45, 'Area': 140, 'Tag': 110}
+        saved_cols = ('Slot', 'Drop', 'Enchant', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
+        saved_col_widths = {'Slot': 55, 'Drop': 60, 'Enchant': 90, 'Item': 220, 'Type': 60, 'Spell': 100,
+                           'Sigil': 60, 'Level': 45, 'Area': 140, 'Tag': 110}
         saved_col_headings = {'Tag': 'Gear Tag'}
         self.bank_saved_tv = ttk.Treeview(bank_saved_frame, columns=saved_cols, show='headings', height=14)
         for col in saved_cols:
@@ -8868,6 +9126,8 @@ class App(tk.Tk):
         # _create_bank_character_tab.
         self.bank_lockers_sub_notebook = ttk.Notebook(self.bank_sub_notebook)
         self.bank_sub_notebook.add(self.bank_lockers_sub_notebook, text='Lockers')
+        self._track_notebook_selected_tab_height(self.bank_sub_notebook, track_resize=False)
+        self._track_notebook_selected_tab_height(self.bank_lockers_sub_notebook, track_resize=False)
 
         # Locker Groups - lets Locker tabs be organized into named folders
         # (each its own real ttk.Notebook, itself one tab of
@@ -9538,7 +9798,19 @@ class App(tk.Tk):
         # _toggle_trade_item) - just a consolidated place to see
         # everything currently up for trade, not a build tool.
         trade_tab = self.build_trade_subtab
-        ttk.Label(trade_tab, text="Trade", font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0,10))
+        trade_heading_row = ttk.Frame(trade_tab)
+        trade_heading_row.pack(anchor='w', pady=(0,10))
+        ttk.Label(trade_heading_row, text="Trade", font=('Arial', 13, 'bold')).pack(side='left')
+        # Olmran Trading Post - an external site for actually arranging a
+        # trade with another player, not part of this app itself. Styled
+        # and behaves like a plain web hyperlink (underlined blue text,
+        # hand cursor, opens in the default browser) rather than a
+        # button, since it's just a link out, not an app action.
+        trade_link = ttk.Label(trade_heading_row, text="Olmran Trading Post",
+                               foreground='#0645AD', cursor='hand2',
+                               font=('Arial', 10, 'underline'))
+        trade_link.pack(side='left', padx=(10,0), pady=(3,0))
+        trade_link.bind('<Button-1>', lambda e: webbrowser.open("https://www.olmrantradingpost.com/"))
         ttk.Label(trade_tab, text="Every item any character or Locker has flagged Trade = Yes on their "
                  "own tab - check/uncheck it there to add or remove it here.",
                  foreground='#666', wraplength=760, justify='left').pack(anchor='w', pady=(0,8))
@@ -9576,32 +9848,22 @@ class App(tk.Tk):
         self.after_idle(self._on_build_subtab_changed)
 
     def _on_build_subtab_changed(self, event=None):
-        """Resize self.build_sub_notebook to match only the currently
-        selected sub-tab's own required height, instead of ttk.Notebook's
-        default of sizing to the largest tab across all of them - see the
-        comment above self.build_sub_notebook's creation for why that
-        default left a large blank gap under any shorter tab (Basic/Armor/
-        Weapon Constraints) once Bank Build's Saved Items grew tall.
-        build_sub_notebook is tab_build's only child (padding=12 aside), so
-        whenever the window is taller than the selected sub-tab actually
-        needs, this also grows it to fill the rest of tab_build's own
-        height instead of leaving that space blank below it - the same
-        "never shrink below natural, but claim any extra room" rule
-        _build_scrollable_root's own <Configure> handler uses.
-
-        Also hides Find Optimal Build/Show All Matches while Bank Build,
+        """Hides Find Optimal Build/Show All Matches while Bank Build,
         Manual, or Trade is selected - Bank Build has its own Find Best
         Bank Build per character tab, Manual is a live spell/tier lookup,
         and Trade is a plain read-only chart - none of the three have a
         "build" concept of their own. "Generate multiple build options"
-        stays visible either way since it's not specific to any of them."""
+        stays visible either way since it's not specific to any of them.
+        Resizing build_sub_notebook itself to match whichever sub-tab is
+        actually selected (instead of ttk.Notebook's own "size to the
+        largest tab" default) is handled separately by
+        _track_notebook_selected_tab_height - see its own call in
+        _build_build_tab, right where this method gets bound too (with
+        add='+', so both run on every tab change)."""
         try:
             selected = self.build_sub_notebook.nametowidget(self.build_sub_notebook.select())
         except (tk.TclError, KeyError):
             return
-        selected.update_idletasks()
-        available = max(0, self.tab_build.winfo_height() - 24)
-        self.build_sub_notebook.configure(height=max(selected.winfo_reqheight(), available))
 
         if selected in (self.build_bank_subtab, self.build_manual_subtab, self.build_trade_subtab):
             self.shared_search_buttons_frame.pack_forget()
@@ -9750,6 +10012,7 @@ class App(tk.Tk):
 
         self.saved_builds_notebook = ttk.Notebook(outer)
         self.saved_builds_notebook.pack(fill='both', expand=True)
+        self._track_notebook_selected_tab_height(self.saved_builds_notebook, track_resize=False)
 
         # Shown instead of the (empty) notebook when there's nothing saved
         # yet - packed/forgotten by _render_saved_builds, since an empty
@@ -12983,7 +13246,7 @@ class App(tk.Tk):
             char_name = existing_match
 
         text = self.bank_import_text.get('1.0', tk.END)
-        owned_keys, recognized, name_counts_by_type = _parse_bank_paste_text(text, self.master_data)
+        owned_keys, recognized, name_counts_by_type, enchants_by_name = _parse_bank_paste_text(text, self.master_data)
         if not owned_keys:
             messagebox.showwarning("No Items",
                 "No equippable items were recognized in the pasted text. Expected a Strongbox "
@@ -13006,6 +13269,12 @@ class App(tk.Tk):
             if not name_counts:
                 continue  # nothing of this type in this paste - leave that bucket alone
             cdata['sources'][content_type] = dict(name_counts)
+        # Enchant (see the Enchant column/LootParser.extract_enchant_
+        # prefix) - set/overwritten for every name THIS paste actually
+        # recognized, same "this paste wins" rule sources above follows;
+        # a name not mentioned in this paste keeps whatever enchant it
+        # already had from an earlier one.
+        cdata.setdefault('enchants', {}).update(enchants_by_name)
         all_names = set()
         for counts in cdata['sources'].values():
             all_names.update(counts)
@@ -13141,9 +13410,9 @@ class App(tk.Tk):
 
         tree_frame = ttk.Frame(tab)
         tree_frame.pack(fill='both', expand=True)
-        saved_cols = ('Slot', 'Drop', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
-        saved_col_widths = {'Slot': 55, 'Drop': 60, 'Item': 220, 'Type': 60, 'Spell': 100, 'Sigil': 60,
-                           'Level': 45, 'Area': 140, 'Tag': 110, 'Share': 55, 'Trade': 55}
+        saved_cols = ('Slot', 'Drop', 'Enchant', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
+        saved_col_widths = {'Slot': 55, 'Drop': 60, 'Enchant': 90, 'Item': 220, 'Type': 60, 'Spell': 100,
+                           'Sigil': 60, 'Level': 45, 'Area': 140, 'Tag': 110, 'Share': 55, 'Trade': 55}
         saved_col_headings = {'Tag': 'Gear Tag'}
         # A Locker already folds its ENTIRE list into every other
         # character's search unconditionally (is_locker) - the Share
@@ -14742,15 +15011,20 @@ class App(tk.Tk):
                 return 'Good Gear' if _is_event_realm(item.get('Realm')) else 'Blank'
         return 'Blank'
 
-    def _bank_saved_display_rows(self, order, sources, shared_items=None, trade_items=None):
-        """Row tuples (Slot, Drop, Item, Type, Spell, Sigil, Level, Area,
-        Tag[, Share][, Trade]) for a Saved Items treeview - shared by the
-        Main aggregate tab and every per-character/Locker tab. Each
-        unique name gets one row (enriched from master_data when a name
-        match is found); any copies beyond the first are appended at the
-        bottom, prefixed "::extra::". Drop reads "No Drop" for a Kaid-
-        realm item (Kaid gear doesn't drop when you die), "Drop" for
-        everything else. Tag is whatever's in self.bank_gear_tags for
+    def _bank_saved_display_rows(self, order, sources, shared_items=None, trade_items=None, enchants=None):
+        """Row tuples (Slot, Drop, Enchant, Item, Type, Spell, Sigil,
+        Level, Area, Tag[, Share][, Trade]) for a Saved Items treeview -
+        shared by the Main aggregate tab and every per-character/Locker
+        tab. Each unique name gets one row (enriched from master_data
+        when a name match is found); any copies beyond the first are
+        appended at the bottom, prefixed "::extra::". Drop reads "No
+        Drop" for a Kaid-realm item (Kaid gear doesn't drop when you
+        die), "Drop" for everything else. Enchant is whatever quality/
+        material prefix Import parsing stripped off that name (see
+        LootParser.extract_enchant_prefix/_parse_bank_paste_text), blank
+        if enchants is None or has nothing for that name - purely
+        cosmetic, the stripped name itself is still all that identity/
+        matching ever uses. Tag is whatever's in self.bank_gear_tags for
         that name, defaulting to "Good Gear" for an Event-realm item (see
         _is_event_realm) or "Blank" otherwise - see _open_gear_tag_editor/
         _default_gear_tag_for_item. shared_items is None for Main/a
@@ -14772,7 +15046,8 @@ class App(tk.Tk):
             is_kaid = 'kaid' in (m.get('Realm') or '').strip().lower()
             default_tag = 'Good Gear' if _is_event_realm(m.get('Realm')) else 'Blank'
             row = (
-                (m.get('Slot') or '').title(), 'No Drop' if is_kaid else 'Drop', display_name,
+                (m.get('Slot') or '').title(), 'No Drop' if is_kaid else 'Drop',
+                (enchants or {}).get(name, ''), display_name,
                 m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''), m.get('Level', ''), m.get('Area', ''),
                 self.bank_gear_tags.get(name, default_tag),
             )
@@ -14803,8 +15078,9 @@ class App(tk.Tk):
         combined_seen = set()
         combined_bank = {}
         combined_inventory = {}
+        combined_enchants = {}
 
-        def merge_in(order, sources):
+        def merge_in(order, sources, enchants=None):
             for name in order:
                 if name not in combined_seen:
                     combined_seen.add(name)
@@ -14813,13 +15089,17 @@ class App(tk.Tk):
                 combined_bank[name] = combined_bank.get(name, 0) + count
             for name, count in sources.get('inventory', {}).items():
                 combined_inventory[name] = combined_inventory.get(name, 0) + count
+            for name, prefix in (enchants or {}).items():
+                if prefix:
+                    combined_enchants[name] = prefix
 
         merge_in(self.bank_saved_order, self.bank_saved_sources)
         for cdata in self.bank_characters.values():
-            merge_in(cdata['order'], cdata['sources'])
+            merge_in(cdata['order'], cdata['sources'], cdata.get('enchants'))
 
         rows, extra_count = self._bank_saved_display_rows(
-            combined_order, {'bank': combined_bank, 'inventory': combined_inventory})
+            combined_order, {'bank': combined_bank, 'inventory': combined_inventory},
+            enchants=combined_enchants)
         self.bank_saved_tv.delete(*self.bank_saved_tv.get_children())
         for row in rows:
             self.bank_saved_tv.insert('', 'end', values=row)
@@ -14900,6 +15180,7 @@ class App(tk.Tk):
         group_notebook = ttk.Notebook(self.bank_lockers_sub_notebook)
         self.bank_lockers_sub_notebook.add(group_notebook, text=name)
         self._bind_locker_tab_drag(group_notebook)
+        self._track_notebook_selected_tab_height(group_notebook, track_resize=False)
         group = {'id': group_id, 'name': name, 'notebook': group_notebook}
         self.bank_locker_groups.append(group)
         return group
@@ -15064,7 +15345,9 @@ class App(tk.Tk):
         cdata = self.bank_characters.get(char_name, {'sources': {'bank': {}, 'inventory': {}}, 'order': []})
         shared_items = None if cdata.get('is_locker') else cdata.get('shared_items', set())
         trade_items = cdata.get('trade_items', set())
-        rows, extra_count = self._bank_saved_display_rows(cdata['order'], cdata['sources'], shared_items, trade_items)
+        enchants = cdata.get('enchants', {})
+        rows, extra_count = self._bank_saved_display_rows(
+            cdata['order'], cdata['sources'], shared_items, trade_items, enchants)
         w['tv'].delete(*w['tv'].get_children())
         for row in rows:
             w['tv'].insert('', 'end', values=row)
@@ -17090,6 +17373,43 @@ class App(tk.Tk):
 
 
 def main():
+    # Windows only, and must run before the very first Tk window is
+    # created (here, before App()) to have any effect. Without this,
+    # Tkinter isn't marked DPI-aware to Windows, so on a scaled display
+    # (125%/150%/etc., common on laptops) it can miscalculate the real
+    # usable screen size - the window (even "maximized") ends up sized
+    # against the WRONG assumed resolution and its top/bottom edges land
+    # off the actual physical screen. This showed up as content getting
+    # clipped regardless of which tab was open or whether the window was
+    # maximized or manually resized - a pre-existing display mismatch,
+    # unrelated to any one tab's own layout, just newly costly now that
+    # several charts stretch to fill all the vertical space a tab
+    # reports having (see _on_build_subtab_changed/_build_scrollable_
+    # root) instead of leaving slack that happened to absorb it.
+    #
+    # PROCESS_PER_MONITOR_DPI_AWARE (2) is tried first, not PROCESS_
+    # SYSTEM_DPI_AWARE (1) - confirmed via user testing that "system"
+    # awareness (one fixed DPI for the whole process, taken from
+    # whichever monitor is primary) still left maximize clipped on a
+    # multi-monitor setup where the app's own monitor runs a DIFFERENT
+    # scaling percentage than the primary - "per-monitor" asks Windows
+    # for the ACTUAL monitor the window is on instead of assuming
+    # primary's DPI applies everywhere. Tkinter itself still won't live-
+    # rescale if the window is later dragged to a differently-scaled
+    # monitor (no WM_DPICHANGED handling), but the size it computes at
+    # startup/maximize for whichever monitor it's ON is now correct.
+    if sys.platform == 'win32':
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+        except Exception:
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+            except Exception:
+                try:
+                    ctypes.windll.user32.SetProcessDPIAware()  # older Windows fallback
+                except Exception:
+                    pass
     app = App()
     app.mainloop()
 

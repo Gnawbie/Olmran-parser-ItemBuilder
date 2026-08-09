@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v6.3.0</p>
+    <p class="tagline">Full usage guide - v6.5.0</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -183,7 +183,7 @@
       <li><b>PvP</b> - three searches for player-vs-player combat, each result row also supporting <b>Open Log at This Line</b>:
         <ul>
           <li><b>Your Kills</b> - just a button, no name needed. Finds every time you killed someone ("You just killed &lt;name&gt;!" immediately followed by "You earn N realm points!"), each labeled "You Killed &lt;name&gt;" with the name pulled straight out of the matched line. Next to the button, a <b>Total RP</b> field shows the sum of realm points earned across every matched kill, and a <b>Kills</b> field shows how many kills were found - both fill in automatically each time this search runs.</li>
-          <li><b>Your Deaths</b> - just a button, no name needed. Finds every time someone killed you (their killing blow line ending "at you for N damage!" immediately followed by a blank line and your own death message), each labeled "&lt;name&gt; Killed you" with the attacker's name pulled straight out of the matched line. The "N minutes" at the end of the death message is unique per death and isn't part of the match. Dying earns no realm points, so there's no RP field here.</li>
+          <li><b>Your Deaths</b> - just a button, no name needed. Finds every time someone killed you (their killing blow line ending "at you for N damage!" immediately followed by a blank line and your own death message), each labeled "&lt;name&gt; Killed you" with the attacker's name pulled straight out of the matched line. The "N minutes" at the end of the death message is unique per death and isn't part of the match. Dying earns no realm points, so there's no RP field here. A <b>K/D</b> field just before the Search button shows your Kills/Deaths as a plain count (e.g. "10/4") once either search has run - it updates after each one, so running just Deaths first still shows "0/4" rather than staying blank.</li>
           <li><b>Participated</b> - just a button, no name needed. Finds every "You earn N realm points!" line that ISN'T immediately preceded by "You just killed &lt;name&gt;!" (that combo is a direct kill, already covered by Your Kills) - credit for participating in someone else's kill without landing the final blow yourself. Same <b>Total RP</b>/<b>Participations</b> fields as Your Kills, next to its own Search button.</li>
         </ul>
       </li>
@@ -294,6 +294,7 @@
       <li><b>Lockers</b> - always the rightmost of the three inner tabs. Itself a small notebook holding one sub-tab per Locker character, each with the exact same controls as a regular character tab (Only Found In, Prioritize/Hard Search, Search all characters, Good Gear only/Invasion Gear only, Find Best Bank Build, Clear Saved List, Delete) plus the Exclude-from-others checkbox and a note at the top reminding you it's overflow storage, not a played character. Keeps pure storage characters visually separate from ones you actually play. A leftmost <b>+</b> tab has no page of its own - clicking it prompts for a name and creates a new <b>Locker Group</b> tab to organize Locker tabs into. Drag a Locker tab onto a group tab to move it in, or drag it back out onto the main tab strip to ungroup it - group membership persists across restarts.</li>
     </ul>
     <p>Every Character Items table (Main, every character, and every Locker) can be sorted by clicking any column header - click again to reverse. Level sorts numerically; everything else sorts as text.</p>
+    <p>Each row also has an <b>Enchant</b> column (between Drop and Item) - whatever quality/material prefix (e.g. "Bright", "Shining Mithril") was stripped off the item's name gets shown here instead of just discarded, so it's still visible even though the cleaned name remains what's actually matched everywhere (Gear Tag, Share, Trade, every search/build pool). Purely cosmetic - filled in automatically from whatever was pasted on Import, nothing to set by hand.</p>
     <p>Each row also has a <b>Gear Tag</b> column - click a cell for a dropdown of "Good Gear" / "Invasion Gear" / "Both" / "Blank". An untagged item defaults to <b>Good Gear</b> if it's an Event-realm item, or <b>Blank</b> otherwise - an explicit choice (including explicitly picking Blank) always overrides that default. One tag per item name, shared everywhere that item appears (Main and every character that has it), and persists across closing and reopening the program. For the Good Gear only/Invasion Gear only search checkboxes above, "Both" always qualifies under either one (it counts as both categories at once), while "Blank" qualifies under neither - so until you actually start tagging non-Event items, checking either box just filters the search down to whatever Event gear you already have.</p>
     <p>Every non-Locker character's own table also has a <b>Share</b> column (after Gear Tag) - a plain checkbox, click a cell to toggle it. Unlike Gear Tag (one shared value per item name, everywhere), Share is scoped to just that one character's own copy of that item: checking it folds just that item into every OTHER character's Bank Build search automatically, regardless of any of those characters' own Search all characters setting - the same unconditional folding a whole Locker already does for its entire list, just one item at a time instead of turning the whole character into overflow storage. Not shown on Main or any Locker tab (a Locker already shares everything, and Main has no single character to attribute the flag to). Persists across closing and reopening the program.</p>
     <p>Every character AND Locker table (rightmost column, after Share on a non-Locker character) also has a <b>Trade</b> column - "No"/"Yes", click a cell to toggle it, defaulting to No. Purely a bookkeeping marker: unlike Share, it has no effect on Bank Build's own search pooling at all - it only feeds the <b>Trade</b> tab (see 3.8) with a running chart of everything currently flagged for trade. Not shown on Main. Persists across closing and reopening the program.</p>
@@ -315,7 +316,7 @@
     </ul>
 
     <h3>3.8 Trade</h3>
-    <p>A flat, read-only chart of every item any character or Locker has flagged Trade = Yes (see 3.6's Trade column) - not a build tool, just a consolidated place to see everything currently up for trade without checking every character/Locker tab separately.</p>
+    <p>A flat, read-only chart of every item any character or Locker has flagged Trade = Yes (see 3.6's Trade column) - not a build tool, just a consolidated place to see everything currently up for trade without checking every character/Locker tab separately. A clickable <b>Olmran Trading Post</b> link sits next to the heading, opening <a href="https://www.olmrantradingpost.com/">olmrantradingpost.com</a> in your browser.</p>
     <ul>
       <li>Columns: <b>Character</b> (whichever character or Locker owns that copy), Slot, Item, Type, Spell, Sigil, Level, Area. Click any column header to sort; click again to reverse.</li>
       <li>Updates immediately whenever a Trade box is checked or unchecked anywhere - checking one adds a row here, unchecking removes it. There's no separate control on this tab itself; toggle the flag back on the owning character/Locker's own tab to remove an item from this chart.</li>
@@ -388,6 +389,7 @@
       <li><b>Parse results empty</b> - verify the log actually contains delve output ("You examine X closely") and that CHAT vs ACTION auto-detection picked the right type.</li>
       <li><b>Community List not found</b> - if running from source rather than the .exe, make sure <code>Olmran_Community_Eq_and_Stats_List.xlsx</code> is in the same folder, or use Browse... to point at it manually.</li>
       <li><b>Can't see everything if the window is resized smaller</b> - the whole window scrolls (mouse wheel, or the scrollbar on the right edge) if it's ever shrunk below what its content needs.</li>
+      <li><b>Window looks blurry or oddly scaled on a multi-monitor setup</b> - fixed as of v6.5.0 for setups where each display uses a different Windows display-scaling percentage; update if you're still seeing it.</li>
     </ul>
 
     <footer>

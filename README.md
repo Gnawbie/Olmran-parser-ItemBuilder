@@ -138,7 +138,16 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.4.5 (Current)
+### v6.5.0 (Current)
+- **Bank Build**: added an **Enchant** column (Character Items, Lockers, and Main alike, between Drop and Item) - shows whatever quality/material prefix (e.g. "Bright", "Shining Mithril") was stripped off the item's name when it was imported, so that text isn't lost even though the cleaned name remains the actual matching key everywhere else (Gear Tag, Share, Trade, and every search/build pool)
+- **Build → Trade**: added a clickable "Olmran Trading Post" link next to the Trade heading, opening https://www.olmrantradingpost.com/ in your browser
+- **Parse → PvP**: added a Kills/Deaths count (e.g. "10/4") next to the Search button for Your Deaths
+- Fixed XP Gained and XP/Hour (and any other comma-formatted number column) sorting alphabetically instead of numerically when clicking the column header
+- Fixed the app not scaling correctly on multi-monitor setups where displays use different Windows display-scaling percentages
+- Fixed a wide-reaching layout bug where several tabs (Results, Saved Builds, Area Items, Bank Build, Manual, Trade, and every Counters sub-tab) forced extra scrolling to reach content that was already short enough to fit on screen, because the tab notebook sized itself to its single largest tab instead of whichever tab was actually showing
+- Fixed the window's bottom edge landing behind the Windows taskbar after maximizing and then restoring it - a side effect of the multi-monitor scaling fix above, since Windows stops auto-correcting window placement once an app declares itself DPI-aware
+
+### v6.4.5
 - **Bank Build**: added a **Trade** column (Character Items and Lockers alike) - a checkbox-style "No"/"Yes" flag, defaulting to No, marking one item as available to trade. Purely bookkeeping - it doesn't affect Bank Build's own search pooling at all, unlike the Share column
 - **Bank Build**: added a new **Trade** tab (next to Manual) - a flat, read-only chart of every item any character or Locker has flagged Trade = Yes, with a Character column showing who owns each one, so there's one place to see everything currently up for trade instead of checking every tab separately
 
