@@ -138,7 +138,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.5.1 (Current)
+### v6.5.2 (Current)
+- **Bank Build**: fixed picking a Gear Tag resetting whatever column the list was currently sorted by back to its stored order - it now updates just that row's Tag cell in place instead of rebuilding the whole table, so the on-screen sort stays put (this also stopped a stray auto-close of the Tag dropdown, with no value actually picked, from doing the same reset).
+
+### v6.5.1
 - **Bank Build**: added a leading **Bank** icon column (📦, or a bold "L" for anything also available via a Locker) to Main, every character tab, every Locker tab, and the Trade tab - same convention already used on Results/Manual.
 - **Bank Build**: Share and Trade flags now persist independently of each character's item list - Clear Saved List, Delete Character, or re-importing after a data wipe no longer loses them, so a big list of items never needs to be re-flagged from scratch.
 

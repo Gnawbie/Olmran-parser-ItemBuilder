@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.5.1"
+VERSION = "6.5.2"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -15039,17 +15039,35 @@ class App(tk.Tk):
 
     def _set_gear_tag(self, item_name, new_val):
         """Write one item's Gear Tag - global per item name, so this
-        redraws every Saved Items treeview (Main and every character), not
-        just the one the edit happened in. Always stored explicitly, even
-        "Blank" - a deliberate choice always overrides the computed
-        default (see _default_gear_tag_for_item), so explicitly blanking
-        an Event item that would otherwise default to "Good Gear" actually
-        shows blank instead of immediately reverting."""
+        updates every Saved Items treeview showing that name (Main and
+        every character), not just the one the edit happened in. Always
+        stored explicitly, even "Blank" - a deliberate choice always
+        overrides the computed default (see _default_gear_tag_for_item),
+        so explicitly blanking an Event item that would otherwise default
+        to "Good Gear" actually shows blank instead of immediately
+        reverting.
+
+        Updates each affected Treeview's Tag cell directly rather than a
+        full _refresh_bank_saved_tab/_refresh_bank_character_tab redraw -
+        a redraw deletes and reinserts every row from scratch in stored
+        order, silently discarding whatever column the user had just
+        clicked to sort by (see _sort_treeview_column's own docstring:
+        the sort is display-only, reset on the next refresh) - jarring
+        since picking a Gear Tag is exactly the kind of thing done
+        repeatedly while looking at a sorted list, and even a spurious
+        commit that doesn't actually change the value (the floating
+        Combobox in _open_gear_tag_editor can fire <FocusOut> just from
+        its dropdown list opening/closing) shouldn't visibly reshuffle
+        anything."""
         self.bank_gear_tags[item_name] = new_val
         self._save_config()
-        self._refresh_bank_saved_tab()
-        for char_name in list(self.bank_character_widgets):
-            self._refresh_bank_character_tab(char_name)
+        trees = ([self.bank_saved_tv] if hasattr(self, 'bank_saved_tv') else
+                 []) + [w['tv'] for w in self.bank_character_widgets.values()]
+        for tv in trees:
+            for row_iid in tv.get_children():
+                display_name = tv.set(row_iid, 'Item')
+                if display_name.removeprefix('::extra:: ') == item_name:
+                    tv.set(row_iid, 'Tag', new_val)
 
     def _default_gear_tag_for_item(self, item_name):
         """Default Gear Tag for an item with no explicit tag of its own
