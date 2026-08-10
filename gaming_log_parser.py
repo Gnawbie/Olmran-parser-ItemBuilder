@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.5.2"
+VERSION = "6.5.3"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -1653,6 +1653,7 @@ def _sort_treeview_column(tv, col, reverse):
     order there IS the persisted export order, curated via its own Move
     Up/Down buttons), or the Parse tab's file list (its own Remove button
     maps a click back to self.files by treeview position)."""
+
     def sort_key(iid):
         val = tv.set(iid, col)
         # Strip thousands-separator commas first (e.g. XP Counter's "XP
@@ -14905,7 +14906,21 @@ class App(tk.Tk):
         write the result back to self.bank_gear_tags (see _set_gear_tag).
         Committing on either <<ComboboxSelected>> (picked a value) or
         <FocusOut> (clicked away without picking) - the `committed` flag
-        stops both from double-firing into a destroyed widget."""
+        stops both from double-firing into a destroyed widget.
+
+        <FocusOut> is deliberately NOT bound until AFTER the dropdown
+        list has actually been posted (see _post below) - posting it
+        (ttk::combobox::Post) hands focus to the list's own internal
+        popdown window for arrow-key navigation, which Tk delivers as an
+        ordinary <FocusOut> on the combobox itself, indistinguishable
+        from the user genuinely clicking away. Binding <FocusOut> only
+        once that transient handoff has already happened means it only
+        ever fires from here on for a REAL loss of focus - this was the
+        actual cause of the editor sometimes closing itself the instant
+        it opened, with nothing picked (reproduced live and confirmed via
+        OLMRAN_DEBUG_CONSOLE logging - every such "instant close" showed
+        a <FocusOut> firing 50-100ms after posting, before any human
+        could plausibly have reacted)."""
         bbox = tv.bbox(row_iid, col_id)
         if not bbox:
             return
@@ -14920,14 +14935,6 @@ class App(tk.Tk):
         combo = ttk.Combobox(tv, textvariable=var, values=GEAR_TAG_OPTIONS, state='readonly')
         combo.place(x=x, y=y, width=width, height=height)
         combo.focus_set()
-        # focus_set() alone doesn't open the dropdown list - the click that
-        # revealed this combobox (the one that landed on the Tag cell
-        # before it existed) never reaches it, so without this the list
-        # only opens on a SECOND, separate click, inconsistently depending
-        # on timing. Posting it explicitly (deferred one tick so the widget
-        # is fully placed/mapped first) makes the very first click that
-        # reveals the combobox also pop its list open, every time.
-        combo.after(1, lambda: combo.tk.call('ttk::combobox::Post', combo))
 
         committed = {'done': False}
         def commit(event=None):
@@ -14939,10 +14946,22 @@ class App(tk.Tk):
                 combo.destroy()
             except tk.TclError:
                 pass
+            _debug_log(f"[GearTag] {item_name!r}: {current!r} -> {new_val!r}")
             self._set_gear_tag(item_name, new_val)
 
         combo.bind('<<ComboboxSelected>>', commit)
-        combo.bind('<FocusOut>', commit)
+
+        # focus_set() alone doesn't open the dropdown list - the click that
+        # revealed this combobox (the one that landed on the Tag cell
+        # before it existed) never reaches it, so without this the list
+        # only opens on a SECOND, separate click, inconsistently depending
+        # on timing. Posting it explicitly (deferred one tick so the widget
+        # is fully placed/mapped first) makes the very first click that
+        # reveals the combobox also pop its list open, every time.
+        def _post():
+            combo.tk.call('ttk::combobox::Post', combo)
+            combo.bind('<FocusOut>', commit)
+        combo.after(1, _post)
 
     def _toggle_shared_item(self, tv, row_iid):
         """Flips one item's Share flag for the ONE character whose tab
@@ -15064,10 +15083,16 @@ class App(tk.Tk):
         trees = ([self.bank_saved_tv] if hasattr(self, 'bank_saved_tv') else
                  []) + [w['tv'] for w in self.bank_character_widgets.values()]
         for tv in trees:
+            before = [tv.set(r, 'Item') for r in tv.get_children()]
             for row_iid in tv.get_children():
                 display_name = tv.set(row_iid, 'Item')
                 if display_name.removeprefix('::extra:: ') == item_name:
                     tv.set(row_iid, 'Tag', new_val)
+            # Canary for a future regression reintroducing a full redraw
+            # here - see this method's own docstring for why that's the
+            # one thing this must never do.
+            if before != [tv.set(r, 'Item') for r in tv.get_children()]:
+                _debug_log(f"[GearTag] !!! row order changed on {tv} after setting {item_name!r} !!!")
 
     def _default_gear_tag_for_item(self, item_name):
         """Default Gear Tag for an item with no explicit tag of its own

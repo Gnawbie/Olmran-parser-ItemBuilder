@@ -138,7 +138,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.5.2 (Current)
+### v6.5.3 (Current)
+- **Bank Build**: fixed the Gear Tag dropdown sometimes closing itself instantly, with nothing picked, right after opening - posting its list momentarily handed focus to the list's own popup, which was misread as the user clicking away. This was also the real cause behind the previous fix not fully sticking - the earlier "resets the list's sort order" report was this same instant-close, not an actual resort.
+
+### v6.5.2
 - **Bank Build**: fixed picking a Gear Tag resetting whatever column the list was currently sorted by back to its stored order - it now updates just that row's Tag cell in place instead of rebuilding the whole table, so the on-screen sort stays put (this also stopped a stray auto-close of the Tag dropdown, with no value actually picked, from doing the same reset).
 
 ### v6.5.1
