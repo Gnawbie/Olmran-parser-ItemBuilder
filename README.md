@@ -138,7 +138,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.5.3 (Current)
+### v6.5.4 (Current)
+- **Area Items**: added a **Castable?** column, right after Level - "Yes"/"No" for weapons (a direct weapon or parry staff can be used while casting; anything else can't), derived straight from the item's own Type. Shields show "Yes" once logged/re-examined with "holdable while casting spells" in their examine text; older shields not yet re-examined show blank rather than a guessed "No". Blank for every other slot (armor, jewelry) - casting-while-holding doesn't apply to them.
+
+### v6.5.3
 - **Bank Build**: fixed the Gear Tag dropdown sometimes closing itself instantly, with nothing picked, right after opening - posting its list momentarily handed focus to the list's own popup, which was misread as the user clicking away. This was also the real cause behind the previous fix not fully sticking - the earlier "resets the list's sort order" report was this same instant-close, not an actual resort.
 
 ### v6.5.2

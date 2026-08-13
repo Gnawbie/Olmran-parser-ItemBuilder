@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.5.3"
+VERSION = "6.5.4"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -797,10 +797,20 @@ class LootParser:
             realm = AREA_TO_REALM.get(closest_area, '') if closest_area else ''
             
             # Build notes with sell price if available
-            notes = ''
+            notes_parts = []
             if delve_stats.get('Worth'):
-                notes = f"sells for {delve_stats['Worth']}"
-            
+                notes_parts.append(f"sells for {delve_stats['Worth']}")
+            # Weapons already encode "holdable while casting spells" as a
+            # "direct" prefix on their own Type (see parse_delve_stats'
+            # post-process step) - Castable? derives that straight from
+            # Type at display time (see Area Items). Shields have no such
+            # place to put it (their Type is just an armor material), so
+            # it's recorded here instead - Area Items' Castable? column
+            # checks for this exact marker text.
+            if delve_stats.get('Slot') == 'shield' and delve_stats.get('HoldableWhileCasting'):
+                notes_parts.append('holdable while casting')
+            notes = '; '.join(notes_parts)
+
             rows.append({
                 'Realm': realm,
                 'Area': closest_area,
@@ -1342,6 +1352,31 @@ def _weapon_style_matches(item_type, style):
         return False
     is_direct = 'direct' in item_type
     return is_direct if style == 'Direct' else not is_direct
+
+
+def _item_castable_display(item):
+    """Yes/No/blank for the Area Items chart's Castable? column - whether
+    the item can be used/held while casting a spell. Weapons resolve
+    definitively straight from their own Type - a "direct" prefix or
+    "staff" substring (see parse_delve_stats' post-process step, and
+    _weapon_style_matches above for the same "staff" special-case) means
+    Yes, anything else (melee/fired/claw/etc.) means No. Shields have no
+    such marker baked into Type (it's just their armor material, e.g.
+    "leather"/"plate") - Notes carries an explicit "holdable while
+    casting" marker instead (see the loot-row Notes construction in
+    parse_file), but only for shields logged/re-examined since that
+    started being captured - an older shield with no marker shows blank
+    (unknown) rather than a possibly-wrong "No". Every other slot (armor,
+    jewel, etc.) is blank too - casting-while-holding isn't a concept
+    that applies to them."""
+    slot = (item.get('Slot') or '').strip().lower()
+    if slot == 'weapon':
+        item_type = (item.get('Type') or '').strip().lower()
+        return 'Yes' if ('direct' in item_type or 'staff' in item_type) else 'No'
+    if slot == 'shield':
+        notes = (item.get('Notes') or '').strip().lower()
+        return 'Yes' if 'holdable while casting' in notes else ''
+    return ''
 
 
 _KNOWN_WANTED_SPELL_BASES = {spell.lower() for spells in SPELL_CATEGORIES.values() for spell in spells}
@@ -10278,9 +10313,9 @@ class App(tk.Tk):
         tree_frame = ttk.Frame(split_frame)
         tree_frame.pack(side='left', fill='both', expand=True)
 
-        cols = ('Realm', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Sigil', 'Level')
+        cols = ('Realm', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Sigil', 'Level', 'Castable?')
         col_widths = {'Realm': 70, 'Mob': 160, 'Item': 220, 'Slot': 55, 'Type': 110,
-                     'Spell': 110, 'Sigil': 60, 'Level': 45}
+                     'Spell': 110, 'Sigil': 60, 'Level': 45, 'Castable?': 70}
         self.area_items_tv = ttk.Treeview(tree_frame, columns=cols, show='headings', height=20)
         for col in cols:
             self.area_items_tv.heading(col, text=col, anchor='center',
@@ -10611,7 +10646,7 @@ class App(tk.Tk):
             self.area_items_tv.insert('', 'end', values=(
                 item.get('Realm', ''), item.get('Mob', ''), item.get('Item', ''),
                 item.get('Slot', ''), item.get('Type', ''), item.get('Spell', ''),
-                item.get('Sigil', ''), item.get('Level', ''),
+                item.get('Sigil', ''), item.get('Level', ''), _item_castable_display(item),
             ))
         self.area_items_status.config(text=f"{len(matches)} item(s)")
 
