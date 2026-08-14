@@ -89,15 +89,17 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 **Crafted items never appear unless the Crafted checkbox is checked** - even if another checked realm would otherwise match part of the item's Realm text (e.g. a "Crafted - Evil" item with only "Evil" checked), and even when no realm boxes are checked at all. Once Crafted is checked, a build can still include **at most one Crafted-realm item** - enforced automatically during the search, not just a filter you have to remember.
 
 **Search**
-- **🎯 Find Optimal Build** — exact search across every slot at once for the combination that covers as many wanted spells as possible (and best satisfies Priority Tier targets) under your constraints, rather than committing slot-by-slot
+- **🎯 Find Optimal Build** — exact search across every slot at once for the single combination that covers as many wanted spells as possible (and best satisfies Priority Tier targets) under your constraints, rather than committing slot-by-slot
 - **📋 Show All Matches** — lists every item that matches your filters, without narrowing to one per slot
-- **🎲 Generate multiple build options** (checkbox) — when checked, "Find Optimal Build" also generates up to 10 alternate full builds by swapping in equally-good "tied" items slot by slot, so you can compare a few options instead of just one
+- **🧩 Find Best Combos** — up to 10 genuinely distinct combinations tied for that same best coverage, including cross-slot swaps a single winner would never surface (e.g. sourcing a spell from Cloak instead of Head, freeing Head for something else)
+- **🧮 Find All Combos** — every combination tied for the best coverage, batched (500 at a time) with a **Load More Combos** button if more exist
 
 ## Results Tab
 - **Display: Best Per Slot / All Matches** — toggle between the two search modes above
-- **Build Variant** dropdown — only active when "Generate multiple build options" produced more than one build; switches which variant is shown
+- **Build Variant** dropdown — active whenever Find Best Combos/Find All Combos found more than one combination; switches which one is shown
 - Results table columns: Slot, Item, Type, Spell, Level, Mob, Area, a thin divider, and **Alt Options** (other items that tied for that slot, if any)
 - **Remove Area** — strip all items from a given area out of the current results (useful for excluding an event/expansion you don't want)
+- **🗑 Clear** — resets the Results tab back to its empty starting state, including any manually-added items
 - **Export Results** — save the current results table to Excel (the divider column is left out automatically)
 
 ## Tips
@@ -138,7 +140,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.5.4 (Current)
+### v6.6.0 (Current)
+- **Build**: replaced the "Generate multiple build options" checkbox (which only ever found near-identical same-slot twins) with two dedicated buttons - **Find Best Combos** (up to 10 genuinely distinct combinations tied for the best coverage, including cross-slot swaps a single winner would never surface) and **Find All Combos** (every tied-optimal combination, batched with a **Load More Combos** button for large result sets).
+- **Results**: added a **Clear** button that resets the tab back to its empty starting state - now also clears any manually-added items (previously they'd silently reappear the next time a search ran).
+
+### v6.5.4
 - **Area Items**: added a **Castable?** column, right after Level - "Yes"/"No" for weapons (a direct weapon or parry staff can be used while casting; anything else can't), derived straight from the item's own Type. Shields show "Yes" once logged/re-examined with "holdable while casting spells" in their examine text; older shields not yet re-examined show blank rather than a guessed "No". Blank for every other slot (armor, jewelry) - casting-while-holding doesn't apply to them.
 
 ### v6.5.3

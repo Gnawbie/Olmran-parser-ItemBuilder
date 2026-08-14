@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.5.4"
+VERSION = "6.6.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -1228,9 +1228,17 @@ SPELL_TIER_RESTRICTIONS = {
 # A build can include at most this many items from the "Crafted" realm.
 MAX_CRAFTED_ITEMS = 1
 
-# Cap on how many alternate full-build variants "Generate multiple build
-# options" will produce (in addition to the primary optimal build).
+# Cap on how many distinct tied-optimal combinations "Find Best Combos"
+# will produce in one shot (see _find_best_combos).
 MAX_BUILD_VARIANTS = 10
+
+# Cap on how many combinations "Find All Combos" pulls per batch (see
+# _find_all_combos/_load_more_combos) - generous, but not unbounded, since
+# some searches could genuinely have thousands of tied-optimal combinations
+# if many items are interchangeable. "Load More Combos" resumes the same
+# underlying generator for the next batch rather than re-searching from
+# scratch.
+MAX_ALL_COMBOS_BATCH = 500
 
 # Counters sub-tab's "Load Log Files" table (see _build_file_list_section's
 # resizable=True path) - drag-resizable between these row counts (a plain
@@ -9845,11 +9853,10 @@ class App(tk.Tk):
                   command=self._on_find_optimal_build_clicked, width=20).pack(side='left', padx=4)
         ttk.Button(self.shared_search_buttons_frame, text="📋 Show All Matches",
                   command=self._show_all_matches, width=20).pack(side='left', padx=4)
-
-        self.generate_multi_builds_var = tk.BooleanVar(value=True)
-        self.generate_multi_builds_checkbox = ttk.Checkbutton(shared_button_frame,
-            text="🎲 Generate multiple build options", variable=self.generate_multi_builds_var)
-        self.generate_multi_builds_checkbox.pack(side='left', padx=(12,4))
+        ttk.Button(self.shared_search_buttons_frame, text="🧩 Find Best Combos",
+                  command=self._find_best_combos, width=20).pack(side='left', padx=4)
+        ttk.Button(self.shared_search_buttons_frame, text="🧮 Find All Combos",
+                  command=self._find_all_combos, width=20).pack(side='left', padx=4)
 
         # ── TRADE TAB ──
         # Flat, read-only chart of every item any character or Locker has
@@ -9928,7 +9935,7 @@ class App(tk.Tk):
         if selected in (self.build_bank_subtab, self.build_manual_subtab, self.build_trade_subtab):
             self.shared_search_buttons_frame.pack_forget()
         else:
-            self.shared_search_buttons_frame.pack(side='left', before=self.generate_multi_builds_checkbox)
+            self.shared_search_buttons_frame.pack(side='left')
 
     # ── RESULTS TAB ───────────────────────────────────────────────
     def _build_results_tab(self):
@@ -9961,11 +9968,19 @@ class App(tk.Tk):
                                                 values=['Build 1'], state='disabled', width=12)
         self.build_variant_combo.pack(side='left', padx=4)
         self.build_variant_combo.bind('<<ComboboxSelected>>', self._switch_build_variant)
-        
+
+        # Only shown after "Find All Combos" hits its per-batch cap with more
+        # combos still available from the live generator - see _find_all_combos/
+        # _load_more_combos. Not packed here (starts hidden).
+        self.load_more_combos_button = ttk.Button(mode_frame, text="⏭ Load More Combos",
+                                                    command=self._load_more_combos)
+
         ttk.Button(header_frame, text="📤 Export As...",
                   command=self._export_build_results).pack(side='right')
         ttk.Button(header_frame, text="📌 Save Build",
                   command=self._save_current_results).pack(side='right', padx=(0,6))
+        ttk.Button(header_frame, text="🗑 Clear",
+                  command=self._clear_results).pack(side='right', padx=(0,6))
 
         # Only shown after a Saved Items "Hard Search" leaves one or more
         # slots as "No available item" - see _update_missing_slots_button_visibility.
@@ -15560,6 +15575,1677 @@ class App(tk.Tk):
         self._save_config()
         self._refresh_bank_saved_tab()
 
+    def _prepare_combo_search(self):
+        """Setup phase shared by _find_best_combos/_find_all_combos - an
+        exact copy of _find_optimal_build's own setup (validation through
+        candidates_by_slot construction), used ONLY by those two new
+        methods so _find_optimal_build itself is never touched by this.
+        Mirrors this file's own existing precedent: _show_all_matches
+        already duplicates this same setup phase rather than sharing it
+        with _find_optimal_build, for the same reason - these are
+        different enough in what they do with the result that forcing a
+        shared helper into _find_optimal_build's existing, heavily-tuned
+        body would be riskier than a second copy.
+
+        Returns None (aborts, same warnings as _find_optimal_build) on
+        invalid input, otherwise a dict bundling everything
+        _enumerate_optimal_combos/_apply_combo_claws need: the partial
+        build (Required Items/Sigils/Max Lvl/Edibles already assigned),
+        its covered_bases/crafted_count/used_claw_items baseline,
+        exact_slots/claw_slots, candidates_by_slot, items_by_slot,
+        wanted_bases/base_list/base_bit, priority_spells/
+        priority_tier_ranks_by_base, min_tier_rank/max_tier_rank,
+        fallback_eligible_slots, max_unowned_items, the starting
+        initial_covered_bitmask/used_sigils_bitmask solve() itself would
+        start from, and the defense_priority_score/melee_constraint_score
+        closures (needed fresh per-combo by claw filling, which - like in
+        _find_optimal_build - is never part of candidates_by_slot)."""
+        # Set this immediately, before any validation checks below can
+        # return early - otherwise clicking this button after a previous
+        # "Show All Matches" left the Results tab stuck showing All Matches
+        # results even though Best Per Slot is what was actually clicked.
+        self.results_display_mode.set('optimal')
+
+        if not self.master_data:
+            messagebox.showwarning("No Data", "Please load a master database first")
+            return
+        
+        # Get wanted spells - Priority Spells are always searched for too, not
+        # just preferred among items that already match a wanted spell, so
+        # they're folded in here before any item filtering happens. None of
+        # these (nor Required Items/Wanted Sigils) are actually required to
+        # run a search - weapon/shield slots always fall back to the best
+        # available item regardless (see is_always_fill_slot below), so a
+        # search with nothing wanted at all still works for e.g. just
+        # weapon-hunting via Weapon/Melee Weapon Constraints.
+        wanted_spells = list(self.wanted_spells_data)
+        priority_spells = list(self.priority_spells_data)
+        wanted_sigils = list(self.wanted_sigils_data)
+
+        # Priority Tiers - each entry pairs a specific spell with a specific
+        # tier. For that spell, the search targets that tier (still preferring
+        # the highest of any priority tiers set for it if more than one),
+        # rather than always chasing the single highest tier available. Other
+        # spells are unaffected. Grouped per base spell for quick lookup below.
+        priority_tier_ranks_by_base = {}
+        for spell, tier in self.priority_tiers_data:
+            priority_tier_ranks_by_base.setdefault(spell, set()).add(_TIER_RANK[tier])
+
+        # A Wanted Spell chip added with an explicit tier (not "(any)") is
+        # itself an implicit tier target, same as manually adding it to
+        # Priority Tier - picking "Dexterity ii" specifically should search
+        # for tier ii, not silently upgrade to the highest tier available
+        # just because a tier iii dexterity item exists somewhere. A chip
+        # added as "(any)" (no tier suffix) still has no target, so those
+        # keep today's "prefer the highest tier found" behavior. Skipped
+        # for a base that already has an explicit Priority Tier entry -
+        # that's a deliberate, more specific request (Priority Tier can
+        # target a tier *lower* than what a same-spell chip asked for,
+        # e.g. for cost/rarity reasons - it shouldn't get diluted/outvoted
+        # by the chip's own tier just because that tier happens to be higher).
+        for wanted in wanted_spells:
+            base = _spell_base(wanted)
+            if base in priority_tier_ranks_by_base:
+                continue
+            explicit_tier = _spell_tier_rank(wanted)
+            if explicit_tier > 0:
+                priority_tier_ranks_by_base.setdefault(base, set()).add(explicit_tier)
+
+        # Base spells (tier stripped) for the early candidate filter below -
+        # a lower/higher tier than exactly requested should still qualify an
+        # item as a candidate, not just an exact tier match.
+        wanted_spell_bases = {_spell_base(w) for w in wanted_spells}
+        wanted_spell_bases.update(priority_spells)
+
+        # Wanted Sigils - lowercased for the early candidate filter below,
+        # same idea as wanted_spell_bases but matched against an item's own
+        # Sigil value instead of its Spell, and only for the armor slots
+        # Wanted Sigils applies to (see ARMOR_SIGIL_SLOTS).
+        wanted_sigils_lower = {s.strip().lower() for s in wanted_sigils}
+
+        # Bank Build's "Prioritize Saved Items" - self._bank_owned_keys is
+        # set by _find_character_saved_items_build right before calling
+        # this, cleared right after (see _is_bank_owned). None (the normal
+        # case, every other search) means owned_match is always 0 below.
+
+        # Clear previous results - skipped when this call is only being
+        # used as an internal subroutine (see self._suppress_results_redraw,
+        # set by _search_missing_slots while repopulating self.items_by_slot
+        # for its own single-slot lookup), so the Results tab never visibly
+        # flashes an incomplete/unrelated build on screen while that lookup
+        # is in progress.
+        if not self._suppress_results_redraw:
+            self.search_results_tv.delete(*self.search_results_tv.get_children())
+
+        # Get level constraints
+        min_level = None
+        max_level = None
+        specific_level = None
+
+        # Check for specific level first (takes precedence)
+        specific_level_str = self.specific_level_var.get().strip()
+        if specific_level_str:
+            try:
+                specific_level = int(specific_level_str)
+            except ValueError:
+                messagebox.showwarning("Invalid Level", "Specific level must be a number")
+                return
+        else:
+            # If no specific level, check min/max
+            min_level_str = self.min_level_var.get().strip()
+            if min_level_str:
+                try:
+                    min_level = int(min_level_str)
+                except ValueError:
+                    messagebox.showwarning("Invalid Level", "Minimum level must be a number")
+                    return
+
+            max_level_str = self.max_level_var.get().strip()
+            if max_level_str:
+                try:
+                    max_level = int(max_level_str)
+                except ValueError:
+                    messagebox.showwarning("Invalid Level", "Maximum level must be a number")
+                    return
+
+            # Validate min <= max
+            if min_level is not None and max_level is not None and min_level > max_level:
+                messagebox.showwarning("Invalid Range", "Minimum level cannot be greater than maximum level")
+                return
+
+        # Min/Max Tier - bounds how far a spell match can fall back to a
+        # different tier than exactly requested (blank side = unbounded).
+        min_tier_rank = _TIER_RANK.get(self.min_tier_var.get()) if self.min_tier_var.get() else None
+        max_tier_rank = _TIER_RANK.get(self.max_tier_var.get()) if self.max_tier_var.get() else None
+        if min_tier_rank is not None and max_tier_rank is not None and min_tier_rank > max_tier_rank:
+            messagebox.showwarning("Invalid Range", "Minimum tier cannot be greater than maximum tier")
+            return
+
+        # Weight range - Melee Weapon Constraints' min/max on the item
+        # list's Weight column (blank side = unbounded). Soft preference by
+        # default; "Hard Filter" checked makes it exclude out-of-range
+        # weapons outright instead, same as Min/Max Level does for level.
+        weapon_weight_min = None
+        weapon_weight_max = None
+        weapon_weight_min_str = self.weapon_weight_min_var.get().strip()
+        if weapon_weight_min_str:
+            try:
+                weapon_weight_min = int(weapon_weight_min_str)
+            except ValueError:
+                messagebox.showwarning("Invalid Weight", "Minimum weight must be a number")
+                return
+        weapon_weight_max_str = self.weapon_weight_max_var.get().strip()
+        if weapon_weight_max_str:
+            try:
+                weapon_weight_max = int(weapon_weight_max_str)
+            except ValueError:
+                messagebox.showwarning("Invalid Weight", "Maximum weight must be a number")
+                return
+        if weapon_weight_min is not None and weapon_weight_max is not None and weapon_weight_min > weapon_weight_max:
+            messagebox.showwarning("Invalid Range", "Minimum weight cannot be greater than maximum weight")
+            return
+        weapon_weight_hard = self.weapon_weight_hard_var.get()
+
+        def _weapon_weight_in_range(item):
+            """True if item's Weight falls within the configured range, or
+            there's no range set at all. An item with a blank/non-numeric
+            Weight fails this (same convention as Level filtering elsewhere
+            in this search: missing data can't be confirmed in range, so it
+            doesn't pass a hard filter) - only matters when Hard Filter is
+            actually checked, since this is never called otherwise."""
+            if weapon_weight_min is None and weapon_weight_max is None:
+                return True
+            try:
+                item_weight = int(item.get('Weight') or '')
+            except (ValueError, TypeError):
+                return False
+            if weapon_weight_min is not None and item_weight < weapon_weight_min:
+                return False
+            if weapon_weight_max is not None and item_weight > weapon_weight_max:
+                return False
+            return True
+
+        def _weapon_weight_soft_match(item):
+            """True only if item has a real, in-range Weight - unlike
+            _weapon_weight_in_range (used for the hard filter, where a
+            blank/non-numeric Weight passes through untouched), a blank
+            Weight earns no soft-preference bonus here since there's
+            nothing to actually match."""
+            if weapon_weight_min is None and weapon_weight_max is None:
+                return False
+            try:
+                item_weight = int(item.get('Weight') or '')
+            except (ValueError, TypeError):
+                return False
+            if weapon_weight_min is not None and item_weight < weapon_weight_min:
+                return False
+            if weapon_weight_max is not None and item_weight > weapon_weight_max:
+                return False
+            return True
+
+        # Defense range - always a soft preference here (never excludes an
+        # item, so every slot still gets filled even when nothing in range
+        # is available): checking "Defense:" prioritizes in-range items over
+        # out-of-range ones when the search would otherwise be indifferent.
+        defense_priority_active = self.use_defense_filter_var.get()
+        defense_min_rank = None
+        defense_max_rank = None
+        if defense_priority_active:
+            defense_min_rank = DEFENSE_RANK[self.min_defense_var.get()]
+            defense_max_rank = DEFENSE_RANK[self.max_defense_var.get()]
+            if defense_min_rank > defense_max_rank:
+                messagebox.showwarning("Invalid Range", "Minimum Defense cannot be greater than maximum Defense")
+                return
+
+        # Per-slot Defense - stacks with the global control above rather than
+        # replacing it: an item earns a priority point for each range (global
+        # and/or this slot's own) it satisfies.
+        slot_defense_priority_active = {}
+        slot_defense_min_rank = {}
+        slot_defense_max_rank = {}
+        for slot, controls in self.slot_defense_controls.items():
+            priority_active = controls['use'].get()
+            slot_defense_priority_active[slot] = priority_active
+            if priority_active:
+                min_rank = DEFENSE_RANK[controls['min'].get()]
+                max_rank = DEFENSE_RANK[controls['max'].get()]
+                if min_rank > max_rank:
+                    messagebox.showwarning("Invalid Range",
+                        f"Minimum Defense cannot be greater than maximum Defense ({slot.title()})")
+                    return
+                slot_defense_min_rank[slot] = min_rank
+                slot_defense_max_rank[slot] = max_rank
+
+        # Shield Constraints' Defense - a single-value pick, fed into the
+        # same per-slot machinery above as an exact one-value range.
+        shield_defense_choice = self.shield_defense_var.get()
+        if shield_defense_choice != 'Any':
+            shield_defense_rank = DEFENSE_RANK[shield_defense_choice]
+            slot_defense_priority_active['shield'] = True
+            slot_defense_min_rank['shield'] = shield_defense_rank
+            slot_defense_max_rank['shield'] = shield_defense_rank
+        else:
+            slot_defense_priority_active['shield'] = False
+
+        def _defense_priority_score(item, lookup_slot):
+            """Sum of priority points this item earns toward Defense
+            targets - up to 2 (global + this slot's own), never a hard
+            requirement, so it never keeps a slot from being filled."""
+            score = 0
+            item_defense_rank = None
+            if defense_priority_active or slot_defense_priority_active.get(lookup_slot):
+                item_defense_rank = DEFENSE_RANK.get((item.get('Defense') or '').strip().lower())
+            if defense_priority_active and item_defense_rank is not None and defense_min_rank <= item_defense_rank <= defense_max_rank:
+                score += 1
+            if (slot_defense_priority_active.get(lookup_slot) and item_defense_rank is not None
+                    and slot_defense_min_rank[lookup_slot] <= item_defense_rank <= slot_defense_max_rank[lookup_slot]):
+                score += 1
+            return score
+
+        # Per-slot Sigil - soft preference, same philosophy as Defense: pick
+        # a Sigil type for a slot and the search favors whichever candidate
+        # for that slot carries it at the highest SigilLvl, but an item
+        # without it is still eligible, so the slot never goes unfilled.
+        slot_sigil_choice = {
+            slot: var.get().strip().lower()
+            for slot, var in self.slot_sigil_vars.items()
+            if var.get() != 'Any'
+        }
+        # Shield Constraints' Sigil - same mechanism, just one more slot.
+        if self.shield_sigil_var.get() != 'Any':
+            slot_sigil_choice['shield'] = self.shield_sigil_var.get().strip().lower()
+
+        def _sigil_priority_score(item, lookup_slot):
+            """(sigil_match, sigil_level) for this item against the Sigil
+            chosen for lookup_slot - (0, 0) if none chosen or it doesn't
+            match, never a hard requirement."""
+            wanted_sigil = slot_sigil_choice.get(lookup_slot)
+            if not wanted_sigil:
+                return (0, 0)
+            item_sigil = (item.get('Sigil') or '').strip().lower()
+            if item_sigil != wanted_sigil:
+                return (0, 0)
+            try:
+                sigil_level = int(item.get('SigilLvl') or 0)
+            except (ValueError, TypeError):
+                sigil_level = 0
+            return (1, sigil_level)
+
+        # Melee Weapon Constraints - soft preferences that only apply to
+        # Melee-styled weapons (non-direct, non-staff item type). Never a
+        # hard requirement: the search always matches as many of these as it
+        # can, but still fills the slot with the best available item even if
+        # none match. Priority-checked fields (capped at 3) outscore the rest.
+        melee_constraint_fields = [
+            (self.melee_damage_var.get(), self.melee_damage_priority_var.get(), 'Damage'),
+            (self.melee_timer_var.get(), self.melee_timer_priority_var.get(), 'Timer'),
+            (self.melee_fumble_var.get(), self.melee_fumble_priority_var.get(), 'Fumble'),
+            (self.melee_accuracy_var.get(), self.melee_accuracy_priority_var.get(), 'Accuracy'),
+            (self.melee_sigil_var.get(), self.melee_sigil_priority_var.get(), 'Sigil'),
+        ]
+
+        def _melee_constraint_score(item, item_type):
+            """(priority_matches, normal_matches) toward the Melee Weapon
+            Constraints dropdowns - despite the section's name, these apply
+            to any weapon style (Melee/Direct/Parry/Fired), not just plain
+            Melee ones; Direct and Parry Staff items carry these same stat
+            columns (Damage/Timer/Fumble/Accuracy/Sigil) too. (0, 0) if
+            nothing is set beyond 'Any'."""
+            priority_matches = 0
+            normal_matches = 0
+            for value, is_priority, column in melee_constraint_fields:
+                if value == 'Any':
+                    continue
+                item_value = str(item.get(column) or '').strip()
+                if column == 'Sigil' and value == 'None':
+                    matched = not item_value
+                else:
+                    matched = item_value.lower() == value.lower()
+                if matched:
+                    if is_priority:
+                        priority_matches += 1
+                    else:
+                        normal_matches += 1
+            # Weight - no Priority checkbox of its own (see the Hard Filter
+            # toggle instead), so it's always counted as a normal (non-
+            # priority) match, same tier as an unchecked Damage/Timer/
+            # Fumble/Accuracy/Sigil field above.
+            if _weapon_weight_soft_match(item):
+                normal_matches += 1
+            return (priority_matches, normal_matches)
+
+        # Get armor type constraints from checkboxes
+        armor_constraints = {}
+        for slot in ['head', 'cloak', 'body', 'hands', 'legs', 'feet']:
+            # Get checked armor types for this slot
+            checked_types = []
+            for armor_type in ['cloth', 'leather', 'studded', 'plate']:
+                if self.armor_checks[slot][armor_type].get():
+                    checked_types.append(armor_type)
+            armor_constraints[slot] = checked_types  # List of allowed types (empty = any)
+        # Shield Constraints' armor type checkboxes - shields are technically
+        # armor, so this reuses the exact same hard-filter mechanism as the
+        # Armor Constraints tab's per-slot checkboxes, just sourced from
+        # Weapon Constraints' own Shield Constraints checkboxes instead.
+        armor_constraints['shield'] = [t for t in ('leather', 'studded', 'plate')
+                                       if self.shield_armor_checks[t].get()]
+
+        # Weapon Types/Combo's - each has its own Style and/or Damage Type
+        # dropdown(s) (Claw has neither); the old global Weapon Style radios
+        # and Damage Type checkboxes have been removed in favor of these.
+        wants_two_handed = self.two_handed_var.get()
+        two_handed_style = self.two_handed_style_var.get()
+        two_handed_damage = self.two_handed_damage_var.get()
+        wants_claw_1 = self.claw_1_var.get()
+        wants_claw_2 = self.claw_2_var.get()
+        wants_dual_wield_1h = self.dual_wield_1h_var.get()
+        dual_wield_1h_main = self.dual_wield_1h_main_var.get()
+        dual_wield_1h_off = self.dual_wield_1h_off_var.get()
+        wants_1h_shield = self.combo_1h_shield_var.get()
+        combo_1h_shield_style = self.combo_1h_shield_style_var.get()
+        combo_1h_shield_damage = self.combo_1h_shield_damage_var.get()
+        wants_2h_shield = self.combo_2h_shield_var.get()
+        combo_2h_shield_damage = self.combo_2h_shield_damage_var.get()
+        # Fired 1h and Shield - "fired" is its own weapon shape in the item
+        # list with no slash/thrust/crush sub-variant, so no dropdown needed.
+        wants_fired_1h_shield = self.combo_fired_1h_shield_var.get()
+
+        # Most real weapons carry no Spell at all, so a checked combo has to
+        # be able to pull one in without relying on the spell-match gate
+        # below - otherwise the "always fill this slot" checkboxes would
+        # never actually fill anything. Weapon-combo items still compete on
+        # spell coverage first when they do have one; a spell-less item is
+        # just the fallback pick when nothing better is available (see the
+        # exact-search scoring, which already ranks coverage above all else).
+        any_weapon_combo_active = (wants_two_handed or wants_dual_wield_1h or wants_1h_shield
+                                    or wants_2h_shield or wants_fired_1h_shield)
+        any_shield_combo_active = wants_1h_shield or wants_2h_shield or wants_fired_1h_shield
+        # Claws also carry no Spell in practice - same reasoning applies.
+        any_claw_combo_active = wants_claw_1 or wants_claw_2
+
+        # Filter items by constraints and group by slot
+        items_by_slot = {}
+        all_slots = ['head', 'jewel', 'jewel', 'cloak', 'body', 'hands', 'legs', 'feet', 'weapon', 'shield']
+
+        for item in self.master_data:
+            if _bank_item_key(item) in self.excluded_item_keys:
+                continue  # manually removed from the Results tab (right-click) - see _remove_item_from_build
+            item_slot = (item.get('Slot') or '').lower()
+            item_spell = (item.get('Spell') or '').lower()
+            item_type = (item.get('Type') or '').lower()
+            item_sigil = (item.get('Sigil') or '').strip().lower()
+            item_realm = (item.get('Realm') or '').strip()
+
+            # Edibles are handled entirely by the dedicated block near the
+            # end of this method (see self._edible_candidates) - skipped
+            # here so one never ends up sitting in the normal per-slot
+            # candidate pool under whatever raw Slot value it carries.
+            if item_type.strip() == 'edible':
+                continue
+
+            # Claws are stored in the source data as Slot=weapon/Type=claw,
+            # not a distinct Slot='claw' value - there is no such value
+            # anywhere in the bundled equipment list, so any check against
+            # item_slot == 'claw' can never match a real row.
+            is_claw_item = item_slot == 'weapon' and 'claw' in item_type
+
+            is_combo_mandated_slot = ((item_slot == 'weapon' and not is_claw_item and any_weapon_combo_active)
+                                       or (item_slot == 'shield' and any_shield_combo_active)
+                                       or (is_claw_item and any_claw_combo_active))
+            # Weapon and shield are always in slots_to_fill (see below) even
+            # with no combo checked at all, so they must always be allowed to
+            # fall back to a non-wanted-spell (or spell-less) item too - not
+            # just when a combo happens to be active - otherwise, once
+            # nothing carrying the wanted spell is left, the candidate pool
+            # for these slots would be empty and the exact search's own
+            # zero-new-coverage fallback (further below) would have nothing
+            # to pick from except items already claimed by another slot,
+            # which is what caused the same spell/tier to appear to be
+            # "duplicated" into a second slot for no real benefit.
+            is_always_fill_slot = (item_slot == 'weapon' and not is_claw_item) or item_slot == 'shield'
+
+            # Crafted items never show up unless the Crafted checkbox is
+            # explicitly checked - even if the item's Realm string also
+            # happens to contain another checked realm (e.g. "Crafted -
+            # Evil" checked when only "Evil" is on), and even when no realm
+            # checkboxes are checked at all (Crafted is not part of the
+            # implicit "search everything" default). The at-most-one-
+            # Crafted-item-per-build cap below still applies once Crafted
+            # is checked.
+            if 'crafted' in item_realm.lower() and not self.realm_filters['Crafted'].get():
+                continue
+
+            # Non-Kaid/Non-Event - hard exclusions that always apply
+            # exactly as checked, independent of the inclusion filter
+            # below (see the checkboxes' own comment for why). Non-Event
+            # excludes Glory Bea too, since it's also event-sourced.
+            if self.exclude_kaid_var.get() and 'kaid' in item_realm.lower():
+                continue
+            if self.exclude_event_var.get() and (
+                    'event' in item_realm.lower() or 'glory bea' in item_realm.lower()):
+                continue
+
+            # Apply realm filter if any selected ("All" means none - see
+            # _update_realm_all_exclusivity). Skipped entirely whenever
+            # self._bank_items_restricted is set - Bank Build's Hard
+            # Search and Rebuild (Saved Items First)'s own Pass 1 both
+            # restrict candidates to just already-owned Saved Items, so
+            # an item's drop realm is moot: the player already owns it
+            # regardless of where it originally came from. Without this,
+            # an owned item sitting in an unchecked realm (e.g. a Kaid
+            # Purple drop when only Kaid Red/Green/White are checked, or
+            # an Event-realm item when Event isn't checked) would
+            # silently vanish from its own Bank Build/Rebuild search even
+            # though nothing else in the pool can replace it.
+            selected_realms = ([] if self.realm_filter_all_var.get()
+                                   or getattr(self, '_bank_items_restricted', False)
+                              else [realm for realm, var in self.realm_filters.items() if var.get()])
+            if selected_realms:
+                realm_match = False
+                for selected in selected_realms:
+                    if selected.lower() in item_realm.lower():
+                        realm_match = True
+                        break
+                # Additive on top of the plain "Event" checkbox, not a
+                # replacement for it - a specifically-checked event Area
+                # (Only Found In's own "Events" tab) still counts even when
+                # broad realm selections above didn't include this item,
+                # same as owning an item makes its realm moot elsewhere.
+                if not realm_match and 'event' in item_realm.lower():
+                    item_area = (item.get('Area') or '').strip()
+                    if any(item_area == area and var.get()
+                           for area, var in self.event_area_vars.items()):
+                        realm_match = True
+                if not realm_match:
+                    continue
+
+            # Weight - only meaningful for weapons (includes claws, which
+            # are stored as Slot=weapon too). Hard Filter excludes anything
+            # outside the range outright; otherwise it's left as a soft
+            # preference, scored later in _melee_constraint_score.
+            if item_slot == 'weapon' and weapon_weight_hard and not _weapon_weight_in_range(item):
+                continue
+
+            # Wanted Sigils - many armor pieces carry a Sigil but no Spell at
+            # all, so without this an item that only satisfies a Wanted
+            # Sigil would never even become a candidate below. Scoped to the
+            # armor slots Wanted Sigils applies to (see ARMOR_SIGIL_SLOTS).
+            has_wanted_sigil = (bool(wanted_sigils_lower) and item_slot in ARMOR_SIGIL_SLOTS
+                                and item_sigil in wanted_sigils_lower)
+
+            # Skip items without spells - unless a weapon/shield combo wants
+            # this slot filled regardless (most real weapons have no spell),
+            # or the item is otherwise wanted for its Sigil alone.
+            if not item_spell and not has_wanted_sigil and not is_combo_mandated_slot and not is_always_fill_slot:
+                continue
+
+            # Check if item's spell matches any wanted or priority spell's
+            # base - any tier counts here, so an item at a different tier
+            # than exactly requested still becomes an eligible candidate.
+            has_wanted_spell = False
+            for wanted in wanted_spell_bases:
+                if wanted in item_spell:
+                    has_wanted_spell = True
+                    break
+
+            if not has_wanted_spell and not has_wanted_sigil and not is_combo_mandated_slot and not is_always_fill_slot:
+                continue
+
+            # Apply level constraints
+            if specific_level is not None or min_level is not None or max_level is not None:
+                item_level_str = item.get('Level', '')
+                if item_level_str:
+                    try:
+                        item_level = int(item_level_str)
+
+                        # Check specific level - a fallback policy other than
+                        # "Don't populate slot" widens this to "at or below"
+                        # so lower-level/tier candidates are still in the
+                        # pool for the per-base qualification check further
+                        # below to consider; never above, since fallback
+                        # only ever goes down.
+                        if specific_level is not None:
+                            if self.specific_level_fallback_var.get() == 'none':
+                                if item_level != specific_level:
+                                    continue
+                            elif item_level > specific_level:
+                                continue
+                        # Check min/max range
+                        else:
+                            if min_level is not None and item_level < min_level:
+                                continue
+                            if max_level is not None and item_level > max_level:
+                                continue
+                    except ValueError:
+                        # Skip items with invalid level data
+                        continue
+                else:
+                    # Skip items without level data when filtering by level
+                    continue
+            
+            # Defense is never a hard filter here - it's scored later as a
+            # soft preference (see _defense_priority_score) so a slot is
+            # never left empty just because nothing hits the Defense range.
+
+            # Apply armor type constraints (checkboxes)
+            if item_slot in armor_constraints:
+                allowed_types = armor_constraints[item_slot]
+                # If any checkboxes are checked, item must match one of them
+                if allowed_types:
+                    type_match = False
+                    for allowed_type in allowed_types:
+                        if allowed_type.lower() in item_type:
+                            type_match = True
+                            break
+                    if not type_match:
+                        continue
+            
+            # Apply weapon/shield/claw constraints. The old global Weapon
+            # Style radios and Damage Type checkboxes are gone - Style and
+            # Damage Type are now per-combo dropdowns (see each branch below).
+            if item_slot == 'weapon' or item_slot == 'shield':
+                slot_accepted = True
+                offhand_weapon_accepted = False  # only ever set for physical (non-claw) weapon items
+
+                if is_claw_item:
+                    # Claws (Slot=weapon/Type=claw) have no Style or Damage
+                    # Type dropdown - 1 Claw fills one claw slot, 2 Claw
+                    # fills both. Handled entirely separately from the
+                    # physical-weapon sub-matching below, which a Type=claw
+                    # item could never satisfy anyway (its Type string is
+                    # just "claw" - no 1h/2h/offhand/fired substring).
+                    slot_accepted = wants_claw_1 or wants_claw_2
+                else:
+                    # If no combo is checked, accept everything
+                    has_any_config = (wants_two_handed or wants_claw_1 or wants_claw_2
+                                       or wants_dual_wield_1h or wants_1h_shield
+                                       or wants_2h_shield or wants_fired_1h_shield)
+
+                    if has_any_config:
+                        slot_accepted = False
+
+                        if item_slot == 'weapon':
+                            is_offhand = 'offhand' in item_type
+                            is_1h = '1h' in item_type
+                            is_2h = '2h' in item_type
+                            is_fired = 'fired' in item_type
+
+                            # Two-handed weapons, gated by their own Style
+                            # (Melee/Direct/Parry/Fired) and Damage Type dropdowns
+                            if wants_two_handed and _two_handed_matches(item_type, item_spell, two_handed_style, two_handed_damage):
+                                slot_accepted = True
+                            # Dual-Wield 1h - main hand: 1h, non-offhand,
+                            # matching the Main dropdown's damage type
+                            if (wants_dual_wield_1h and is_1h and not is_offhand
+                                    and _weapon_damage_matches(item_type, dual_wield_1h_main)):
+                                slot_accepted = True
+                            # 1h/Shield: 1h, non-offhand, matching its own
+                            # Style (Melee/Direct - no Parry option here) and
+                            # Damage Type dropdowns. Direct additionally requires
+                            # some spell to be present (see _direct_weapon_eligible).
+                            if (wants_1h_shield and is_1h and not is_offhand
+                                    and _weapon_style_matches(item_type, combo_1h_shield_style)
+                                    and (combo_1h_shield_style != 'Direct' or _direct_weapon_eligible(item_spell))
+                                    and _weapon_damage_matches(item_type, combo_1h_shield_damage)):
+                                slot_accepted = True
+                            # 2h/Shield: 2h, matching its own damage type
+                            if (wants_2h_shield and is_2h
+                                    and _weapon_damage_matches(item_type, combo_2h_shield_damage)):
+                                slot_accepted = True
+                            # Fired 1h and Shield: "fired" is its own weapon
+                            # shape, no separate damage type to match.
+                            if wants_fired_1h_shield and is_fired and is_1h and not is_offhand:
+                                slot_accepted = True
+
+                            # Dual-Wield 1h - off hand: offhand-tagged 1h item
+                            # matching the Off-Hand dropdown's damage type.
+                            # Independent of the main-hand outcome above, so
+                            # this same item can be considered for the
+                            # separate weapon_off slot even when it wasn't
+                            # accepted as a main-hand candidate.
+                            if (wants_dual_wield_1h and is_1h and is_offhand
+                                    and _weapon_damage_matches(item_type, dual_wield_1h_off)):
+                                offhand_weapon_accepted = True
+
+                        elif item_slot == 'shield':
+                            # Shields - only implied by a weapon+shield combo
+                            # now (plain "Shield" was removed)
+                            if wants_1h_shield or wants_2h_shield or wants_fired_1h_shield:
+                                slot_accepted = True
+
+                if not slot_accepted and not offhand_weapon_accepted:
+                    continue
+
+            # Add to slot group. The 'weapon' slot splits into three candidate
+            # pools - main-hand (items_by_slot['weapon']), off-hand (only
+            # relevant when Dual-Wield 1h is checked, items_by_slot['weapon_off']),
+            # and claws (items_by_slot['claw'], Type=claw items only) - since
+            # the same physical item can never satisfy more than one of
+            # these, an item lands in at most one bucket.
+            if is_claw_item:
+                if slot_accepted:
+                    items_by_slot.setdefault('claw', []).append(item)
+            elif item_slot == 'weapon':
+                if slot_accepted:
+                    items_by_slot.setdefault('weapon', []).append(item)
+                if offhand_weapon_accepted:
+                    items_by_slot.setdefault('weapon_off', []).append(item)
+            else:
+                items_by_slot.setdefault(item_slot, []).append(item)
+
+        # Kept for Alt Options: any other item sharing a slot's spell, within
+        # the same level/armor/weapon/realm constraints already applied above.
+        self.items_by_slot = items_by_slot
+
+        # OPTIMAL BUILD ALGORITHM: Greedy approach to cover maximum spells
+        # Wanted spells are grouped by base name (stripping .i/.ii/.iii) so that
+        # requesting the same spell at two tiers is one requirement, not two -
+        # a single item satisfying either tier fills it, instead of hunting for
+        # a second item elsewhere in the build.
+        wanted_bases = {}
+        for wanted in wanted_spells:
+            wanted_bases.setdefault(_spell_base(wanted), []).append(wanted)
+
+        # Priority Spells are always searched for, not just preferred among
+        # items that already match a wanted spell - merge them in as their own
+        # base so an item providing only a priority spell (nothing else wanted)
+        # still qualifies as a candidate and actively gets sought out.
+        for p in priority_spells:
+            wanted_bases.setdefault(p, []).append(p)
+
+        # Specific Level fallback - for each base spell, the set of tiers
+        # explicitly requested (a bare/"(any)" chip or a Priority Spell
+        # contributes no tier, leaving this empty - tier is already
+        # unconstrained for those regardless of the fallback policy below).
+        base_target_tier_ranks = {
+            base: {_spell_tier_rank(w) for w in wanteds if _spell_tier_rank(w) > 0}
+            for base, wanteds in wanted_bases.items()
+        }
+        specific_level_fallback = self.specific_level_fallback_var.get() if specific_level is not None else 'none'
+
+        def _specific_level_qualifies(base, item_level_num, item_tier):
+            """Whether an item carrying `base` at `item_level_num`/`item_tier`
+            counts toward that wanted base under Specific Level - True
+            unconditionally when Specific Level isn't set. Each fallback
+            policy relaxes exactly one or both of level/tier away from an
+            exact match; "Don't populate slot" (or no Specific Level fallback
+            requested) requires both exactly. Levels/tiers are only ever
+            relaxed downward, never up - matching the widened raw level
+            filter above, which never lets an item above Specific Level
+            through in the first place.
+
+            Saved Items' Hard Search (self._hard_search_strict_tier) adds
+            its own tier gate on top, independent of Specific Level: a
+            wanted spell's explicit tier is a hard requirement there, so an
+            item at any other tier never counts as covering that base
+            (regardless of what the Specific Level fallback policy would
+            otherwise allow) - the base is simply left uncovered, which
+            falls through to the "No available item" reporting instead of
+            silently substituting a different tier."""
+            target_ranks = base_target_tier_ranks.get(base)
+            tier_exact = (not target_ranks) or (item_tier in target_ranks)
+            if getattr(self, '_hard_search_strict_tier', False) and not tier_exact:
+                return False
+
+            if specific_level is None:
+                return True
+            level_exact = (item_level_num == specific_level)
+
+            if specific_level_fallback == 'none':
+                return level_exact and tier_exact
+            if specific_level_fallback == 'tier':
+                if not level_exact:
+                    return False
+                return tier_exact or (bool(target_ranks) and 0 < item_tier <= max(target_ranks))
+            if specific_level_fallback == 'level':
+                if not tier_exact:
+                    return False
+                return item_level_num <= specific_level
+            # 'both' - level and tier can each independently fall short of
+            # exact, as long as neither goes above what was requested.
+            tier_ok = tier_exact or (bool(target_ranks) and 0 < item_tier <= max(target_ranks))
+            return item_level_num <= specific_level and tier_ok
+
+        build = {}
+        covered_bases = set()
+        self.slot_alternates = {}
+        # Same idea as slot_alternates but ignoring ownership - populated
+        # alongside it in the post-hoc alternates pass below. slot_alternates
+        # requires the exact same owned_match (needed so "Generate multiple
+        # build options" never swaps an owned item for an unowned one by
+        # accident); this instead answers "what unowned items are otherwise
+        # just as good as whatever's in this slot", regardless of what's
+        # currently there - used by _generate_capped_unowned_variants to
+        # offer purely-cosmetic swaps for variety once a cap has spare
+        # unowned-item budget left over that coverage alone didn't need.
+        self.slot_unowned_alternates = {}
+
+        # Force any Required Items directly into the build first - they aren't
+        # subject to the other filters (armor/weapon/level/realm), since the
+        # user explicitly asked for them. The rest of the build is calculated
+        # around them: their spells count as covered and their slots are skipped
+        # below, same as anything the greedy search would have picked itself.
+        crafted_count, used_claw_items = self._assign_required_items(build, covered_bases, wanted_bases)
+
+        # Wanted Sigils' own two per-chip circles - a harder ask than the
+        # passive Wanted Sigils scoring bonus below, so these get forced
+        # in right alongside Required Items, before anything else
+        # (including Max Lvl) gets a chance to claim the same slot.
+        self._assign_required_sigils(build, covered_bases, wanted_bases, items_by_slot)
+
+        # Max Lvl (Armor Constraints) - up to 3 armor slots can be marked to
+        # greedily grab the highest-level candidate for that slot BEFORE the
+        # exact search below runs, rather than letting the exact search pick
+        # whichever item best optimizes overall spell coverage. Candidates
+        # here are already restricted to items carrying a wanted/priority
+        # spell and matching that slot's armor type checkboxes (Cloth/
+        # Leather/Studded/Plate), since items_by_slot was built with those
+        # filters already applied - Max Lvl only changes which of those
+        # already-eligible items wins, never what's eligible in the first
+        # place. Ties (same highest level) are broken the same way the exact
+        # search would: Priority Spell match, then Priority Tier match, then
+        # Sigil match/level, then Defense preference, then spell tier, then
+        # (last resort - see used_sigils_bitmask below) a Sigil not already
+        # used elsewhere in the build.
+        used_sigils_bitmask = 0
+        for existing_item in build.values():
+            used_sigils_bitmask |= _sigil_bit_for_item(existing_item)
+
+        for slot, var in self.armor_maxlvl_vars.items():
+            if not var.get() or slot in build:
+                continue
+            best_item = None
+            best_key = None
+            for item in items_by_slot.get(slot, []):
+                is_crafted = 'crafted' in (item.get('Realm') or '').strip().lower()
+                if is_crafted and crafted_count >= MAX_CRAFTED_ITEMS:
+                    continue
+                try:
+                    item_level_num = int(item.get('Level') or 0)
+                except (ValueError, TypeError):
+                    item_level_num = 0
+                item_spell = (item.get('Spell') or '').lower()
+                item_tier = _item_tier_rank(item_spell)
+                item_base = _spell_base(item_spell)
+                priority_matches = sum(1 for p in priority_spells if p in item_spell)
+                item_priority_tiers = priority_tier_ranks_by_base.get(item_base)
+                tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
+                sigil_match, sigil_level = _sigil_priority_score(item, slot)
+                defense_priority_match = _defense_priority_score(item, slot)
+                item_sigil_bit = _sigil_bit_for_item(item)
+                is_new_sigil = 1 if item_sigil_bit and not (item_sigil_bit & used_sigils_bitmask) else 0
+                key = (item_level_num, priority_matches, tier_priority_match,
+                       sigil_match, sigil_level, defense_priority_match, item_tier, is_new_sigil)
+                if best_key is None or key > best_key:
+                    best_key = key
+                    best_item = item
+
+            if best_item is not None:
+                used_sigils_bitmask |= _sigil_bit_for_item(best_item)
+                build[slot] = best_item
+                matched_bases = [base for base in wanted_bases if base in (best_item.get('Spell') or '').lower()]
+                covered_bases.update(matched_bases)
+                if 'crafted' in (best_item.get('Realm') or '').strip().lower():
+                    crafted_count += 1
+
+        # Slots to fill (including 2 jewel slots). Claw slots are only attempted
+        # when 1 Claw / 2 Claw is checked - 2 Claw fills both claw slots (dual-wield).
+        # weapon_off (a second physical weapon, for Dual-Wield 1h) is only
+        # attempted when that combo is checked - it shares its candidate pool
+        # with the item list's Slot=weapon items (see items_by_slot['weapon_off']
+        # below), but is otherwise treated as an ordinary slot by the exact
+        # search, so it's optimized for spell coverage right alongside everything else.
+        # Claws are their own one-handed weapon - a build using 1 or 2 Claw
+        # doesn't also equip a separate physical weapon/shield, so those two
+        # slots are left out entirely rather than always-filled alongside them.
+        # Likewise, weapon/shield are only attempted at all if at least one
+        # Weapon Types/Combo's checkbox that implies them is checked - with
+        # nothing checked there's no reason to force a weapon or shield into
+        # the build, so both are left unpopulated rather than always-filled.
+        slots_to_fill = ['head', 'jewel_1', 'jewel_2', 'cloak', 'body', 'hands', 'legs', 'feet']
+        if not (wants_claw_1 or wants_claw_2):
+            if any_weapon_combo_active:
+                slots_to_fill.append('weapon')
+            if any_shield_combo_active:
+                slots_to_fill.append('shield')
+        if wants_dual_wield_1h:
+            slots_to_fill.append('weapon_off')
+        if wants_claw_2:
+            slots_to_fill += ['claw_1', 'claw_2']
+        elif wants_claw_1:
+            slots_to_fill += ['claw_1']
+
+
+        # Claw slots allow redundant/duplicate spell coverage (dual-wielding
+        # needs a physical item in each hand even if it repeats a spell) so
+        # they don't fit the "each base covered by exactly one slot" model
+        # below - they're filled the old greedy way, after the exact search
+        # settles everything else.
+        exact_slots = [s for s in slots_to_fill if not s.startswith('claw') and s not in build]
+        claw_slots = [s for s in slots_to_fill if s.startswith('claw') and s not in build]
+
+        # EXACT OPTIMAL BUILD SEARCH: a fixed slot-processing order means a
+        # greedy pass can lock a spell into a lower tier in an early slot even
+        # though a higher tier for it sits unclaimed in a later slot occupied
+        # by something swappable (e.g. strength stuck at .ii on a jewel while
+        # a .iii item exists on boots, because feet hadn't been considered
+        # yet when jewel grabbed its best-available match). Wanted/priority
+        # bases are tracked as a bitmask, one bit each, so the search state -
+        # and therefore what gets memoized - stays small enough to explore
+        # every real combination instead of committing slot-by-slot.
+        # Edibles - additive and opt-in (see the Edibles tab). Picked here,
+        # before base_list/initial_covered_bitmask below are derived from
+        # covered_bases, so a base an edible already covers is folded into
+        # the DP's starting state exactly like a Required Item/Max Lvl pick
+        # already locked in - it won't redundantly hunt for that same
+        # spell in an armor/jewel slot too. Eligibility itself is
+        # independent of Wanted Spells (see _edible_candidates - driven
+        # entirely by the Edibles tab's own Available Spells whitelist),
+        # but a picked edible whose spell happens to ALSO be a wanted base
+        # still counts as covering it, per that base.
+        if self.edibles_enabled_var.get():
+            max_edibles = int(self.edibles_max_var.get())
+            best_by_base = {}
+            for base, item in self._edible_candidates(min_level, max_level, specific_level):
+                try:
+                    item_level = int(item.get('Level') or 0)
+                except (ValueError, TypeError):
+                    item_level = 0
+                current = best_by_base.get(base)
+                if current is None or item_level > current[1]:
+                    best_by_base[base] = (item, item_level)
+            for i, (base, (item, _lvl)) in enumerate(sorted(best_by_base.items())):
+                if i >= max_edibles:
+                    break
+                build[f'edible_{i + 1}'] = item
+                covered_bases.add(base)
+
+        base_list = list(wanted_bases.keys())
+        base_bit = {base: (1 << i) for i, base in enumerate(base_list)}
+        initial_covered_bitmask = 0
+        for base in covered_bases:
+            initial_covered_bitmask |= base_bit.get(base, 0)
+
+        # Score weights: each tier's full possible range is dwarfed by one
+        # unit of the tier above it, so summing these as plain integers along
+        # a search path is equivalent to comparing (bases_covered,
+        # priority_matches, tier_priority_hits, sigil_match, sigil_level,
+        # melee_priority_constraint_matches, melee_constraint_matches,
+        # defense_priority_hits, tier, level) lexicographically, while
+        # staying simple/fast integer math. Each step is 10^6 above the
+        # last - generously larger than any realistic per-slot total below it.
+        W_LEVEL = 1
+        # Jewels have no armor type, and no per-slot Defense/Sigil options
+        # yet (Sigil for jewels isn't implemented), so unlike an armor
+        # slot, a jewel's own level carries no real significance - it's
+        # just whichever one happens to carry the wanted spell. Weighted
+        # above W_LEVEL but below W_TIER so the search still prefers a
+        # jewel over an armor-slot item for the exact same wanted spell
+        # (trying jewels before spreading requirements onto armor slots,
+        # per the user's request), without letting that preference override
+        # a genuine tier difference (a higher spell tier elsewhere still wins).
+        W_JEWEL_PREFERENCE = 10**3
+        W_TIER = 10**6
+        W_DEFENSE_PRIORITY = 10**12
+        W_MELEE_MATCH = 10**18
+        W_MELEE_PRIORITY_MATCH = 10**24
+        W_SIGIL_LEVEL = 10**30
+        W_SIGIL_MATCH = 10**36
+        # Wanted Sigils - deliberately below W_TIER_PRIORITY/W_PRIORITY/
+        # W_COVERAGE so a Wanted Spell always wins a slot over a Wanted
+        # Sigil when both are available (sigils are a secondary search),
+        # but above the passive per-slot Sigil preference dropdown since
+        # this is a more deliberate ask than that soft tie-break.
+        W_WANTED_SIGIL = 10**39
+        # Bank Build's "Prioritize items I own" - deliberately below
+        # W_TIER_PRIORITY/W_PRIORITY/W_COVERAGE (an actual Wanted Spell/
+        # Priority Tier need still wins over mere ownership), but above
+        # W_WANTED_SIGIL since owning an item is a firmer asset than a
+        # soft Sigil wish. 0 for every candidate outside Bank Build.
+        W_BANK_OWNED = 10**40
+        W_TIER_PRIORITY = 10**42
+        W_PRIORITY = 10**48
+        W_COVERAGE = 10**54
+
+        # Optional hard cap on how many non-owned ("need to acquire") items
+        # the whole build may use, set only by _generate_capped_unowned_
+        # variants (via self._max_unowned_items) when generating its own
+        # build-variant set for Rebuild (Full Database, Prefer Owned) - None
+        # (the default, every other search) means no cap at all, identical
+        # to prior behavior. owned_match already reflects self._bank_owned_keys
+        # (see _is_bank_owned), so this only ever does something meaningful
+        # during a Bank Build search where that's actually set. Computed here
+        # (rather than just below, where it's used again) because it also
+        # gates the zero-coverage fallback immediately below.
+        max_unowned_items = getattr(self, '_max_unowned_items', None)
+
+        # Zero-coverage fallback normally only applies to weapon/weapon_off/
+        # shield (see below) - an armor slot with nothing left to contribute
+        # is simply left empty. But when a cap search is running, the whole
+        # point is "how few new items can fill in the gaps", so an armor slot
+        # whose only reachable spell is already claimed by another owned slot
+        # should still be fillable (scored on level/sigil/defense alone, no
+        # spell/tier credit - same as the existing weapon/shield fallback)
+        # rather than staying empty forever regardless of how many new items
+        # are allowed.
+        fallback_eligible_slots = {'weapon', 'weapon_off', 'shield'}
+        if max_unowned_items is not None:
+            fallback_eligible_slots |= {
+                ('jewel' if s.startswith('jewel') else s) for s in exact_slots}
+
+        # Pre-score every item once per lookup slot, collapsing items that are
+        # identical in everything the search cares about (bases matched,
+        # priority/tier-priority/defense-priority hits, tier, crafted-ness)
+        # down to their single highest-level representative - keeps the
+        # search fast without changing which overall score is reachable.
+        # Alternates for "Generate multiple build options" are recomputed
+        # from the full unpruned list further below, so nothing is lost.
+        candidates_by_slot = {}
+        for lookup_slot, items in items_by_slot.items():
+            if lookup_slot == 'claw':
+                continue
+            seen = {}
+            for item in items:
+                item_spell = (item.get('Spell') or '').lower()
+                item_type = (item.get('Type') or '').lower()
+                item_sigil = (item.get('Sigil') or '').strip().lower()
+                item_tier = _item_tier_rank(item_spell)
+                if item_tier > 0:
+                    if min_tier_rank is not None and item_tier < min_tier_rank:
+                        continue
+                    if max_tier_rank is not None and item_tier > max_tier_rank:
+                        continue
+
+                try:
+                    item_level_num = int(item.get('Level') or 0)
+                except (ValueError, TypeError):
+                    item_level_num = 0
+
+                item_bitmask = 0
+                for base in base_list:
+                    if base in item_spell and _specific_level_qualifies(base, item_level_num, item_tier):
+                        item_bitmask |= base_bit[base]
+
+                # Wanted Sigils - unlike Wanted Spells, sigils don't stack
+                # toward one shared "covered" requirement (see wanted_bases
+                # above, which is spell-only): every armor slot that can
+                # carry a wanted Sigil is independently worth taking, so
+                # this is a per-slot score bonus (added to step_score below
+                # via W_WANTED_SIGIL) rather than a bit in item_bitmask -
+                # duplicates across slots are fine, even encouraged. Kept
+                # low enough in the weight ordering that a Wanted Spell
+                # always wins the slot when both are available.
+                wanted_sigil_match = 1 if (lookup_slot in ARMOR_SIGIL_SLOTS
+                                            and item_sigil in wanted_sigils_lower) else 0
+
+                # Bank Build's "Prioritize items I own" - always 0 outside
+                # that flow (bank_owned_keys is None), so this is a no-op
+                # for every other search.
+                owned_match = 1 if self._is_bank_owned(item) else 0
+
+                # Zero-coverage items are normally useless (they can never
+                # win over "leave the slot empty"), except weapon/shield
+                # slots a combo has mandated be filled regardless of spell,
+                # or an armor item that at least carries a Wanted Sigil -
+                # those still need a fallback candidate so the slot doesn't
+                # end up empty just because nothing on it grants a spell.
+                if not item_bitmask and not wanted_sigil_match and lookup_slot not in fallback_eligible_slots:
+                    continue
+
+                priority_matches = sum(1 for p in priority_spells if p in item_spell)
+                item_base = _spell_base(item_spell)
+                item_priority_tiers = priority_tier_ranks_by_base.get(item_base)
+                tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
+                is_crafted = 'crafted' in (item.get('Realm') or '').strip().lower()
+
+                # "Prioritize" Defense: a soft bonus (global + per-slot) for
+                # landing in the Min/Max Defense range(s) - never excludes
+                # the item, unlike the hard "Defense:" filters applied above.
+                defense_priority_match = _defense_priority_score(item, lookup_slot)
+
+                # Sigil: a soft bonus for carrying the Sigil chosen for this
+                # slot, tie-broken by SigilLvl - never excludes the item.
+                sigil_match, sigil_level = _sigil_priority_score(item, lookup_slot)
+
+                # Melee Weapon Constraints: only meaningful for weapon slots.
+                melee_priority_match, melee_match = (
+                    _melee_constraint_score(item, item_type) if lookup_slot in ('weapon', 'weapon_off') else (0, 0))
+
+                # item's own raw Sigil (not the per-slot Sigil PREFERENCE
+                # dropdown captured in sigil_match/sigil_level above) is
+                # appended purely so two items that are otherwise identical
+                # but carry different Sigils don't get collapsed into one
+                # candidate here - solve() needs to see both to apply its
+                # own Sigil-diversity tie-break (see _sigil_bit_for_item).
+                sig = (item_bitmask, priority_matches, tier_priority_match, sigil_match,
+                       sigil_level, wanted_sigil_match, owned_match, melee_priority_match, melee_match,
+                       defense_priority_match, item_tier, is_crafted, _sigil_bit_for_item(item))
+                prev = seen.get(sig)
+                if prev is None or item_level_num > prev[1]:
+                    seen[sig] = (item, item_level_num)
+
+            candidates_by_slot[lookup_slot] = [
+                (item, sig[0], sig[1], sig[2], sig[3], sig[4], sig[5], sig[6], sig[7], sig[8], sig[9],
+                 sig[10], lvl, sig[11])
+                for sig, (item, lvl) in seen.items()
+            ]
+
+        memo = {}
+
+        # Rescale factor for the whole step_score sum below, opening up a
+        # new lowest tier (weight 1, added outside the multiplication) for
+        # "this item's Sigil isn't used anywhere else in the build yet" -
+        # a pure last-resort tie-break, never able to override anything
+        # above it. len(exact_slots) is at most ~11, so a rescale of 16
+        # guarantees the total Sigil-diversity bonus summed across every
+        # remaining slot (at most 11, one point each) can never equal or
+        # exceed one rescaled unit of any real scoring difference above it.
+        SIGIL_DIVERSITY_RESCALE = 16
+
+        return {
+            'build': build,
+            'covered_bases': covered_bases,
+            'crafted_count': crafted_count,
+            'used_claw_items': used_claw_items,
+            'exact_slots': exact_slots,
+            'claw_slots': claw_slots,
+            'candidates_by_slot': candidates_by_slot,
+            'items_by_slot': items_by_slot,
+            'wanted_bases': wanted_bases,
+            'base_list': base_list,
+            'base_bit': base_bit,
+            'priority_spells': priority_spells,
+            'priority_tier_ranks_by_base': priority_tier_ranks_by_base,
+            'min_tier_rank': min_tier_rank,
+            'max_tier_rank': max_tier_rank,
+            'fallback_eligible_slots': fallback_eligible_slots,
+            'max_unowned_items': max_unowned_items,
+            'initial_covered_bitmask': initial_covered_bitmask,
+            'used_sigils_bitmask': used_sigils_bitmask,
+            'defense_priority_score': _defense_priority_score,
+            'melee_constraint_score': _melee_constraint_score,
+        }
+
+    def _enumerate_optimal_combos(self, ctx):
+        """Generator yielding every distinct exact_slots assignment tied
+        for the same optimal score _find_optimal_build's own solve()
+        would find - the piece that's actually new here. solve() only
+        ever keeps the single best choice per slot; this instead does a
+        backtracking DFS that tries every eligible candidate (plus
+        "leave this slot empty", same as solve()'s own baseline branch)
+        and yields every complete path whose total matches the true
+        optimum exactly, using a precomputed per-slot upper bound to
+        prune any branch that provably can't reach it - never prunes a
+        real optimal path, since the bound only ever overestimates what
+        a slot could still contribute.
+
+        Eligibility/scoring logic (the gates, step_score formula, and
+        the jewel_1/jewel_2 no-repeat rule) is copied verbatim from
+        solve() - not shared with it - so a change to one doesn't
+        silently desync from the other; if solve()'s own scoring ever
+        changes, this needs the same edit made here too.
+
+        Yields each combo as a list of (slot, item_or_None) pairs, in
+        exact_slots order. Callers pull from this with next()/a for
+        loop - "pull N, stop, pull more later" (Find All Combos' "Load
+        More") is just resuming the same generator object, no manual
+        search-state bookkeeping needed."""
+        exact_slots = ctx['exact_slots']
+        candidates_by_slot = ctx['candidates_by_slot']
+        fallback_eligible_slots = ctx['fallback_eligible_slots']
+        max_unowned_items = ctx['max_unowned_items']
+        initial_covered_bitmask = ctx['initial_covered_bitmask']
+        crafted_count = ctx['crafted_count']
+        used_sigils_bitmask = ctx['used_sigils_bitmask']
+
+        # Exact copy of solve()'s own weights/rescale - see
+        # _find_optimal_build for what each one means and why they're
+        # ordered this way. Kept as a separate copy rather than shared
+        # module constants for the same reason _prepare_combo_search is
+        # a separate copy of the setup phase - solve() stays untouched.
+        W_LEVEL = 1
+        W_JEWEL_PREFERENCE = 10**3
+        W_TIER = 10**6
+        W_DEFENSE_PRIORITY = 10**12
+        W_MELEE_MATCH = 10**18
+        W_MELEE_PRIORITY_MATCH = 10**24
+        W_SIGIL_LEVEL = 10**30
+        W_SIGIL_MATCH = 10**36
+        W_WANTED_SIGIL = 10**39
+        W_BANK_OWNED = 10**40
+        W_TIER_PRIORITY = 10**42
+        W_PRIORITY = 10**48
+        W_COVERAGE = 10**54
+        SIGIL_DIVERSITY_RESCALE = 16
+
+        def _solve_best(idx, covered, crafted_n, used_sigils, unowned_used, prev_jewel_item, memo):
+            """Memoized single-best search - an exact copy of solve()'s
+            own logic, used only to establish the target optimal score
+            before the DFS below enumerates every path tied with it."""
+            if idx == len(exact_slots):
+                return (0, [])
+            slot = exact_slots[idx]
+            lookup_slot = 'jewel' if slot.startswith('jewel') else slot
+            memo_jewel_key = id(prev_jewel_item) if slot == 'jewel_2' else None
+            key = (idx, covered, crafted_n, used_sigils, unowned_used, memo_jewel_key)
+            cached = memo.get(key)
+            if cached is not None:
+                return cached
+
+            best_score, best_rest = _solve_best(idx + 1, covered, crafted_n, used_sigils, unowned_used, None, memo)
+            best_choice = None
+
+            for (item, item_bitmask, priority_matches, tier_priority_match, sigil_match, sigil_level,
+                 wanted_sigil_match, owned_match, melee_priority_match, melee_match, defense_priority_match,
+                 item_tier, item_level_num, is_crafted) in candidates_by_slot.get(lookup_slot, []):
+                if slot == 'jewel_2' and prev_jewel_item is not None and item is prev_jewel_item:
+                    continue
+                new_bases = item_bitmask & ~covered
+                item_sigil_bit = _sigil_bit_for_item(item)
+                effective_wanted_sigil_match = (
+                    wanted_sigil_match if not (item_sigil_bit & used_sigils) else 0)
+                if not new_bases and not effective_wanted_sigil_match and lookup_slot not in fallback_eligible_slots:
+                    continue
+                if (not new_bases and item_bitmask
+                        and lookup_slot not in ('weapon', 'weapon_off', 'shield')):
+                    continue
+                if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
+                    continue
+                new_unowned_used = unowned_used + (0 if owned_match else 1)
+                if max_unowned_items is not None and new_unowned_used > max_unowned_items:
+                    continue
+
+                effective_priority_matches = priority_matches if new_bases else 0
+                effective_tier_priority_match = tier_priority_match if new_bases else 0
+                effective_item_tier = item_tier if new_bases else 0
+                is_redundant_spell = 1 if (not new_bases and item_bitmask) else 0
+                is_new_sigil = 1 if item_sigil_bit and not (item_sigil_bit & used_sigils) else 0
+
+                step_score = SIGIL_DIVERSITY_RESCALE * (
+                              bin(new_bases).count('1') * W_COVERAGE
+                              + effective_priority_matches * W_PRIORITY
+                              + effective_tier_priority_match * W_TIER_PRIORITY
+                              + effective_wanted_sigil_match * W_WANTED_SIGIL
+                              + owned_match * W_BANK_OWNED
+                              + sigil_match * W_SIGIL_MATCH
+                              + sigil_level * W_SIGIL_LEVEL
+                              + melee_priority_match * W_MELEE_PRIORITY_MATCH
+                              + melee_match * W_MELEE_MATCH
+                              + defense_priority_match * W_DEFENSE_PRIORITY
+                              + effective_item_tier * W_TIER
+                              + (W_JEWEL_PREFERENCE if lookup_slot == 'jewel' else 0)
+                              + item_level_num * (W_LEVEL * 2)
+                              + (0 if is_redundant_spell else W_LEVEL)
+                              ) + is_new_sigil
+
+                rest_score, rest_path = _solve_best(idx + 1, covered | new_bases,
+                                               crafted_n + (1 if is_crafted else 0),
+                                               used_sigils | item_sigil_bit, new_unowned_used,
+                                               item if slot == 'jewel_1' else None, memo)
+                total = step_score + rest_score
+                if total > best_score:
+                    best_score = total
+                    best_choice = item
+                    best_rest = rest_path
+
+            result = (best_score,
+                      [(slot, best_choice)] + best_rest) if best_choice is not None else (
+                      best_score, [(slot, None)] + best_rest)
+            memo[key] = result
+            return result
+
+        target_score, _ = _solve_best(0, initial_covered_bitmask, crafted_count, used_sigils_bitmask, 0, None, {})
+
+        # Per-slot upper bound (ignores state - a valid over-estimate,
+        # since new_bases can only ever be a subset of item_bitmask, the
+        # crafted cap/sigil-reuse/unowned cap can only ever reduce what's
+        # reachable, never increase it) - used below to prune any branch
+        # that provably can't reach target_score, without ever risking
+        # pruning a real optimal path.
+        def _optimistic_step_score(lookup_slot):
+            best = 0
+            for (item, item_bitmask, priority_matches, tier_priority_match, sigil_match, sigil_level,
+                 wanted_sigil_match, owned_match, melee_priority_match, melee_match, defense_priority_match,
+                 item_tier, item_level_num, is_crafted) in candidates_by_slot.get(lookup_slot, []):
+                score = SIGIL_DIVERSITY_RESCALE * (
+                        bin(item_bitmask).count('1') * W_COVERAGE
+                        + priority_matches * W_PRIORITY
+                        + tier_priority_match * W_TIER_PRIORITY
+                        + wanted_sigil_match * W_WANTED_SIGIL
+                        + owned_match * W_BANK_OWNED
+                        + sigil_match * W_SIGIL_MATCH
+                        + sigil_level * W_SIGIL_LEVEL
+                        + melee_priority_match * W_MELEE_PRIORITY_MATCH
+                        + melee_match * W_MELEE_MATCH
+                        + defense_priority_match * W_DEFENSE_PRIORITY
+                        + item_tier * W_TIER
+                        + (W_JEWEL_PREFERENCE if lookup_slot == 'jewel' else 0)
+                        + item_level_num * (W_LEVEL * 2) + W_LEVEL
+                        ) + 1
+                if score > best:
+                    best = score
+            return best
+
+        max_suffix = [0] * (len(exact_slots) + 1)
+        for i in range(len(exact_slots) - 1, -1, -1):
+            slot = exact_slots[i]
+            lookup_slot = 'jewel' if slot.startswith('jewel') else slot
+            max_suffix[i] = _optimistic_step_score(lookup_slot) + max_suffix[i + 1]
+
+        # Safety valve against a pathologically large tie space taking
+        # forever - decremented once per node visited; enumeration just
+        # stops early (yielding fewer combos than theoretically exist)
+        # rather than hanging indefinitely. Generous enough to never
+        # matter for a normal-sized search.
+        node_budget = [3_000_000]
+
+        def _enumerate(idx, covered, crafted_n, used_sigils, unowned_used, running, prev_jewel_item, assignment):
+            node_budget[0] -= 1
+            if node_budget[0] <= 0:
+                return
+            if running + max_suffix[idx] < target_score:
+                return
+            if idx == len(exact_slots):
+                if running == target_score:
+                    yield list(assignment)
+                return
+            slot = exact_slots[idx]
+            lookup_slot = 'jewel' if slot.startswith('jewel') else slot
+
+            # Option: leave this slot empty - same baseline branch
+            # solve() always considers alongside every real candidate.
+            assignment.append((slot, None))
+            yield from _enumerate(idx + 1, covered, crafted_n, used_sigils, unowned_used,
+                                   running, None, assignment)
+            assignment.pop()
+
+            for (item, item_bitmask, priority_matches, tier_priority_match, sigil_match, sigil_level,
+                 wanted_sigil_match, owned_match, melee_priority_match, melee_match, defense_priority_match,
+                 item_tier, item_level_num, is_crafted) in candidates_by_slot.get(lookup_slot, []):
+                if slot == 'jewel_2' and prev_jewel_item is not None and item is prev_jewel_item:
+                    continue
+                new_bases = item_bitmask & ~covered
+                item_sigil_bit = _sigil_bit_for_item(item)
+                effective_wanted_sigil_match = (
+                    wanted_sigil_match if not (item_sigil_bit & used_sigils) else 0)
+                if not new_bases and not effective_wanted_sigil_match and lookup_slot not in fallback_eligible_slots:
+                    continue
+                if (not new_bases and item_bitmask
+                        and lookup_slot not in ('weapon', 'weapon_off', 'shield')):
+                    continue
+                if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
+                    continue
+                new_unowned_used = unowned_used + (0 if owned_match else 1)
+                if max_unowned_items is not None and new_unowned_used > max_unowned_items:
+                    continue
+
+                effective_priority_matches = priority_matches if new_bases else 0
+                effective_tier_priority_match = tier_priority_match if new_bases else 0
+                effective_item_tier = item_tier if new_bases else 0
+                is_redundant_spell = 1 if (not new_bases and item_bitmask) else 0
+                is_new_sigil = 1 if item_sigil_bit and not (item_sigil_bit & used_sigils) else 0
+
+                step_score = SIGIL_DIVERSITY_RESCALE * (
+                              bin(new_bases).count('1') * W_COVERAGE
+                              + effective_priority_matches * W_PRIORITY
+                              + effective_tier_priority_match * W_TIER_PRIORITY
+                              + effective_wanted_sigil_match * W_WANTED_SIGIL
+                              + owned_match * W_BANK_OWNED
+                              + sigil_match * W_SIGIL_MATCH
+                              + sigil_level * W_SIGIL_LEVEL
+                              + melee_priority_match * W_MELEE_PRIORITY_MATCH
+                              + melee_match * W_MELEE_MATCH
+                              + defense_priority_match * W_DEFENSE_PRIORITY
+                              + effective_item_tier * W_TIER
+                              + (W_JEWEL_PREFERENCE if lookup_slot == 'jewel' else 0)
+                              + item_level_num * (W_LEVEL * 2)
+                              + (0 if is_redundant_spell else W_LEVEL)
+                              ) + is_new_sigil
+
+                assignment.append((slot, item))
+                yield from _enumerate(idx + 1, covered | new_bases, crafted_n + (1 if is_crafted else 0),
+                                       used_sigils | item_sigil_bit, new_unowned_used,
+                                       running + step_score, item if slot == 'jewel_1' else None, assignment)
+                assignment.pop()
+
+        yield from _enumerate(0, initial_covered_bitmask, crafted_count, used_sigils_bitmask, 0, 0, None, [])
+
+    def _apply_combo_claws(self, ctx, exact_assignment):
+        """Turns one exact_slots assignment (as yielded by
+        _enumerate_optimal_combos) into a complete {slot: item} build -
+        merges it onto ctx['build'] (Required Items/Sigils/Max Lvl/
+        Edibles), then greedily fills claw slots fresh for THIS combo
+        specifically.
+
+        Claws are deliberately excluded from exact_slots/candidates_by_
+        slot (see _find_optimal_build's own comment above its
+        exact_slots line - dual-wielding claws intentionally allows
+        duplicate spell coverage, unlike every other slot), so they were
+        never part of what _enumerate_optimal_combos scored or tied on.
+        Different combos can leave different bases covered, though, so
+        claws can legitimately pick something different per combo - this
+        has to run fresh per combo rather than once and reused, using a
+        COPY of ctx's baseline crafted_count/used_claw_items so combos
+        never contaminate each other's state. Logic ported verbatim from
+        _find_optimal_build's own claw-fill loop, minus the
+        self.slot_alternates bookkeeping (that's the Alt Options column's
+        data source for a single build; not meaningful across a stack of
+        many combos, so combo-search rows just show Alt Options blank)."""
+        build = dict(ctx['build'])
+        covered_bases = set(ctx['covered_bases'])
+        crafted_count = ctx['crafted_count']
+        used_claw_items = list(ctx['used_claw_items'])
+        used_sigils_bitmask = ctx['used_sigils_bitmask']
+        base_list = ctx['base_list']
+        base_bit = ctx['base_bit']
+        wanted_bases = ctx['wanted_bases']
+        priority_spells = ctx['priority_spells']
+        priority_tier_ranks_by_base = ctx['priority_tier_ranks_by_base']
+        min_tier_rank = ctx['min_tier_rank']
+        max_tier_rank = ctx['max_tier_rank']
+        claw_slots = ctx['claw_slots']
+        items_by_slot = ctx['items_by_slot']
+        _defense_priority_score = ctx['defense_priority_score']
+        _melee_constraint_score = ctx['melee_constraint_score']
+
+        for slot, item in exact_assignment:
+            if item is None:
+                continue
+            build[slot] = item
+            used_sigils_bitmask |= _sigil_bit_for_item(item)
+            if 'crafted' in (item.get('Realm') or '').strip().lower():
+                crafted_count += 1
+            item_spell = (item.get('Spell') or '').lower()
+            for base in base_list:
+                if base in item_spell:
+                    covered_bases.add(base)
+
+        claw_sigil_choice = {
+            'claw_1': self.claw_1_sigil_var.get().strip().lower(),
+            'claw_2': self.claw_2_sigil_var.get().strip().lower(),
+        }
+        for slot in claw_slots:
+            lookup_slot = 'claw'
+            if lookup_slot not in items_by_slot:
+                continue
+
+            wanted_claw_sigil = claw_sigil_choice.get(slot)
+            if wanted_claw_sigil == 'any':
+                wanted_claw_sigil = ''
+
+            best_item = None
+            best_matched_bases = []
+            best_key = (-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1)
+
+            for item in items_by_slot[lookup_slot]:
+                if any(item is used for used in used_claw_items):
+                    continue
+
+                item_realm = (item.get('Realm') or '').strip().lower()
+                if 'crafted' in item_realm and crafted_count >= MAX_CRAFTED_ITEMS:
+                    continue
+
+                item_spell = (item.get('Spell') or '').lower()
+                item_type = (item.get('Type') or '').lower()
+                item_tier = _item_tier_rank(item_spell)
+                if item_tier > 0:
+                    if min_tier_rank is not None and item_tier < min_tier_rank:
+                        continue
+                    if max_tier_rank is not None and item_tier > max_tier_rank:
+                        continue
+
+                try:
+                    item_level_num = int(item.get('Level') or 0)
+                except (ValueError, TypeError):
+                    item_level_num = 0
+
+                matched_bases = [base for base in wanted_bases if base in item_spell]
+
+                priority_matches = sum(1 for p in priority_spells if p in item_spell)
+                item_base = _spell_base(item_spell)
+                item_priority_tiers = priority_tier_ranks_by_base.get(item_base)
+                tier_priority_match = 1 if item_priority_tiers and item_tier in item_priority_tiers else 0
+                defense_priority_match = _defense_priority_score(item, lookup_slot)
+                melee_priority_match, melee_match = _melee_constraint_score(item, item_type)
+
+                claw_sigil_match = 0
+                claw_sigil_level = 0
+                if wanted_claw_sigil and (item.get('Sigil') or '').strip().lower() == wanted_claw_sigil:
+                    claw_sigil_match = 1
+                    try:
+                        claw_sigil_level = int(item.get('SigilLvl') or 0)
+                    except (ValueError, TypeError):
+                        claw_sigil_level = 0
+
+                owned_match = 1 if self._is_bank_owned(item) else 0
+
+                item_sigil_bit = _sigil_bit_for_item(item)
+                is_new_sigil = 1 if item_sigil_bit and not (item_sigil_bit & used_sigils_bitmask) else 0
+
+                key = (priority_matches, len(matched_bases), tier_priority_match,
+                      claw_sigil_match, claw_sigil_level, owned_match,
+                      melee_priority_match, melee_match, defense_priority_match,
+                      item_tier, item_level_num, is_new_sigil)
+                if key > best_key:
+                    best_key = key
+                    best_item = item
+                    best_matched_bases = matched_bases
+
+            if best_item:
+                build[slot] = best_item
+                used_sigils_bitmask |= _sigil_bit_for_item(best_item)
+                covered_bases.update(best_matched_bases)
+                if 'crafted' in (best_item.get('Realm') or '').strip().lower():
+                    crafted_count += 1
+                used_claw_items.append(best_item)
+
+        return build
+
+    def _render_combo_search_results(self, ctx, variants, more_available):
+        """Shared tail for _find_best_combos/_find_all_combos/
+        _load_more_combos - stacks `variants` (complete {slot: item}
+        build dicts, all tied for the same optimal score) into the
+        Results tab via the exact same build_variants/build_variant_
+        combo/_all_variants_rows machinery _find_optimal_build itself
+        uses, so nothing new was needed on the display side. Simpler
+        than _find_optimal_build's own tail in one way: since every
+        variant here is independently tied for the best score (as
+        opposed to being THE one build), this reports a shared coverage
+        count/combo count rather than trying to list specific uncovered
+        spells or Priority Tier mismatches per variant - those remain
+        exactly as useful from Find Optimal Build itself."""
+        if not variants:
+            variants = [{}]
+        self.optimal_build = variants[0]
+        self.build_variants = variants
+        self.build_variant_labels = None
+
+        variant_labels = [f"Build {i + 1}" for i in range(len(self.build_variants))]
+        self.build_variant_combo['values'] = variant_labels
+        self.build_variant_var.set(variant_labels[0])
+        self.build_variant_combo.config(state='readonly' if len(variant_labels) > 1 else 'disabled')
+
+        self.results_display_mode.set('optimal')
+        if not self._suppress_results_redraw:
+            self.notebook.select(self.tab_results)
+
+        # Every slot the search actually tried to fill, same meaning as
+        # _find_optimal_build's own attempted_slots (exact_slots/
+        # claw_slots weren't yet in ctx['build'] when _prepare_combo_
+        # search computed them; unioning all three reconstructs the
+        # original slots_to_fill).
+        self.attempted_slots = set(ctx['exact_slots']) | set(ctx['claw_slots']) | set(ctx['build'].keys())
+        self.last_wanted_chips_by_base = dict(ctx['wanted_bases'])
+
+        self.last_optimal_results = self._apply_manual_optimal_items(self._all_variants_rows())
+        if not self._suppress_results_redraw:
+            self.search_results_tv.delete(*self.search_results_tv.get_children())
+            for row in self.last_optimal_results:
+                self.search_results_tv.insert('', 'end', values=row)
+            self._autosize_results_columns()
+
+        if hasattr(self, 'load_more_combos_button'):
+            if more_available:
+                self.load_more_combos_button.pack(side='left', padx=(8, 0))
+            else:
+                self.load_more_combos_button.pack_forget()
+
+        total_wanted = len(ctx['wanted_bases'])
+        covered_count = 0
+        if variants[0]:
+            covered = set()
+            for item in variants[0].values():
+                spell = (item.get('Spell') or '').lower()
+                for base in ctx['wanted_bases']:
+                    if base in spell:
+                        covered.add(base)
+            covered_count = len(covered)
+        status = (f"Found {len(variants)} combination(s) tied for the best coverage "
+                  f"({covered_count}/{total_wanted} wanted spells)")
+        if more_available:
+            status += f" - showing {len(variants)} so far, more may exist (click Load More Combos)"
+        self.search_status.config(text=status)
+
+    def _clear_results(self):
+        """"Clear" button on the Results tab - wipes everything the last
+        search (Find Optimal Build/Show All Matches/Find Best Combos/Find
+        All Combos/any Bank Build) left behind, back to the same empty
+        state the app starts in, without needing to actually re-run or
+        undo a search."""
+        self._reset_hard_search_state()
+        self._all_combos_generator = None
+        self._all_combos_ctx = None
+        self._all_combos_pending = None
+
+        self.last_optimal_results = []
+        self.last_all_results = []
+        self.optimal_build = {}
+        self.slot_alternates = {}
+        self.slot_unowned_alternates = {}
+        self.build_variants = []
+        self.build_variant_labels = None
+        self.attempted_slots = set()
+        self.last_uncovered_bases = set()
+        self.last_wanted_chips_by_base = {}
+
+        # Right-click "Add to Results" additions (self.manual_optimal_items/
+        # manual_all_items) are tracked independently of any one search so
+        # they can survive Remove/Rebuild cycles (see _apply_manual_items_
+        # to_rows) - but that same persistence meant Clear looked like it
+        # worked until the next search re-merged them right back in. Clear
+        # is a deliberate "start over" action, so it wipes these too.
+        self.manual_optimal_items = []
+        self.manual_all_items = []
+        self.manual_added_items = []
+        self.results_display_mode.set('optimal')
+
+        self.build_variant_combo['values'] = ['Build 1']
+        self.build_variant_var.set('Build 1')
+        self.build_variant_combo.config(state='disabled')
+        if hasattr(self, 'load_more_combos_button'):
+            self.load_more_combos_button.pack_forget()
+
+        self.search_results_tv.delete(*self.search_results_tv.get_children())
+        self.search_status.config(text="Load a master database file and add desired spells to begin")
+
+    def _find_best_combos(self):
+        """"Find Best Combos" button - replaces the old "Generate
+        multiple build options" checkbox with the real thing: up to
+        MAX_BUILD_VARIANTS (10) DISTINCT combinations tied for the best
+        achievable spell coverage, found via _enumerate_optimal_combos -
+        not same-slot cosmetic swaps of a single winner (see that
+        method's own docstring for what that fixes). One-shot, no "Load
+        More" here - matches what MAX_BUILD_VARIANTS already means
+        everywhere else in the app (_generate_capped_unowned_variants
+        uses the same cap for its own variant list)."""
+        self._reset_hard_search_state()
+        self._all_combos_generator = None
+        if hasattr(self, 'load_more_combos_button'):
+            self.load_more_combos_button.pack_forget()
+
+        ctx = self._prepare_combo_search()
+        if ctx is None:
+            return
+
+        variants = []
+        for exact_assignment in self._enumerate_optimal_combos(ctx):
+            variants.append(self._apply_combo_claws(ctx, exact_assignment))
+            if len(variants) >= MAX_BUILD_VARIANTS:
+                break
+
+        self._render_combo_search_results(ctx, variants, more_available=False)
+
+    def _pull_next_combo_batch(self, ctx, generator, batch_size):
+        """Pulls up to batch_size claw-filled combos from `generator`.
+        Stopping a plain iterator right at batch_size items can never
+        tell "exactly that many left" from "more still coming" - both
+        look identical (batch_size items, then the loop just stops).
+        So this always tries to pull ONE extra item as a lookahead: if
+        that succeeds, more_available is genuinely True and the extra
+        item is stashed on self._all_combos_pending so the very next
+        pull (another Load More, or a fresh Find All Combos) consumes
+        it first, instead of it being skipped or re-derived. Only when
+        the lookahead itself raises StopIteration is more_available
+        actually False."""
+        assignments = []
+        pending = self._all_combos_pending
+        self._all_combos_pending = None
+        if pending is not None:
+            assignments.append(pending)
+        while len(assignments) <= batch_size:
+            try:
+                assignments.append(next(generator))
+            except StopIteration:
+                break
+
+        more_available = len(assignments) > batch_size
+        if more_available:
+            self._all_combos_pending = assignments[batch_size]
+            assignments = assignments[:batch_size]
+
+        variants = [self._apply_combo_claws(ctx, a) for a in assignments]
+        return variants, more_available
+
+    def _find_all_combos(self):
+        """"Find All Combos" button - same idea as Find Best Combos, but
+        pulls up to MAX_ALL_COMBOS_BATCH (500) per call and keeps the
+        live generator around (self._all_combos_generator/_all_combos_
+        ctx) so "Load More Combos" can resume it for the next batch
+        instead of re-searching from scratch - see _load_more_combos."""
+        self._reset_hard_search_state()
+        self._all_combos_pending = None
+
+        ctx = self._prepare_combo_search()
+        if ctx is None:
+            self._all_combos_generator = None
+            if hasattr(self, 'load_more_combos_button'):
+                self.load_more_combos_button.pack_forget()
+            return
+
+        self._all_combos_ctx = ctx
+        self._all_combos_generator = self._enumerate_optimal_combos(ctx)
+
+        variants, more_available = self._pull_next_combo_batch(
+            ctx, self._all_combos_generator, MAX_ALL_COMBOS_BATCH)
+        self._render_combo_search_results(ctx, variants, more_available=more_available)
+
+    def _load_more_combos(self):
+        """"Load More Combos" button - resumes self._all_combos_generator
+        (left running by the most recent _find_all_combos call) for the
+        next batch, appending onto the combos already shown instead of
+        starting over. Only ever visible/enabled while a not-yet-
+        exhausted generator from a prior Find All Combos search exists -
+        see _render_combo_search_results' own pack/pack_forget."""
+        generator = getattr(self, '_all_combos_generator', None)
+        ctx = getattr(self, '_all_combos_ctx', None)
+        if generator is None or ctx is None:
+            return
+
+        new_variants, more_available = self._pull_next_combo_batch(
+            ctx, generator, MAX_ALL_COMBOS_BATCH)
+        combined = self.build_variants + new_variants
+        self._render_combo_search_results(ctx, combined, more_available=more_available)
+
     def _find_optimal_build(self):
         """Find optimal item combination that covers ALL wanted spells"""
         # Set this immediately, before any validation checks below can
@@ -16986,17 +18672,11 @@ class App(tk.Tk):
         # Cleared here (not just where it's set) so a stale custom label set
         # from a previous _generate_capped_unowned_variants run never
         # survives into an unrelated later search - see _switch_build_variant.
+        # Always a single build now - see _find_best_combos/_find_all_combos
+        # for genuine alternate-combination discovery (the old "Generate
+        # multiple build options" checkbox only ever offered same-slot
+        # cosmetic swaps of this one build, not real alternatives).
         self.build_variant_labels = None
-        if self.generate_multi_builds_var.get():
-            for slot, alternates in self.slot_alternates.items():
-                for alt in alternates:
-                    if len(self.build_variants) >= MAX_BUILD_VARIANTS:
-                        break
-                    variant = dict(build)
-                    variant[slot] = alt
-                    self.build_variants.append(variant)
-                if len(self.build_variants) >= MAX_BUILD_VARIANTS:
-                    break
 
         variant_labels = [f"Build {i + 1}" for i in range(len(self.build_variants))]
         self.build_variant_combo['values'] = variant_labels

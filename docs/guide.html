@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v6.5.4</p>
+    <p class="tagline">Full usage guide - v6.6.0</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -326,18 +326,20 @@
     <h3>3.9 Search Controls</h3>
     <p>Min/Max/Specific Level, the "If no match at Specific Level" fallback options, and the three buttons below sit in the Wanted Spells column, right below <b>Clear All</b>. Since they're part of Basic Constraints' own layout, they're only visible while Basic Constraints is the selected sub-tab - not on Bank Build (which has its own per-character Find Best Bank Build button instead), Manual (which has its own separate controls entirely - see 3.7), or Trade (a plain read-only chart with no controls of its own - see 3.8).</p>
     <ul>
-      <li><b>🎯 Find Optimal Build</b> - exact search across every slot at once for the combination covering as many wanted spells as possible under your constraints.</li>
+      <li><b>🎯 Find Optimal Build</b> - exact search across every slot at once for the single combination covering as many wanted spells as possible under your constraints.</li>
       <li><b>📋 Show All Matches</b> - lists every item matching your filters, without narrowing to one per slot.</li>
-      <li><b>🎲 Generate multiple build options</b> - also generates up to 10 alternate full builds by swapping in equally-good tied items slot by slot.</li>
+      <li><b>🧩 Find Best Combos</b> - up to 10 genuinely distinct combinations tied for that same best coverage, including cross-slot swaps a single winner would never surface (e.g. a wanted spell coming from Cloak in one combo and Head in another).</li>
+      <li><b>🧮 Find All Combos</b> - every combination tied for the best coverage, 500 at a time - a <b>Load More Combos</b> button appears on the Results tab if more exist, resuming the same search for the next batch.</li>
     </ul>
 
     <h2 id="results">4. Results Tab</h2>
     <ul>
       <li><b>Display: Best Per Slot / All Matches</b> toggles between the two search modes above.</li>
-      <li><b>Build Variant</b> dropdown - active when multiple build options were generated.</li>
+      <li><b>Build Variant</b> dropdown - active whenever Find Best Combos/Find All Combos found more than one combination.</li>
       <li>Columns: Bank icon, <b>Locker</b>, Slot, Item, Type, Spell, Sigil, Level, Mob, Area, and <b>Alt Options</b> (other items that tied for that slot). The Locker column shows the first 4 letters of a Locker character's name whenever a row's item came from one - the Bank column shows a bold "L" instead of the usual 📦 for those rows. Edibles show as <b>Stomach</b> in the Slot column.</li>
       <li>Every slot the search actually tried to fill shows a row, even if it stays empty ("No suitable item found") - this no longer depends on whether some other slot happened to leave a wanted spell uncovered.</li>
       <li>A row added via the Manual tab (see 3.7) shows "Manual Input" in Alt Options - right-click it for a simple <b>Remove</b>, distinct from the options below (which resolve back to a real build slot).</li>
+      <li><b>🗑 Clear</b> - resets the Results tab back to its empty starting state (no build, no rows, Build Variant disabled). Also clears manually-added items, so they won't silently reappear the next time a search runs.</li>
       <li><b>Right-click a filled item</b> to remove it from the build - the slot stays visible showing "No suitable item found" rather than disappearing, and it stays excluded from every future search until a genuinely new search runs. Two buttons appear once something's been removed:
         <ul>
           <li><b>Rebuild (Full Database)</b> - recomputes the whole build, re-searching everywhere, excluding what's been removed.</li>
