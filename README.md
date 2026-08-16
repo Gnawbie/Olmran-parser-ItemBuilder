@@ -140,7 +140,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.1.0 (Current)
+### v7.1.1 (Current)
+- **Critical data-loss fix**: every launch of the app, going all the way back to v6.4.1, could silently wipe your saved characters, Lockers, Saved Builds, and every Counters report (XP/Damage/PvP/Item) from your config file - the Item Counter's "Consistent" tally auto-restoring on startup triggered an internal save before the rest of the app had finished restoring your data from disk, so that save wrote your characters/Lockers/Saved Builds back out as empty. This has been happening on every startup since v6.4.1 for anyone using the Item Counter's Consistent tally - it's now fixed, and this update stops it from happening again. **This can't recover data already lost from a previous launch** - if you were on an older version and had both a Consistent tally and saved characters/Lockers/builds, an earlier launch likely already wrote them out empty; there's no way to recover that data locally after the fact. We're sorry - going forward, your saved data will no longer be at risk from this.
+
+### v7.1.0
 - **Crafting tab refinements**, all within Equipment:
   - **Weapon** crafting skills (Crushing/Slashing/Thrusting/Fired) now group recipes into **One-Handed**/**Two-Handed** branches instead of a plain level-sorted list.
   - **Magical Weapon** now has three branches: **Has Spell** (grouped by element - Fire/Cold/Lightning/Earth/Water, with unmatched procs falling back to Physical), **No Spell**, and **Parry Staff** (Shield Crafting's full recipe list, folded in here and grouped by slot then spell - Shield Crafting is no longer a separate sub-tab).

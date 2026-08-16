@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v7.1.0</p>
+    <p class="tagline">Full usage guide - v7.1.1</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -418,6 +418,7 @@
       <li><b>Can't see everything if the window is resized smaller</b> - the whole window scrolls (mouse wheel, or the scrollbar on the right edge) if it's ever shrunk below what its content needs.</li>
       <li><b>Window looks blurry or oddly scaled on a multi-monitor setup</b> - fixed as of v6.5.0 for setups where each display uses a different Windows display-scaling percentage; update if you're still seeing it.</li>
       <li><b>The Gear Tag dropdown sometimes closes itself instantly, or resets the list's sort order</b> - fixed as of v6.5.3; update if you're still seeing it.</li>
+      <li><b>My saved characters, Lockers, Saved Builds, or Counters reports disappeared after closing and reopening the app</b> - a real bug present in every version from v6.4.1 through v7.1.0: the Item Counter's "Consistent" tally auto-restoring on startup could trigger an internal save before the rest of your data had finished loading, silently wiping it. Fixed as of v7.1.1 - update immediately if you're on an older version. This fix only stops it from happening again; it can't recover data an earlier launch already wiped.</li>
     </ul>
 
     <footer>

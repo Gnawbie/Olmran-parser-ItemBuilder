@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.1.0"
+VERSION = "7.1.1"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -3302,10 +3302,23 @@ class App(tk.Tk):
         # Load saved directories or use home as default
         self._load_config()
 
+        # Suppressed until startup is fully done building/restoring every
+        # tab's own live state from the _persisted_* values _load_config
+        # just set - some tabs built early (e.g. the Item Counter's
+        # "Consistent" tally auto-restore in _build_parse_tab, see
+        # _open_item_counter's silent=True path) trigger a _save_config()
+        # of their own as a side effect, which used to fire before later
+        # tabs (Build tab's characters/Lockers, Saved Builds) had copied
+        # their own _persisted_* data into live attributes yet - silently
+        # overwriting bank_characters/saved_builds/locker_groups/etc. on
+        # disk with still-empty defaults on every single launch. See
+        # _save_config's own guard check.
+        self._suppress_config_saves = True
         self._build_ui()
 
         # Auto-load the bundled community equipment list on startup, if present
         self._auto_load_community_list()
+        self._suppress_config_saves = False
 
         # Save config on close
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -3532,6 +3545,15 @@ class App(tk.Tk):
 
     def _save_config(self):
         """Save configuration to file"""
+        # Startup (see __init__'s _suppress_config_saves) can trigger this
+        # as a side effect of an early tab restoring its own state (e.g.
+        # the Item Counter's "Consistent" tally auto-restore) before later
+        # tabs have copied their own persisted data into live attributes -
+        # writing now would silently overwrite the real file with those
+        # still-empty defaults. See __init__'s own comment for the incident
+        # this fixed.
+        if getattr(self, '_suppress_config_saves', False):
+            return
         try:
             config = {
                 'last_open_dir': self.last_open_dir,
