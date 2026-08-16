@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v6.6.0</p>
+    <p class="tagline">Full usage guide - v7.0.0</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -130,8 +130,9 @@
         <li><a href="#results">4. Results Tab</a></li>
         <li><a href="#saved-builds">5. Saved Builds Tab</a></li>
         <li><a href="#area-items">6. Area Items Tab</a></li>
-        <li><a href="#tips">7. Tips and Example Builds</a></li>
-        <li><a href="#troubleshooting">8. Troubleshooting</a></li>
+        <li><a href="#crafting">7. Crafting Tab</a></li>
+        <li><a href="#tips">8. Tips and Example Builds</a></li>
+        <li><a href="#troubleshooting">9. Troubleshooting</a></li>
       </ul>
     </div>
 
@@ -375,7 +376,24 @@
       <li>A <b>Castable?</b> column sits right after Level - "Yes"/"No" for weapons (a direct weapon or parry staff can be used while casting a spell; anything else can't), derived straight from the item's own Type. Shields show "Yes" once logged/re-examined with "holdable while casting spells" in their examine text; an older shield not yet re-examined shows blank rather than a guessed "No". Blank for every other slot (armor, jewelry) - casting-while-holding doesn't apply to them.</li>
     </ul>
 
-    <h2 id="tips">7. Tips and Example Builds</h2>
+    <h2 id="crafting">7. Crafting Tab</h2>
+    <p>A repository of crafting recipes and material sources - a framework you fill in over time, not a complete catalog. Organized into three top-level sub-tabs:</p>
+    <ul>
+      <li><b>Equipment</b> - itself a small notebook:
+        <ul>
+          <li><b>Armor</b> - Cloth/Leather/Studded/Plate, each its own sub-tab, recipes grouped by slot (Head/Cloak/Body/Hands/Legs/Feet).</li>
+          <li><b>Weapon</b> - all 5 weapon-crafting skills (Crushing/Slashing/Thrusting/Fired/Magical) plus Shield Crafting, each a flat level-sorted list.</li>
+          <li><b>Infernal Armaments</b> - left as its own sub-tab since it mixes both weapons and armor pieces.</li>
+          <li><b>Materials</b> - jewel-cutting recipes (Rough/Hazy/Flawless, grouped by spell) plus any raw-material recipe needed for wearable gear (currently just Studded's own "square of X studded leather" steps).</li>
+        </ul>
+      </li>
+      <li><b>Siegecraft</b> - Siegecraft and Fortifications recipes together, grouped under those two headers.</li>
+      <li><b>Enchants</b> - where to find Weapon/Armor/Sigil enchant materials, grouped by realm. Evil/Good/Chaos each specialize in exactly 2 of the 6 elements (Chaos: Earth/Shock, Evil: Cold/Fire, Good: Lightning/Water) - a Kaid Sigil entry is grouped under whichever of those three realms specializes in its own element (Kaid alone covers all 6, continuing each element past that realm's own top tier) rather than under its own "Kaid" branch, with a <b>From Kaid</b> note in that row so it's still clear where it actually drops. Kaid's Weapon/Armor entries (no element to regroup by) stay under Kaid as normal.</li>
+    </ul>
+    <p>Every recipe row also gets a nested branch for any material that's an actual mob drop (as opposed to a plain by-weight base material like cloth/leather/metal/wood) - expand it to see exactly where that material can be found (Realm/Area/Mob), cross-referenced against the same source data as the Enchants tab.</p>
+    <p>Recipe Slot/Spell values are cross-referenced against the bundled master equipment list wherever a matching item exists there, rather than guessed from the item's own name - this is what makes an "evasion" item correctly show as the <code>evade.enhance</code> spell (this app's real name for it elsewhere) and surfaces the real hidden spell on flavor-named Magical Weapons (e.g. "of frost") that don't literally name their spell.</p>
+
+    <h2 id="tips">8. Tips and Example Builds</h2>
     <p><b>Quick start:</b> Use Community List, add the spells you want, set level/armor/weapon/realm constraints as needed, click Find Optimal Build.</p>
     <ul>
       <li><b>Tank:</b> Melee + Plate armor + Weapon + Shield + Slashing + Min Level 60</li>
@@ -385,7 +403,7 @@
       <li><b>Caster with Staff:</b> Direct (Caster) + Cloth armor + Two-Handed + Crushing</li>
     </ul>
 
-    <h2 id="troubleshooting">8. Troubleshooting</h2>
+    <h2 id="troubleshooting">9. Troubleshooting</h2>
     <ul>
       <li><b>"Windows protected your PC" / SmartScreen warning</b> - expected, the exe isn't code-signed yet. Click "More info" then "Run anyway".</li>
       <li><b>The exe takes a few seconds to open every time</b> - expected for the single-file download; it's a PyInstaller onefile build that unpacks itself to a temp folder on every launch. Use the Folder download instead (see 1. Getting Started) for instant startup with no unpacking step.</li>

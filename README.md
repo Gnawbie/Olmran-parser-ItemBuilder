@@ -140,7 +140,16 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v6.6.0 (Current)
+### v7.0.0 (Current)
+- Added a new top-level **Crafting** tab - a repository of crafting recipes and material sources, organized into:
+  - **Equipment** - Armor (Cloth/Leather/Studded/Plate, each grouped by slot), Weapon (all 5 weapon-crafting skills plus Shield Crafting), Infernal Armaments, and Materials (jewel-cutting recipes grouped by spell, plus Studded's own raw-material recipes).
+  - **Siegecraft** - Siegecraft and Fortifications recipes together.
+  - **Enchants** - where to find Weapon/Armor/Sigil enchant materials, grouped by realm. A Kaid Sigil is grouped under whichever of Evil/Good/Chaos actually specializes in its element (each of those three only ever covers 2 of the 6 elements; Kaid continues every element past that realm's own top tier) - shown with a "From Kaid" note so it's still clear where it actually drops.
+  - Every recipe also gets a nested branch for any material that's an actual mob drop (as opposed to a plain by-weight base material), showing exactly where to find it (Realm/Area/Mob).
+  - Recipe data is cross-referenced against the bundled master equipment list for accurate Slot/Spell values - this caught and fixed real data gaps, e.g. "evasion" gear is actually the `evade.enhance` spell (not `evasion`) everywhere else this app tracks spells, and several Magical Weapons with flavor names (like "of frost") carry real hidden spells their name doesn't literally state.
+  - Framework only for now - far from every recipe/material in the game is captured yet; more gets folded in as it's learned.
+
+### v6.6.0
 - **Build**: replaced the "Generate multiple build options" checkbox (which only ever found near-identical same-slot twins) with two dedicated buttons - **Find Best Combos** (up to 10 genuinely distinct combinations tied for the best coverage, including cross-slot swaps a single winner would never surface) and **Find All Combos** (every tied-optimal combination, batched with a **Load More Combos** button for large result sets).
 - **Results**: added a **Clear** button that resets the tab back to its empty starting state - now also clears any manually-added items (previously they'd silently reappear the next time a search ran).
 

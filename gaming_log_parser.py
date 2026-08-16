@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "6.6.0"
+VERSION = "7.0.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -1742,6 +1742,906 @@ def _sort_treeview_column_recursive(tv, col, reverse):
     tv.heading(col, command=lambda: _sort_treeview_column_recursive(tv, col, not reverse))
 
 
+# Crafting recipes, sourced from "Master File.xlsx"'s own dedicated
+# sheets (Crafting Recipes/Siegecraft/Fortifications/Gemcutting) - a
+# structured, authoritative source with Slot/Material/Quantity given
+# directly, rather than guessed from item-name keywords. Each recipe:
+# item (display name), level (skill level to make it), slot (internal
+# slot key this app uses elsewhere, or None for a non-wearable
+# material/weapon-agnostic recipe), spell (base.tier chip string,
+# matching this app's own spell taxonomy elsewhere - e.g. "evasion" is
+# really 'evade.enhance', not 'evasion' - or None), materials ("QTYx
+# name" pairs, comma-joined).
+#
+# Spell isn't in the Crafting Recipes/Siegecraft/Fortifications sheets
+# (Gemcutting has its own, used directly), so it's cross-referenced
+# against the bundled master equipment list's own Crafted-realm rows
+# (same item names, minus the leading article) - this also catches
+# spells hidden behind flavor names (e.g. Magical Weapons' "of frost"/
+# "of sparks"/etc., which don't literally name their spell). A few
+# items exist in the master equipment list with no matching recipe at
+# all in any sheet (materials genuinely not yet documented) - kept
+# here anyway with a "(materials not yet known...)" placeholder so
+# they're still visible. Infernal Armaments has no equivalent sheet at
+# all yet (originally scraped from a character log - see the earlier
+# git history) and stays as-is until a real source turns up for it.
+#
+# Framework only for now - far from every material/recipe in the game
+# is captured yet; more gets folded in here (and re-reconciled) as
+# better source data turns up.
+CRAFTING_RECIPES = {
+    'Cloth': [
+        {'item': 'a tribal mitts of strength', 'level': 2, 'slot': 'hands', 'spell': 'strength.i', 'materials': '3x cloth, 1x rough ruby of strength'},
+        {'item': 'a tribal mitts of intelligence', 'level': 2, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '3x cloth, 1x rough sapphire of intelligence'},
+        {'item': 'a tribal bandana of strength', 'level': 3, 'slot': 'head', 'spell': 'strength.i', 'materials': '3x cloth, 1x rough ruby of strength'},
+        {'item': 'a tribal bandana of intelligence', 'level': 3, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '3x cloth, 1x rough sapphire of intelligence'},
+        {'item': 'a tribal moccasins of agility', 'level': 4, 'slot': 'feet', 'spell': 'agility.i', 'materials': '3x cloth, 1x rough emerald of agility'},
+        {'item': 'a tribal moccasins of wisdom', 'level': 4, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '3x cloth, 1x rough ruby of wisdom'},
+        {'item': 'a tribal cloak of dexterity', 'level': 5, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x cloth, 1x rough emerald of dexterity'},
+        {'item': 'a tribal cloak of evasion', 'level': 5, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x cloth, 1x rough sapphire of evasion'},
+        {'item': 'a tribal chaps of agility', 'level': 7, 'slot': 'legs', 'spell': 'agility.i', 'materials': '6x cloth, 1x rough emerald of agility'},
+        {'item': 'a tribal chaps of wisdom', 'level': 7, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '6x cloth, 1x rough ruby of wisdom'},
+        {'item': 'a tribal vest of dexterity', 'level': 9, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '6x cloth, 1x rough emerald of dexterity'},
+        {'item': 'a tribal vest of evasion', 'level': 9, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '6x cloth, 1x rough sapphire of evasion'},
+        {'item': 'a wavering gypsy gloves of strength', 'level': 16, 'slot': 'hands', 'spell': 'strength.i', 'materials': '3x cloth, 1x rough ruby of strength'},
+        {'item': 'a wavering gypsy gloves of intelligence', 'level': 16, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '3x cloth, 1x rough sapphire of intelligence'},
+        {'item': 'a wavering gypsy mask of strength', 'level': 17, 'slot': 'head', 'spell': 'strength.i', 'materials': '6x cloth, 1x rough ruby of strength'},
+        {'item': 'a wavering gypsy mask of intelligence', 'level': 17, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '6x cloth, 1x rough sapphire of intelligence'},
+        {'item': 'a wavering gypsy brogans of agility', 'level': 18, 'slot': 'feet', 'spell': 'agility.i', 'materials': '6x cloth, 1x rough emerald of agility'},
+        {'item': 'a wavering gypsy brogans of wisdom', 'level': 18, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '6x cloth, 1x rough ruby of wisdom'},
+        {'item': 'a wavering gypsy cloak of dexterity', 'level': 19, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x cloth, 1x rough emerald of dexterity'},
+        {'item': 'a wavering gypsy cloak of evasion', 'level': 19, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x cloth, 1x rough sapphire of evasion'},
+        {'item': 'a wavering gypsy pants of agility', 'level': 21, 'slot': 'legs', 'spell': 'agility.i', 'materials': '6x cloth, 1x rough emerald of agility'},
+        {'item': 'a wavering gypsy pants of wisdom', 'level': 21, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '6x cloth, 1x rough ruby of wisdom'},
+        {'item': 'a wavering gypsy robe of dexterity', 'level': 23, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '6x cloth, 1x rough emerald of dexterity'},
+        {'item': 'a wavering gypsy robe of evasion', 'level': 23, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '6x cloth, 1x rough sapphire of evasion'},
+        {'item': 'a perfectly woven gloves of strength', 'level': 31, 'slot': 'hands', 'spell': 'strength.i', 'materials': '6x cloth, 1x rough ruby of strength'},
+        {'item': 'a perfectly woven gloves of intelligence', 'level': 31, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '6x cloth, 1x rough sapphire of intelligence'},
+        {'item': 'a perfectly woven hat of strength', 'level': 32, 'slot': 'head', 'spell': 'strength.i', 'materials': '6x cloth, 1x rough ruby of strength'},
+        {'item': 'a perfectly woven hat of intelligence', 'level': 32, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '6x cloth, 1x rough sapphire of intelligence'},
+        {'item': 'a perfectly woven shoes of agility', 'level': 33, 'slot': 'feet', 'spell': 'agility.i', 'materials': '6x cloth, 1x rough emerald of agility'},
+        {'item': 'a perfectly woven shoes of wisdom', 'level': 33, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '6x cloth, 1x rough ruby of wisdom'},
+        {'item': 'a perfectly woven cloak of dexterity', 'level': 34, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x cloth, 1x rough emerald of dexterity'},
+        {'item': 'a perfectly woven cloak of evasion', 'level': 34, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x cloth, 1x rough sapphire of evasion'},
+        {'item': 'a perfectly woven leggings of agility', 'level': 36, 'slot': 'legs', 'spell': 'agility.i', 'materials': '9x cloth, 1x rough emerald of agility'},
+        {'item': 'a perfectly woven leggings of wisdom', 'level': 36, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '9x cloth, 1x rough ruby of wisdom'},
+        {'item': 'a perfectly woven armor of dexterity', 'level': 38, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '12x cloth, 1x rough emerald of dexterity'},
+        {'item': 'a perfectly woven armor of evasion', 'level': 38, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '12x cloth, 1x rough sapphire of evasion'},
+        {'item': 'a legionnaire handguards of strength', 'level': 45, 'slot': 'hands', 'spell': 'strength.ii', 'materials': '9x cloth, 1x hazy ruby of strength'},
+        {'item': 'a legionnaire handguards of intelligence', 'level': 45, 'slot': 'hands', 'spell': 'intelligence.ii', 'materials': '9x cloth, 1x hazy sapphire of intelligence'},
+        {'item': 'a legionnaire crown of strength', 'level': 46, 'slot': 'head', 'spell': 'strength.ii', 'materials': '9x cloth, 1x hazy ruby of strength'},
+        {'item': 'a legionnaire crown of intelligence', 'level': 46, 'slot': 'head', 'spell': 'intelligence.ii', 'materials': '9x cloth, 1x hazy sapphire of intelligence'},
+        {'item': 'a legionnaire boots of agility', 'level': 47, 'slot': 'feet', 'spell': 'agility.ii', 'materials': '9x cloth, 1x hazy emerald of agility'},
+        {'item': 'a legionnaire boots of wisdom', 'level': 47, 'slot': 'feet', 'spell': 'wisdom.ii', 'materials': '9x cloth, 1x hazy ruby of wisdom'},
+        {'item': 'a legionnaire cloak of dexterity', 'level': 48, 'slot': 'cloak', 'spell': 'dexterity.ii', 'materials': '6x cloth, 1x hazy emerald of dexterity'},
+        {'item': 'a legionnaire cloak of evasion', 'level': 48, 'slot': 'cloak', 'spell': 'evade.enhance.ii', 'materials': '6x cloth, 1x hazy sapphire of evasion'},
+        {'item': 'a legionnaire leggings of agility', 'level': 50, 'slot': 'legs', 'spell': 'agility.ii', 'materials': '12x cloth, 1x hazy emerald of agility'},
+        {'item': 'a legionnaire leggings of wisdom', 'level': 50, 'slot': 'legs', 'spell': 'wisdom.ii', 'materials': '12x cloth, 1x hazy ruby of wisdom'},
+        {'item': 'a legionnaire vestments of dexterity', 'level': 52, 'slot': 'body', 'spell': 'dexterity.ii', 'materials': '15x cloth, 1x hazy emerald of dexterity'},
+        {'item': 'a legionnaire vestments of evasion', 'level': 52, 'slot': 'body', 'spell': 'evade.enhance.ii', 'materials': '15x cloth, 1x hazy sapphire of evasion'},
+        {'item': "a noble's gleaming gloves of strength", 'level': 61, 'slot': 'hands', 'spell': 'strength.iii', 'materials': '12x cloth, 1x flawless ruby of strength, 1x spool of gleaming Kaidite thread'},
+        {'item': "a noble's gleaming gloves of intelligence", 'level': 61, 'slot': 'hands', 'spell': 'intelligence.iii', 'materials': '12x cloth, 1x flawless sapphire of intelligence, 1x spool of gleaming Kaidite thread'},
+        {'item': "a noble's gleaming circlet of strength", 'level': 62, 'slot': 'head', 'spell': 'strength.iii', 'materials': '12x cloth, 1x flawless ruby of strength, 1x spool of gleaming Kaidite thread'},
+        {'item': "a noble's gleaming circlet of intelligence", 'level': 62, 'slot': 'head', 'spell': 'intelligence.iii', 'materials': '12x cloth, 1x flawless sapphire of intelligence, 1x spool of gleaming Kaidite thread'},
+        {'item': "a noble's gleaming boots of agility", 'level': 63, 'slot': 'feet', 'spell': 'agility.ii', 'materials': '12x cloth, 1x flawless emerald of agility, 1x spool of gleaming Kaidite thread'},
+        {'item': "a noble's gleaming boots of wisdom", 'level': 63, 'slot': 'feet', 'spell': 'wisdom.iii', 'materials': '12x cloth, 1x flawless ruby of wisdom, 1x spool of gleaming Kaidite thread'},
+        {'item': "a noble's gleaming drape of dexterity", 'level': 64, 'slot': 'cloak', 'spell': 'dexterity.iii', 'materials': '9x cloth, 1x flawless emerald of dexterity, 1x spool of gleaming Kaidite thread'},
+        {'item': "a noble's gleaming drape of evasion", 'level': 64, 'slot': 'cloak', 'spell': 'evade.enhance.iii', 'materials': '9x cloth, 1x flawless sapphire of evasion, 1x spool of gleaming Kaidite thread'},
+        {'item': "a noble's gleaming leggings of agility", 'level': 66, 'slot': 'legs', 'spell': 'agility.ii', 'materials': '15x cloth, 1x flawless emerald of agility, 1x spool of gleaming Kaidite thread'},
+        {'item': "a noble's gleaming leggings of wisdom", 'level': 66, 'slot': 'legs', 'spell': 'wisdom.iii', 'materials': '15x cloth, 1x flawless ruby of wisdom, 1x spool of gleaming Kaidite thread'},
+        {'item': "a noble's gleaming raiment of dexterity", 'level': 68, 'slot': 'body', 'spell': 'dexterity.iii', 'materials': '21x cloth, 1x flawless emerald of dexterity, 2x spool of gleaming Kaidite thread'},
+        {'item': "a noble's gleaming raiment of evasion", 'level': 68, 'slot': 'body', 'spell': 'evade.enhance.iii', 'materials': '21x cloth, 1x flawless sapphire of evasion, 2x spool of gleaming Kaidite thread'},
+    ],
+    'Leather': [
+        {'item': "a wanderer's gloves of strength", 'level': 2, 'slot': 'hands', 'spell': 'strength.i', 'materials': '3x leather, 1x rough ruby of strength'},
+        {'item': "a wanderer's gloves of intelligence", 'level': 2, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '3x leather, 1x rough sapphire of intelligence'},
+        {'item': "a wanderer's coif of strength", 'level': 3, 'slot': 'head', 'spell': 'strength.i', 'materials': '3x leather, 1x rough ruby of strength'},
+        {'item': "a wanderer's coif of intelligence", 'level': 3, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '3x leather, 1x rough sapphire of intelligence'},
+        {'item': "a wanderer's boots of agility", 'level': 4, 'slot': 'feet', 'spell': 'agility.i', 'materials': '3x leather, 1x rough emerald of agility'},
+        {'item': "a wanderer's boots of wisdom", 'level': 4, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '3x leather, 1x rough ruby of wisdom'},
+        {'item': "a wanderer's cloak of dexterity", 'level': 5, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x leather, 1x rough emerald of dexterity'},
+        {'item': "a wanderer's cloak of evasion", 'level': 5, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x leather, 1x rough sapphire of evasion'},
+        {'item': "a wanderer's pants of agility", 'level': 7, 'slot': 'legs', 'spell': 'agility.i', 'materials': '6x leather, 1x rough emerald of agility'},
+        {'item': "a wanderer's pants of wisdom", 'level': 7, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '6x leather, 1x rough ruby of wisdom'},
+        {'item': "a wanderer's armor of dexterity", 'level': 9, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '6x leather, 1x rough emerald of dexterity'},
+        {'item': "a wanderer's armor of evasion", 'level': 9, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '6x leather, 1x rough sapphire of evasion'},
+        {'item': 'a bardic gloves of strength', 'level': 16, 'slot': 'hands', 'spell': 'strength.i', 'materials': '3x leather, 1x rough ruby of strength'},
+        {'item': 'a bardic gloves of intelligence', 'level': 16, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '3x leather, 1x rough sapphire of intelligence'},
+        {'item': 'a bardic coif of strength', 'level': 17, 'slot': 'head', 'spell': 'strength.i', 'materials': '6x leather, 1x rough ruby of strength'},
+        {'item': 'a bardic coif of intelligence', 'level': 17, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '6x leather, 1x rough sapphire of intelligence'},
+        {'item': 'a bardic boots of agility', 'level': 18, 'slot': 'feet', 'spell': 'agility.i', 'materials': '6x leather, 1x rough emerald of agility'},
+        {'item': 'a bardic boots of wisdom', 'level': 18, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '6x leather, 1x rough ruby of wisdom'},
+        {'item': 'a bardic cloak of dexterity', 'level': 19, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x leather, 1x rough emerald of dexterity'},
+        {'item': 'a bardic cloak of evasion', 'level': 19, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x leather, 1x rough sapphire of evasion'},
+        {'item': 'a bardic pants of agility', 'level': 21, 'slot': 'legs', 'spell': 'agility.i', 'materials': '6x leather, 1x rough emerald of agility'},
+        {'item': 'a bardic pants of wisdom', 'level': 21, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '6x leather, 1x rough ruby of wisdom'},
+        {'item': 'a bardic armor of dexterity', 'level': 23, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '6x leather, 1x rough emerald of dexterity'},
+        {'item': 'a bardic armor of evasion', 'level': 23, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '6x leather, 1x rough sapphire of evasion'},
+        {'item': "a pathfinder's gloves of strength", 'level': 31, 'slot': 'hands', 'spell': 'strength.i', 'materials': '6x leather, 1x rough ruby of strength'},
+        {'item': "a pathfinder's gloves of intelligence", 'level': 31, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '6x leather, 1x rough sapphire of intelligence'},
+        {'item': "a pathfinder's coif of strength", 'level': 32, 'slot': 'head', 'spell': 'strength.i', 'materials': '6x leather, 1x rough ruby of strength'},
+        {'item': "a pathfinder's coif of intelligence", 'level': 32, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '6x leather, 1x rough sapphire of intelligence'},
+        {'item': "a pathfinder's boots of agility", 'level': 33, 'slot': 'feet', 'spell': 'agility.i', 'materials': '6x leather, 1x rough emerald of agility'},
+        {'item': "a pathfinder's boots of wisdom", 'level': 33, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '6x leather, 1x rough ruby of wisdom'},
+        {'item': "a pathfinder's cloak of dexterity", 'level': 34, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x leather, 1x rough emerald of dexterity'},
+        {'item': "a pathfinder's cloak of evasion", 'level': 34, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x leather, 1x rough sapphire of evasion'},
+        {'item': "a pathfinder's pants of agility", 'level': 36, 'slot': 'legs', 'spell': 'agility.i', 'materials': '9x leather, 1x rough emerald of agility'},
+        {'item': "a pathfinder's pants of wisdom", 'level': 36, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '9x leather, 1x rough ruby of wisdom'},
+        {'item': "a pathfinder's armor of dexterity", 'level': 38, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '12x leather, 1x rough emerald of dexterity'},
+        {'item': "a pathfinder's armor of evasion", 'level': 38, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '12x leather, 1x rough sapphire of evasion'},
+        {'item': "a trailblazer's gloves of strength", 'level': 45, 'slot': 'hands', 'spell': 'strength.ii', 'materials': '9x leather, 1x hazy ruby of strength'},
+        {'item': "a trailblazer's gloves of intelligence", 'level': 45, 'slot': 'hands', 'spell': 'intelligence.ii', 'materials': '9x leather, 1x hazy sapphire of intelligence'},
+        {'item': "a trailblazer's coif of strength", 'level': 46, 'slot': 'head', 'spell': 'strength.ii', 'materials': '9x leather, 1x hazy ruby of strength'},
+        {'item': "a trailblazer's coif of intelligence", 'level': 46, 'slot': 'head', 'spell': 'intelligence.ii', 'materials': '9x leather, 1x hazy sapphire of intelligence'},
+        {'item': "a trailblazer's boots of agility", 'level': 47, 'slot': 'feet', 'spell': 'agility.ii', 'materials': '9x leather, 1x hazy emerald of agility'},
+        {'item': "a trailblazer's boots of wisdom", 'level': 47, 'slot': 'feet', 'spell': 'wisdom.ii', 'materials': '9x leather, 1x hazy ruby of wisdom'},
+        {'item': "a trailblazer's cloak of dexterity", 'level': 48, 'slot': 'cloak', 'spell': 'dexterity.ii', 'materials': '6x leather, 1x hazy emerald of dexterity'},
+        {'item': "a trailblazer's cloak of evasion", 'level': 48, 'slot': 'cloak', 'spell': 'evade.enhance.ii', 'materials': '6x leather, 1x hazy sapphire of evasion'},
+        {'item': "a trailblazer's pants of agility", 'level': 50, 'slot': 'legs', 'spell': 'agility.ii', 'materials': '12x leather, 1x hazy emerald of agility'},
+        {'item': "a trailblazer's pants of wisdom", 'level': 50, 'slot': 'legs', 'spell': 'wisdom.ii', 'materials': '12x leather, 1x hazy ruby of wisdom'},
+        {'item': "a trailblazer's armor of dexterity", 'level': 52, 'slot': 'body', 'spell': 'dexterity.ii', 'materials': '15x leather, 1x hazy emerald of dexterity'},
+        {'item': "a trailblazer's armor of evasion", 'level': 52, 'slot': 'body', 'spell': 'evade.enhance.ii', 'materials': '15x leather, 1x hazy sapphire of evasion'},
+        {'item': "a devious thief's snatchers of strength", 'level': 61, 'slot': 'hands', 'spell': 'strength.iii', 'materials': '12x leather, 1x flawless ruby of strength, 1x small jar of Kaidite oil'},
+        {'item': "a devious thief's snatchers of intelligence", 'level': 61, 'slot': 'hands', 'spell': 'intelligence.iii', 'materials': '12x leather, 1x flawless sapphire of intelligence, 1x small jar of Kaidite oil'},
+        {'item': "a devious thief's mask of strength", 'level': 62, 'slot': 'head', 'spell': 'strength.iii', 'materials': '12x leather, 1x flawless ruby of strength, 1x small jar of Kaidite oil'},
+        {'item': "a devious thief's mask of intelligence", 'level': 62, 'slot': 'head', 'spell': 'intelligence.iii', 'materials': '12x leather, 1x flawless sapphire of intelligence, 1x small jar of Kaidite oil'},
+        {'item': "a devious thief's treads of agility", 'level': 63, 'slot': 'feet', 'spell': 'agility.ii', 'materials': '12x leather, 1x flawless emerald of agility, 1x small jar of Kaidite oil'},
+        {'item': "a devious thief's treads of wisdom", 'level': 63, 'slot': 'feet', 'spell': 'wisdom.iii', 'materials': '12x leather, 1x flawless ruby of wisdom, 1x small jar of Kaidite oil'},
+        {'item': "a devious thief's cape of dexterity", 'level': 64, 'slot': 'cloak', 'spell': 'dexterity.iii', 'materials': '9x leather, 1x flawless emerald of dexterity, 1x small jar of Kaidite oil'},
+        {'item': "a devious thief's cape of evasion", 'level': 64, 'slot': 'cloak', 'spell': 'evade.enhance.iii', 'materials': '9x leather, 1x flawless sapphire of evasion, 1x small jar of Kaidite oil'},
+        {'item': "a devious thief's leggings of agility", 'level': 66, 'slot': 'legs', 'spell': 'agility.ii', 'materials': '15x leather, 1x flawless emerald of agility, 1x small jar of Kaidite oil'},
+        {'item': "a devious thief's leggings of wisdom", 'level': 66, 'slot': 'legs', 'spell': 'wisdom.iii', 'materials': '15x leather, 1x flawless ruby of wisdom, 1x small jar of Kaidite oil'},
+        {'item': "a devious thief's armor of dexterity", 'level': 68, 'slot': 'body', 'spell': 'dexterity.iii', 'materials': '21x leather, 1x flawless emerald of dexterity, 2x small jar of Kaidite oil'},
+        {'item': "a devious thief's armor of evasion", 'level': 68, 'slot': 'body', 'spell': 'evade.enhance.iii', 'materials': '21x leather, 1x flawless sapphire of evasion, 2x small jar of Kaidite oil'},
+    ],
+    'Studded': [
+        {'item': 'a square of bronze studded leather', 'level': 1, 'slot': None, 'spell': None, 'materials': '1x scrap leather, 1x bronze'},
+        {'item': 'a light studded grips of strength', 'level': 2, 'slot': 'hands', 'spell': 'strength.i', 'materials': '3x studded, 1x rough ruby of strength'},
+        {'item': 'a light studded grips of intelligence', 'level': 2, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '3x studded, 1x rough sapphire of intelligence'},
+        {'item': 'a light studded cap of strength', 'level': 3, 'slot': 'head', 'spell': 'strength.i', 'materials': '3x studded, 1x rough ruby of strength'},
+        {'item': 'a light studded cap of intelligence', 'level': 3, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '3x studded, 1x rough sapphire of intelligence'},
+        {'item': 'a light studded shoes of agility', 'level': 4, 'slot': 'feet', 'spell': 'agility.i', 'materials': '3x studded, 1x rough emerald of agility'},
+        {'item': 'a light studded shoes of wisdom', 'level': 4, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '3x studded, 1x rough ruby of wisdom'},
+        {'item': 'a light studded drape of dexterity', 'level': 5, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x studded, 1x rough emerald of dexterity'},
+        {'item': 'a light studded drape of evasion', 'level': 5, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x studded, 1x rough sapphire of evasion'},
+        {'item': 'a light studded pants of agility', 'level': 7, 'slot': 'legs', 'spell': 'agility.i', 'materials': '6x studded, 1x rough emerald of agility'},
+        {'item': 'a light studded pants of wisdom', 'level': 7, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '6x studded, 1x rough ruby of wisdom'},
+        {'item': 'a light studded vest of dexterity', 'level': 9, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '6x studded, 1x rough emerald of dexterity'},
+        {'item': 'a light studded vest of evasion', 'level': 9, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '6x studded, 1x rough sapphire of evasion'},
+        {'item': 'a square of iron studded leather', 'level': 10, 'slot': None, 'spell': None, 'materials': '1x rough leather, 1x iron'},
+        {'item': 'a samurai studded kote of strength', 'level': 16, 'slot': 'hands', 'spell': 'strength.i', 'materials': '3x studded, 1x rough ruby of strength'},
+        {'item': 'a samurai studded kote of intelligence', 'level': 16, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '3x studded, 1x rough sapphire of intelligence'},
+        {'item': 'a samurai studded kabuto of strength', 'level': 17, 'slot': 'head', 'spell': 'strength.i', 'materials': '6x studded, 1x rough ruby of strength'},
+        {'item': 'a samurai studded kabuto of intelligence', 'level': 17, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '6x studded, 1x rough sapphire of intelligence'},
+        {'item': 'a samurai studded geta of agility', 'level': 18, 'slot': 'feet', 'spell': 'agility.i', 'materials': '6x studded, 1x rough emerald of agility'},
+        {'item': 'a samurai studded geta of wisdom', 'level': 18, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '6x studded, 1x rough ruby of wisdom'},
+        {'item': 'a samurai studded agemaki of dexterity', 'level': 19, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x studded, 1x rough emerald of dexterity'},
+        {'item': 'a samurai studded agemaki of evasion', 'level': 19, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x studded, 1x rough sapphire of evasion'},
+        {'item': 'a square of steel studded leather', 'level': 20, 'slot': None, 'spell': None, 'materials': '1x suede, 1x steel'},
+        {'item': 'a samurai studded haidate of agility', 'level': 21, 'slot': 'legs', 'spell': 'agility.i', 'materials': '6x studded, 1x rough emerald of agility'},
+        {'item': 'a samurai studded haidate of wisdom', 'level': 21, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '6x studded, 1x rough ruby of wisdom'},
+        {'item': 'a samurai studded yoroi of dexterity', 'level': 23, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '6x studded, 1x rough emerald of dexterity'},
+        {'item': 'a samurai studded yoroi of evasion', 'level': 23, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '6x studded, 1x rough sapphire of evasion'},
+        {'item': 'a square of alloy studded leather', 'level': 30, 'slot': None, 'spell': None, 'materials': '1x embossed, 1x alloy'},
+        {'item': 'a gokenin studded gloves of strength', 'level': 31, 'slot': 'hands', 'spell': 'strength.i', 'materials': '6x studded, 1x rough ruby of strength'},
+        {'item': 'a gokenin studded gloves of intelligence', 'level': 31, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '6x studded, 1x rough sapphire of intelligence'},
+        {'item': 'a gokenin studded helm of strength', 'level': 32, 'slot': 'head', 'spell': 'strength.i', 'materials': '6x studded, 1x rough ruby of strength'},
+        {'item': 'a gokenin studded helm of intelligence', 'level': 32, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '6x studded, 1x rough sapphire of intelligence'},
+        {'item': 'a gokenin studded boots of agility', 'level': 33, 'slot': 'feet', 'spell': 'agility.i', 'materials': '6x studded, 1x rough emerald of agility'},
+        {'item': 'a gokenin studded boots of wisdom', 'level': 33, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '6x studded, 1x rough ruby of wisdom'},
+        {'item': 'a gokenin studded cloak of dexterity', 'level': 34, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x studded, 1x rough emerald of dexterity'},
+        {'item': 'a gokenin studded cloak of evasion', 'level': 34, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x studded, 1x rough sapphire of evasion'},
+        {'item': 'a gokenin studded pants of agility', 'level': 36, 'slot': 'legs', 'spell': 'agility.i', 'materials': '9x studded, 1x rough emerald of agility'},
+        {'item': 'a gokenin studded pants of wisdom', 'level': 36, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '9x studded, 1x rough ruby of wisdom'},
+        {'item': 'a gokenin studded armor of dexterity', 'level': 38, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '12x studded, 1x rough emerald of dexterity'},
+        {'item': 'a gokenin studded armor of evasion', 'level': 38, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '12x studded, 1x rough sapphire of evasion'},
+        {'item': 'a square of mithril studded leather', 'level': 40, 'slot': None, 'spell': None, 'materials': '1x wyvern scale, 1x mithril'},
+        {'item': 'a ronin razored studded gloves of strength', 'level': 45, 'slot': 'hands', 'spell': 'strength.ii', 'materials': '9x studded, 1x hazy ruby of strength'},
+        {'item': 'a ronin razored studded gloves of intelligence', 'level': 45, 'slot': 'hands', 'spell': 'intelligence.ii', 'materials': '9x studded, 1x hazy sapphire of intelligence'},
+        {'item': 'a ronin razored studded helm of strength', 'level': 46, 'slot': 'head', 'spell': 'strength.ii', 'materials': '9x studded, 1x hazy ruby of strength'},
+        {'item': 'a ronin razored studded helm of intelligence', 'level': 46, 'slot': 'head', 'spell': 'intelligence.ii', 'materials': '9x studded, 1x hazy sapphire of intelligence'},
+        {'item': 'a ronin razored studded boots of agility', 'level': 47, 'slot': 'feet', 'spell': 'agility.ii', 'materials': '9x studded, 1x hazy emerald of agility'},
+        {'item': 'a ronin razored studded boots of wisdom', 'level': 47, 'slot': 'feet', 'spell': 'wisdom.ii', 'materials': '9x studded, 1x hazy ruby of wisdom'},
+        {'item': 'a ronin razored studded cloak of dexterity', 'level': 48, 'slot': 'cloak', 'spell': 'dexterity.ii', 'materials': '6x studded, 1x hazy emerald of dexterity'},
+        {'item': 'a ronin razored studded cloak of evasion', 'level': 48, 'slot': 'cloak', 'spell': 'evade.enhance.ii', 'materials': '6x studded, 1x hazy sapphire of evasion'},
+        {'item': 'a ronin razored studded pants of agility', 'level': 50, 'slot': 'legs', 'spell': 'agility.ii', 'materials': '12x studded, 1x hazy emerald of agility'},
+        {'item': 'a ronin razored studded pants of wisdom', 'level': 50, 'slot': 'legs', 'spell': 'wisdom.ii', 'materials': '12x studded, 1x hazy ruby of wisdom'},
+        {'item': 'a ronin razored studded armor of dexterity', 'level': 52, 'slot': 'body', 'spell': 'dexterity.ii', 'materials': '15x studded, 1x hazy emerald of dexterity'},
+        {'item': 'a ronin razored studded armor of evasion', 'level': 52, 'slot': 'body', 'spell': 'evade.enhance.ii', 'materials': '15x studded, 1x hazy sapphire of evasion'},
+        {'item': "a silent assassin's studded gauntlets of strength", 'level': 61, 'slot': 'hands', 'spell': 'strength.iii', 'materials': '12x studded, 1x flawless ruby of strength'},
+        {'item': "a silent assassin's studded gauntlets of intelligence", 'level': 61, 'slot': 'hands', 'spell': 'intelligence.iii', 'materials': '12x studded, 1x flawless sapphire of intelligence'},
+        {'item': "a silent assassin's studded helm of strength", 'level': 62, 'slot': 'head', 'spell': 'strength.iii', 'materials': '12x studded, 1x flawless ruby of strength'},
+        {'item': "a silent assassin's studded helm of intelligence", 'level': 62, 'slot': 'head', 'spell': 'intelligence.iii', 'materials': '12x studded, 1x flawless sapphire of intelligence'},
+        {'item': "a silent assassin's studded boots of agility", 'level': 63, 'slot': 'feet', 'spell': 'agility.ii', 'materials': '12x studded, 1x flawless emerald of agility'},
+        {'item': "a silent assassin's studded boots of wisdom", 'level': 63, 'slot': 'feet', 'spell': 'wisdom.iii', 'materials': '12x studded, 1x flawless ruby of wisdom'},
+        {'item': "a silent assassin's studded cloak of dexterity", 'level': 64, 'slot': 'cloak', 'spell': 'dexterity.iii', 'materials': '9x studded, 1x flawless emerald of dexterity'},
+        {'item': "a silent assassin's studded cloak of evasion", 'level': 64, 'slot': 'cloak', 'spell': 'evade.enhance.iii', 'materials': '9x studded, 1x flawless sapphire of evasion'},
+        {'item': "a silent assassin's studded legguards of agility", 'level': 66, 'slot': 'legs', 'spell': 'agility.ii', 'materials': '15x studded, 1x flawless emerald of agility'},
+        {'item': "a silent assassin's studded legguards of wisdom", 'level': 66, 'slot': 'legs', 'spell': 'wisdom.iii', 'materials': '15x studded, 1x flawless ruby of wisdom'},
+        {'item': "a silent assassin's studded armor of dexterity", 'level': 68, 'slot': 'body', 'spell': 'dexterity.iii', 'materials': '21x studded, 1x flawless emerald of dexterity'},
+        {'item': "a silent assassin's studded armor of evasion", 'level': 68, 'slot': 'body', 'spell': 'evade.enhance.iii', 'materials': '21x studded, 1x flawless sapphire of evasion'},
+        {'item': "a warleader's helmet", 'level': 70, 'slot': 'head', 'spell': 'evade.enhance.iii', 'materials': '(materials not yet known - seen in the master item list, not yet in a crafting list)'},
+    ],
+    'Plate': [
+        {'item': 'a infantry plated gauntlets of strength', 'level': 2, 'slot': 'hands', 'spell': 'strength.i', 'materials': '3x metal, 1x rough ruby of strength'},
+        {'item': 'a infantry plated gauntlets of intelligence', 'level': 2, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '3x metal, 1x rough sapphire of intelligence'},
+        {'item': 'a infantry plated helm of strength', 'level': 3, 'slot': 'head', 'spell': 'strength.i', 'materials': '3x metal, 1x rough ruby of strength'},
+        {'item': 'a infantry plated helm of intelligence', 'level': 3, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '3x metal, 1x rough sapphire of intelligence'},
+        {'item': 'a infantry plated boots of agility', 'level': 4, 'slot': 'feet', 'spell': 'agility.i', 'materials': '3x metal, 1x rough emerald of agility'},
+        {'item': 'a infantry plated boots of wisdom', 'level': 4, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '3x metal, 1x rough ruby of wisdom'},
+        {'item': 'a infantry plated cloak of dexterity', 'level': 5, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x metal, 1x rough emerald of dexterity'},
+        {'item': 'a infantry plated cloak of evasion', 'level': 5, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x metal, 1x rough sapphire of evasion'},
+        {'item': 'a infantry plated leggings of agility', 'level': 7, 'slot': 'legs', 'spell': 'agility.i', 'materials': '6x metal, 1x rough emerald of agility'},
+        {'item': 'a infantry plated leggings of wisdom', 'level': 7, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '6x metal, 1x rough ruby of wisdom'},
+        {'item': 'a infantry plated armor of dexterity', 'level': 9, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '6x metal, 1x rough emerald of dexterity'},
+        {'item': 'a infantry plated armor of evasion', 'level': 9, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '6x metal, 1x rough sapphire of evasion'},
+        {'item': "a plated horseman's gauntlets of strength", 'level': 16, 'slot': 'hands', 'spell': 'strength.i', 'materials': '3x metal, 1x rough ruby of strength'},
+        {'item': "a plated horseman's gauntlets of intelligence", 'level': 16, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '3x metal, 1x rough sapphire of intelligence'},
+        {'item': "a plated horseman's helm of strength", 'level': 17, 'slot': 'head', 'spell': 'strength.i', 'materials': '6x metal, 1x rough ruby of strength'},
+        {'item': "a plated horseman's helm of intelligence", 'level': 17, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '6x metal, 1x rough sapphire of intelligence'},
+        {'item': "a plated horseman's boots of agility", 'level': 18, 'slot': 'feet', 'spell': 'agility.i', 'materials': '6x metal, 1x rough emerald of agility'},
+        {'item': "a plated horseman's boots of wisdom", 'level': 18, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '6x metal, 1x rough ruby of wisdom'},
+        {'item': "a plated horseman's cloak of dexterity", 'level': 19, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x metal, 1x rough emerald of dexterity'},
+        {'item': "a plated horseman's cloak of evasion", 'level': 19, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x metal, 1x rough sapphire of evasion'},
+        {'item': "a plated horseman's leggings of agility", 'level': 21, 'slot': 'legs', 'spell': 'agility.i', 'materials': '6x metal, 1x rough emerald of agility'},
+        {'item': "a plated horseman's leggings of wisdom", 'level': 21, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '6x metal, 1x rough ruby of wisdom'},
+        {'item': "a plated horseman's armor of dexterity", 'level': 23, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '6x metal, 1x rough emerald of dexterity'},
+        {'item': "a plated horseman's armor of evasion", 'level': 23, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '6x metal, 1x rough sapphire of evasion'},
+        {'item': "a plated guardian's gauntlets of strength", 'level': 31, 'slot': 'hands', 'spell': 'strength.i', 'materials': '6x metal, 1x rough ruby of strength'},
+        {'item': "a plated guardian's gauntlets of intelligence", 'level': 31, 'slot': 'hands', 'spell': 'intelligence.i', 'materials': '6x metal, 1x rough sapphire of intelligence'},
+        {'item': "a plated guardian's helm of strength", 'level': 32, 'slot': 'head', 'spell': 'strength.i', 'materials': '6x metal, 1x rough ruby of strength'},
+        {'item': "a plated guardian's helm of intelligence", 'level': 32, 'slot': 'head', 'spell': 'intelligence.i', 'materials': '6x metal, 1x rough sapphire of intelligence'},
+        {'item': "a plated guardian's boots of agility", 'level': 33, 'slot': 'feet', 'spell': 'agility.i', 'materials': '6x metal, 1x rough emerald of agility'},
+        {'item': "a plated guardian's boots of wisdom", 'level': 33, 'slot': 'feet', 'spell': 'wisdom.i', 'materials': '6x metal, 1x rough ruby of wisdom'},
+        {'item': "a plated guardian's cloak of dexterity", 'level': 34, 'slot': 'cloak', 'spell': 'dexterity.i', 'materials': '3x metal, 1x rough emerald of dexterity'},
+        {'item': "a plated guardian's cloak of evasion", 'level': 34, 'slot': 'cloak', 'spell': 'evade.enhance.i', 'materials': '3x metal, 1x rough sapphire of evasion'},
+        {'item': "a plated guardian's leggings of agility", 'level': 36, 'slot': 'legs', 'spell': 'agility.i', 'materials': '9x metal, 1x rough emerald of agility'},
+        {'item': "a plated guardian's leggings of wisdom", 'level': 36, 'slot': 'legs', 'spell': 'wisdom.i', 'materials': '9x metal, 1x rough ruby of wisdom'},
+        {'item': "a plated guardian's armor of dexterity", 'level': 38, 'slot': 'body', 'spell': 'dexterity.i', 'materials': '12x metal, 1x rough emerald of dexterity'},
+        {'item': "a plated guardian's armor of evasion", 'level': 38, 'slot': 'body', 'spell': 'evade.enhance.i', 'materials': '12x metal, 1x rough sapphire of evasion'},
+        {'item': 'a dragoon plated gauntlets of strength', 'level': 45, 'slot': 'hands', 'spell': 'strength.ii', 'materials': '9x metal, 1x hazy ruby of strength'},
+        {'item': 'a dragoon plated gauntlets of intelligence', 'level': 45, 'slot': 'hands', 'spell': 'intelligence.ii', 'materials': '9x metal, 1x hazy sapphire of intelligence'},
+        {'item': 'a dragoon plated helm of strength', 'level': 46, 'slot': 'head', 'spell': 'strength.ii', 'materials': '9x metal, 1x hazy ruby of strength'},
+        {'item': 'a dragoon plated helm of intelligence', 'level': 46, 'slot': 'head', 'spell': 'intelligence.ii', 'materials': '9x metal, 1x hazy sapphire of intelligence'},
+        {'item': 'a dragoon plated boots of agility', 'level': 47, 'slot': 'feet', 'spell': 'agility.ii', 'materials': '9x metal, 1x hazy emerald of agility'},
+        {'item': 'a dragoon plated boots of wisdom', 'level': 47, 'slot': 'feet', 'spell': 'wisdom.ii', 'materials': '9x metal, 1x hazy ruby of wisdom'},
+        {'item': 'a dragoon plated cloak of dexterity', 'level': 48, 'slot': 'cloak', 'spell': 'dexterity.ii', 'materials': '6x metal, 1x hazy emerald of dexterity'},
+        {'item': 'a dragoon plated cloak of evasion', 'level': 48, 'slot': 'cloak', 'spell': 'evade.enhance.ii', 'materials': '6x metal, 1x hazy sapphire of evasion'},
+        {'item': 'a dragoon plated leggings of agility', 'level': 50, 'slot': 'legs', 'spell': 'agility.ii', 'materials': '12x metal, 1x hazy emerald of agility'},
+        {'item': 'a dragoon plated leggings of wisdom', 'level': 50, 'slot': 'legs', 'spell': 'wisdom.ii', 'materials': '12x metal, 1x hazy ruby of wisdom'},
+        {'item': 'a dragoon plated armor of dexterity', 'level': 52, 'slot': 'body', 'spell': 'dexterity.ii', 'materials': '15x metal, 1x hazy emerald of dexterity'},
+        {'item': 'a dragoon plated armor of evasion', 'level': 52, 'slot': 'body', 'spell': 'evade.enhance.ii', 'materials': '15x metal, 1x hazy sapphire of evasion'},
+        {'item': "a fearless protector's gauntlets of strength", 'level': 61, 'slot': 'hands', 'spell': 'strength.iii', 'materials': '12x metal, 1x flawless ruby of strength, 1x Kaidite flux'},
+        {'item': "a fearless protector's gauntlets of intelligence", 'level': 61, 'slot': 'hands', 'spell': 'intelligence.iii', 'materials': '12x metal, 1x flawless sapphire of intelligence, 1x Kaidite flux'},
+        {'item': "a fearless protector's helmet of strength", 'level': 62, 'slot': 'head', 'spell': 'strength.iii', 'materials': '12x metal, 1x flawless ruby of strength, 1x Kaidite flux'},
+        {'item': "a fearless protector's helmet of intelligence", 'level': 62, 'slot': 'head', 'spell': 'intelligence.iii', 'materials': '12x metal, 1x flawless sapphire of intelligence, 1x Kaidite flux'},
+        {'item': "a fearless protector's sabatons of agility", 'level': 63, 'slot': 'feet', 'spell': 'agility.ii', 'materials': '12x metal, 1x flawless emerald of agility, 1x Kaidite flux'},
+        {'item': "a fearless protector's sabatons of wisdom", 'level': 63, 'slot': 'feet', 'spell': 'wisdom.iii', 'materials': '12x metal, 1x flawless ruby of wisdom, 1x Kaidite flux'},
+        {'item': "a fearless protector's cloak of dexterity", 'level': 64, 'slot': 'cloak', 'spell': 'dexterity.iii', 'materials': '9x metal, 1x flawless emerald of dexterity, 1x Kaidite flux'},
+        {'item': "a fearless protector's cloak of evasion", 'level': 64, 'slot': 'cloak', 'spell': 'evade.enhance.iii', 'materials': '9x metal, 1x flawless sapphire of evasion, 1x Kaidite flux'},
+        {'item': "a fearless protector's greaves of agility", 'level': 66, 'slot': 'legs', 'spell': 'agility.ii', 'materials': '15x metal, 1x flawless emerald of agility, 1x Kaidite flux'},
+        {'item': "a fearless protector's greaves of wisdom", 'level': 66, 'slot': 'legs', 'spell': 'wisdom.iii', 'materials': '15x metal, 1x flawless ruby of wisdom, 1x Kaidite flux'},
+        {'item': "a fearless protector's cuirass of dexterity", 'level': 68, 'slot': 'body', 'spell': 'dexterity.iii', 'materials': '21x metal, 1x flawless emerald of dexterity, 2x Kaidite flux'},
+        {'item': "a fearless protector's cuirass of evasion", 'level': 68, 'slot': 'body', 'spell': 'evade.enhance.iii', 'materials': '21x metal, 1x flawless sapphire of evasion, 2x Kaidite flux'},
+        {'item': 'a firm grip of justice', 'level': 70, 'slot': 'hands', 'spell': 'strength.iii', 'materials': '(materials not yet known - seen in the master item list, not yet in a crafting list)'},
+        {'item': 'a forged gauntlets of calamity', 'level': 70, 'slot': 'hands', 'spell': 'strength.iii', 'materials': '(materials not yet known - seen in the master item list, not yet in a crafting list)'},
+    ],
+    'Crushing Weapon': [
+        {'item': 'a pipe', 'level': 2, 'slot': 'weapon', 'spell': None, 'materials': '3x metal'},
+        {'item': 'a greatclub', 'level': 4, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a mace', 'level': 6, 'slot': 'weapon', 'spell': None, 'materials': '3x metal'},
+        {'item': 'a two-handed mace', 'level': 8, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a baton', 'level': 11, 'slot': 'weapon', 'spell': None, 'materials': '4x metal'},
+        {'item': 'a warhammer', 'level': 13, 'slot': 'weapon', 'spell': None, 'materials': '6x metal'},
+        {'item': 'a bludgeon', 'level': 16, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a sledge', 'level': 18, 'slot': 'weapon', 'spell': None, 'materials': '7x metal'},
+        {'item': 'a heavy hammer', 'level': 21, 'slot': 'weapon', 'spell': None, 'materials': '6x metal'},
+        {'item': 'a skullcrusher', 'level': 23, 'slot': 'weapon', 'spell': None, 'materials': '8x metal'},
+        {'item': 'a spiked mace', 'level': 26, 'slot': 'weapon', 'spell': None, 'materials': '7x metal'},
+        {'item': 'a fine warhammer', 'level': 28, 'slot': 'weapon', 'spell': None, 'materials': '9x metal'},
+        {'item': 'a skullcracker', 'level': 31, 'slot': 'weapon', 'spell': None, 'materials': '8x metal'},
+        {'item': 'a maul', 'level': 33, 'slot': 'weapon', 'spell': None, 'materials': '10x metal'},
+        {'item': 'a wicked baton', 'level': 36, 'slot': 'weapon', 'spell': None, 'materials': '9x metal'},
+        {'item': 'a heavy sledge', 'level': 38, 'slot': 'weapon', 'spell': None, 'materials': '11x metal'},
+        {'item': 'a battlehammer', 'level': 41, 'slot': 'weapon', 'spell': None, 'materials': '10x metal'},
+        {'item': 'a spiked greatclub', 'level': 43, 'slot': 'weapon', 'spell': None, 'materials': '12x metal'},
+        {'item': 'a flanged mace', 'level': 46, 'slot': 'weapon', 'spell': None, 'materials': '11x metal'},
+        {'item': 'a perfectly-balanced warhammer', 'level': 48, 'slot': 'weapon', 'spell': None, 'materials': '13x metal'},
+        {'item': 'a finely-crafted baton', 'level': 51, 'slot': 'weapon', 'spell': None, 'materials': '12x metal'},
+        {'item': 'a well-crafted two-handed mace', 'level': 53, 'slot': 'weapon', 'spell': None, 'materials': '14x metal'},
+        {'item': 'a wicked skullcracker', 'level': 56, 'slot': 'weapon', 'spell': None, 'materials': '13x metal'},
+        {'item': "a giant's skullcrusher", 'level': 58, 'slot': 'weapon', 'spell': None, 'materials': '15x metal'},
+        {'item': 'a etched battlehammer', 'level': 61, 'slot': 'weapon', 'spell': None, 'materials': '14x metal'},
+        {'item': "a ram's head maul", 'level': 63, 'slot': 'weapon', 'spell': None, 'materials': '16x metal'},
+        {'item': 'a lionhead battlehammer', 'level': 66, 'slot': 'weapon', 'spell': None, 'materials': '16x metal, 2x Kaidite flux'},
+        {'item': 'a thundering warhammer', 'level': 68, 'slot': 'weapon', 'spell': None, 'materials': '18x metal, 3x Kaidite flux'},
+    ],
+    'Slashing Weapon': [
+        {'item': 'a short sword', 'level': 2, 'slot': 'weapon', 'spell': None, 'materials': '3x metal'},
+        {'item': 'a two-handed sword', 'level': 4, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a scimitar', 'level': 6, 'slot': 'weapon', 'spell': None, 'materials': '3x metal'},
+        {'item': 'a claymore', 'level': 8, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a longsword', 'level': 11, 'slot': 'weapon', 'spell': None, 'materials': '4x metal'},
+        {'item': 'a swordstaff', 'level': 13, 'slot': 'weapon', 'spell': None, 'materials': '6x metal'},
+        {'item': 'a hatchet', 'level': 16, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a scythe', 'level': 18, 'slot': 'weapon', 'spell': None, 'materials': '7x metal'},
+        {'item': 'a fine sword', 'level': 21, 'slot': 'weapon', 'spell': None, 'materials': '6x metal'},
+        {'item': 'a fine greatsword', 'level': 23, 'slot': 'weapon', 'spell': None, 'materials': '8x metal'},
+        {'item': 'a fine scimitar', 'level': 26, 'slot': 'weapon', 'spell': None, 'materials': '7x metal'},
+        {'item': 'a heavy cleaving axe', 'level': 28, 'slot': 'weapon', 'spell': None, 'materials': '9x metal'},
+        {'item': 'a wicked cutlass', 'level': 31, 'slot': 'weapon', 'spell': None, 'materials': '8x metal'},
+        {'item': "a reaper's scythe", 'level': 33, 'slot': 'weapon', 'spell': None, 'materials': '10x metal'},
+        {'item': 'a fine khopesh', 'level': 36, 'slot': 'weapon', 'spell': None, 'materials': '9x metal'},
+        {'item': "a executioner's axe", 'level': 38, 'slot': 'weapon', 'spell': None, 'materials': '11x metal'},
+        {'item': 'a inlaid spatha', 'level': 41, 'slot': 'weapon', 'spell': None, 'materials': '10x metal'},
+        {'item': "a master's katana", 'level': 43, 'slot': 'weapon', 'spell': None, 'materials': '12x metal'},
+        {'item': 'a cruelly notched scimitar', 'level': 46, 'slot': 'weapon', 'spell': None, 'materials': '11x metal'},
+        {'item': 'a wicked greataxe', 'level': 48, 'slot': 'weapon', 'spell': None, 'materials': '13x metal'},
+        {'item': 'a razor-edged rapier', 'level': 51, 'slot': 'weapon', 'spell': None, 'materials': '12x metal'},
+        {'item': 'a filigreed greatsword', 'level': 53, 'slot': 'weapon', 'spell': None, 'materials': '14x metal'},
+        {'item': 'a heavy battleaxe', 'level': 56, 'slot': 'weapon', 'spell': None, 'materials': '13x metal'},
+        {'item': 'a perfectly-balanced claymore', 'level': 58, 'slot': 'weapon', 'spell': None, 'materials': '15x metal'},
+        {'item': 'a well-balanced longsword', 'level': 61, 'slot': 'weapon', 'spell': None, 'materials': '14x metal'},
+        {'item': 'a resplendite waraxe', 'level': 63, 'slot': 'weapon', 'spell': None, 'materials': '16x metal'},
+        {'item': 'a deadly bastard sword', 'level': 66, 'slot': 'weapon', 'spell': None, 'materials': '16x metal, 2x Kaidite flux'},
+        {'item': 'a heavy decapitator', 'level': 68, 'slot': 'weapon', 'spell': None, 'materials': '18x metal, 3x Kaidite flux'},
+    ],
+    'Thrusting Weapon': [
+        {'item': 'a shiv', 'level': 2, 'slot': 'weapon', 'spell': None, 'materials': '3x metal'},
+        {'item': 'a light spear', 'level': 4, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a dirk', 'level': 6, 'slot': 'weapon', 'spell': None, 'materials': '3x metal'},
+        {'item': 'a glaive', 'level': 8, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a dagger', 'level': 11, 'slot': 'weapon', 'spell': None, 'materials': '4x metal'},
+        {'item': 'a pike', 'level': 13, 'slot': 'weapon', 'spell': None, 'materials': '6x metal'},
+        {'item': 'a ankus', 'level': 16, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a polearm', 'level': 18, 'slot': 'weapon', 'spell': None, 'materials': '7x metal'},
+        {'item': 'a rondell', 'level': 21, 'slot': 'weapon', 'spell': None, 'materials': '6x metal'},
+        {'item': 'a heavy lance', 'level': 23, 'slot': 'weapon', 'spell': None, 'materials': '8x metal'},
+        {'item': 'a fine dirk', 'level': 26, 'slot': 'weapon', 'spell': None, 'materials': '7x metal'},
+        {'item': 'a fine glaive', 'level': 28, 'slot': 'weapon', 'spell': None, 'materials': '9x metal'},
+        {'item': 'a vicious eye-gouger', 'level': 31, 'slot': 'weapon', 'spell': None, 'materials': '8x metal'},
+        {'item': 'a halberd', 'level': 33, 'slot': 'weapon', 'spell': None, 'materials': '10x metal'},
+        {'item': 'a concealed pugio', 'level': 36, 'slot': 'weapon', 'spell': None, 'materials': '9x metal'},
+        {'item': 'a fine pike', 'level': 38, 'slot': 'weapon', 'spell': None, 'materials': '11x metal'},
+        {'item': 'a brutal dagger', 'level': 41, 'slot': 'weapon', 'spell': None, 'materials': '10x metal'},
+        {'item': 'a fine lance', 'level': 43, 'slot': 'weapon', 'spell': None, 'materials': '12x metal'},
+        {'item': 'a serrated push-dagger', 'level': 46, 'slot': 'weapon', 'spell': None, 'materials': '11x metal'},
+        {'item': 'a perfectly-balanced polearm', 'level': 48, 'slot': 'weapon', 'spell': None, 'materials': '13x metal'},
+        {'item': 'a well-crafted dagger', 'level': 51, 'slot': 'weapon', 'spell': None, 'materials': '12x metal'},
+        {'item': "a knight's ranseur", 'level': 53, 'slot': 'weapon', 'spell': None, 'materials': '14x metal'},
+        {'item': 'a engraved pugio', 'level': 56, 'slot': 'weapon', 'spell': None, 'materials': '13x metal'},
+        {'item': 'a expertly smithed halberd', 'level': 58, 'slot': 'weapon', 'spell': None, 'materials': '15x metal'},
+        {'item': 'a demon-forged rondell', 'level': 61, 'slot': 'weapon', 'spell': None, 'materials': '14x metal'},
+        {'item': 'a vicious pike', 'level': 63, 'slot': 'weapon', 'spell': None, 'materials': '16x metal'},
+        {'item': "a thief's dark-blade", 'level': 66, 'slot': 'weapon', 'spell': None, 'materials': '16x metal, 2x Kaidite flux'},
+        {'item': 'a vine-wrapped spear', 'level': 68, 'slot': 'weapon', 'spell': None, 'materials': '18x metal, 3x Kaidite flux'},
+    ],
+    'Fired Weapon': [
+        {'item': 'a light sling', 'level': 2, 'slot': 'weapon', 'spell': None, 'materials': '3x leather'},
+        {'item': 'a light-bow', 'level': 4, 'slot': 'weapon', 'spell': None, 'materials': '5x wood'},
+        {'item': 'a blowgun', 'level': 6, 'slot': 'weapon', 'spell': None, 'materials': '3x wood'},
+        {'item': 'a shortbow', 'level': 8, 'slot': 'weapon', 'spell': None, 'materials': '5x wood'},
+        {'item': 'a dart gun', 'level': 11, 'slot': 'weapon', 'spell': None, 'materials': '4x wood'},
+        {'item': 'a longbow', 'level': 13, 'slot': 'weapon', 'spell': None, 'materials': '6x wood'},
+        {'item': 'a wrist-mounted crossbow', 'level': 16, 'slot': 'weapon', 'spell': None, 'materials': '5x wood'},
+        {'item': 'a crossbow', 'level': 18, 'slot': 'weapon', 'spell': None, 'materials': '7x wood'},
+        {'item': 'a finely crafted sling', 'level': 21, 'slot': 'weapon', 'spell': None, 'materials': '6x leather'},
+        {'item': 'a recurve bow', 'level': 23, 'slot': 'weapon', 'spell': None, 'materials': '8x wood'},
+        {'item': 'a finely carved blowgun', 'level': 26, 'slot': 'weapon', 'spell': None, 'materials': '7x wood'},
+        {'item': 'a fine light-bow', 'level': 28, 'slot': 'weapon', 'spell': None, 'materials': '9x wood'},
+        {'item': 'a finely carved dart gun', 'level': 31, 'slot': 'weapon', 'spell': None, 'materials': '8x wood'},
+        {'item': 'a fine shortbow', 'level': 33, 'slot': 'weapon', 'spell': None, 'materials': '10x wood'},
+        {'item': 'a finely crafted wrist-mounted crossbow', 'level': 36, 'slot': 'weapon', 'spell': None, 'materials': '9x wood'},
+        {'item': 'a fine longbow', 'level': 38, 'slot': 'weapon', 'spell': None, 'materials': '11x wood'},
+        {'item': 'a concealed dart launcher', 'level': 41, 'slot': 'weapon', 'spell': None, 'materials': '10x wood'},
+        {'item': 'a fine crossbow', 'level': 43, 'slot': 'weapon', 'spell': None, 'materials': '12x wood'},
+        {'item': 'a intricately carved dart gun', 'level': 46, 'slot': 'weapon', 'spell': None, 'materials': '11x wood'},
+        {'item': 'a fine recurve bow', 'level': 48, 'slot': 'weapon', 'spell': None, 'materials': '13x wood'},
+        {'item': 'a tightly-strung wrist-mounted crossbow', 'level': 51, 'slot': 'weapon', 'spell': None, 'materials': '12x wood'},
+        {'item': 'a well-crafted recurve bow', 'level': 53, 'slot': 'weapon', 'spell': None, 'materials': '14x wood'},
+        {'item': 'a sling of the giant-slayer', 'level': 56, 'slot': 'weapon', 'spell': None, 'materials': '13x leather'},
+        {'item': 'a tightly-strung longbow', 'level': 58, 'slot': 'weapon', 'spell': None, 'materials': '15x wood'},
+        {'item': 'a etched dart gun', 'level': 61, 'slot': 'weapon', 'spell': None, 'materials': '14x wood'},
+        {'item': 'a tightly-strung recurve bow', 'level': 63, 'slot': 'weapon', 'spell': None, 'materials': '16x wood'},
+        {'item': "a dragon's-head wrist-mounted crossbow", 'level': 66, 'slot': 'weapon', 'spell': None, 'materials': '16x wood, 2x spool of tough sinew'},
+        {'item': "a tracker's deadeye bow", 'level': 68, 'slot': 'weapon', 'spell': None, 'materials': '16x wood, 3x spool of tough sinew'},
+    ],
+    'Magical Weapon': [
+        {'item': "a plain apprentice's wand", 'level': 2, 'slot': 'weapon', 'spell': 'ice.crush.i', 'materials': '3x wood'},
+        {'item': "a forged neophyte's dagger", 'level': 2, 'slot': 'weapon', 'spell': None, 'materials': '3x metal'},
+        {'item': 'a basic imbued shortsword', 'level': 2, 'slot': 'weapon', 'spell': None, 'materials': '3x metal'},
+        {'item': 'a crudely-enchanted branch', 'level': 4, 'slot': 'weapon', 'spell': 'crushing.earth.i', 'materials': '5x wood'},
+        {'item': 'a basic crafted runeblade', 'level': 4, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a simple spell-imbued spear', 'level': 4, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a unadorned wand', 'level': 6, 'slot': 'weapon', 'spell': 'chaos.crush.i', 'materials': '3x wood'},
+        {'item': "a forged apprentice's dirk", 'level': 6, 'slot': 'weapon', 'spell': None, 'materials': '3x metal'},
+        {'item': 'a imbued gladius', 'level': 6, 'slot': 'weapon', 'spell': None, 'materials': '3x metal'},
+        {'item': 'a rough crafted quarterstaff', 'level': 8, 'slot': 'weapon', 'spell': 'hurricane.force.i', 'materials': '5x wood'},
+        {'item': 'a rune-etched two handed sword', 'level': 8, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a spellcrafted longspear', 'level': 8, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a simple engraved wand', 'level': 11, 'slot': 'weapon', 'spell': 'rushing.water.i', 'materials': '4x wood'},
+        {'item': "a forged researcher's field knife", 'level': 11, 'slot': 'weapon', 'spell': None, 'materials': '4x metal'},
+        {'item': 'a imbued handaxe', 'level': 11, 'slot': 'weapon', 'spell': None, 'materials': '4x metal'},
+        {'item': 'a crafted staff of embers', 'level': 13, 'slot': 'weapon', 'spell': 'flame.shock.i', 'materials': '6x wood'},
+        {'item': 'a rune-etched greataxe', 'level': 13, 'slot': 'weapon', 'spell': None, 'materials': '6x metal'},
+        {'item': 'a spellcrafted trident', 'level': 13, 'slot': 'weapon', 'spell': None, 'materials': '6x metal'},
+        {'item': "a journeyman's wand", 'level': 16, 'slot': 'weapon', 'spell': 'flickering.fire.i', 'materials': '5x wood'},
+        {'item': "a forged shaman's seax", 'level': 16, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a imbued saber', 'level': 16, 'slot': 'weapon', 'spell': None, 'materials': '5x metal'},
+        {'item': 'a crafted staff of frost', 'level': 18, 'slot': 'weapon', 'spell': 'frost.smash.i', 'materials': '7x wood'},
+        {'item': 'a rune-etched poleax', 'level': 18, 'slot': 'weapon', 'spell': None, 'materials': '7x metal'},
+        {'item': 'a spellcrafted pike', 'level': 18, 'slot': 'weapon', 'spell': None, 'materials': '7x metal'},
+        {'item': 'a rod of fire', 'level': 21, 'slot': 'weapon', 'spell': 'flickering.fire.ii', 'materials': '6x wood'},
+        {'item': "a forged hexcaster's shortspear", 'level': 21, 'slot': 'weapon', 'spell': 'jolt.i', 'materials': '6x metal'},
+        {'item': 'a imbued scimitar', 'level': 21, 'slot': 'weapon', 'spell': None, 'materials': '6x metal'},
+        {'item': 'a crafted staff of lightning', 'level': 23, 'slot': 'weapon', 'spell': 'surging.storm.i', 'materials': '8x wood'},
+        {'item': 'a rune-etched falchion', 'level': 23, 'slot': 'weapon', 'spell': None, 'materials': '8x metal'},
+        {'item': 'a spellcrafted spetum', 'level': 23, 'slot': 'weapon', 'spell': None, 'materials': '8x metal'},
+        {'item': 'a rod of water', 'level': 26, 'slot': 'weapon', 'spell': 'rushing.water.ii', 'materials': '7x wood'},
+        {'item': "a forged scholar's rapier", 'level': 26, 'slot': 'weapon', 'spell': None, 'materials': '7x metal'},
+        {'item': 'a imbued broad sword', 'level': 26, 'slot': 'weapon', 'spell': None, 'materials': '7x metal'},
+        {'item': 'a crafted staff of earth', 'level': 28, 'slot': 'weapon', 'spell': 'crushing.earth.ii', 'materials': '9x wood'},
+        {'item': "a rune-etched headsman's axe", 'level': 28, 'slot': 'weapon', 'spell': None, 'materials': '9x metal'},
+        {'item': 'a spellcrafted lance', 'level': 28, 'slot': 'weapon', 'spell': None, 'materials': '9x metal'},
+        {'item': 'a rod of earth', 'level': 31, 'slot': 'weapon', 'spell': 'crushing.rocks.i', 'materials': '8x wood'},
+        {'item': 'a glamored dagger', 'level': 31, 'slot': 'weapon', 'spell': None, 'materials': '8x metal'},
+        {'item': 'a imbued longsword', 'level': 31, 'slot': 'weapon', 'spell': None, 'materials': '8x metal'},
+        {'item': 'a smoldering shod staff', 'level': 33, 'slot': 'weapon', 'spell': 'flame.shock.ii', 'materials': '10x wood'},
+        {'item': 'a rune-etched claymore', 'level': 33, 'slot': 'weapon', 'spell': None, 'materials': '10x metal'},
+        {'item': 'a spellcrafted war scythe', 'level': 33, 'slot': 'weapon', 'spell': None, 'materials': '10x metal'},
+        {'item': 'a rod of lightning', 'level': 36, 'slot': 'weapon', 'spell': 'lightning.smash.i', 'materials': '9x wood'},
+        {'item': 'a glamored dirk', 'level': 36, 'slot': 'weapon', 'spell': None, 'materials': '9x metal'},
+        {'item': 'a spellforged battle axe', 'level': 36, 'slot': 'weapon', 'spell': None, 'materials': '9x metal'},
+        {'item': 'a ice-shod staff', 'level': 38, 'slot': 'weapon', 'spell': 'frost.smash.ii', 'materials': '11x wood'},
+        {'item': 'a runic flamberge', 'level': 38, 'slot': 'weapon', 'spell': None, 'materials': '11x metal'},
+        {'item': 'a shimmering arcane partisan', 'level': 38, 'slot': 'weapon', 'spell': None, 'materials': '11x metal'},
+        {'item': 'a tome of ice', 'level': 41, 'slot': 'weapon', 'spell': 'ice.crush.ii', 'materials': '10x wood'},
+        {'item': 'a glamored shortspear', 'level': 41, 'slot': 'weapon', 'spell': None, 'materials': '10x metal'},
+        {'item': 'a spellforged arming sword', 'level': 41, 'slot': 'weapon', 'spell': None, 'materials': '10x metal'},
+        {'item': 'a stone-shod staff', 'level': 43, 'slot': 'weapon', 'spell': 'crushing.earth.iii', 'materials': '12x wood'},
+        {'item': 'a runic halberd', 'level': 43, 'slot': 'weapon', 'spell': None, 'materials': '12x metal'},
+        {'item': 'a shimmering arcane ranseur', 'level': 43, 'slot': 'weapon', 'spell': 'rip.tide.ii', 'materials': '12x metal'},
+        {'item': 'a tome of sparks', 'level': 46, 'slot': 'weapon', 'spell': 'chaos.crush.ii', 'materials': '11x wood'},
+        {'item': 'a glamored dueling sword', 'level': 46, 'slot': 'weapon', 'spell': 'aggressive.jolt.ii', 'materials': '11x metal'},
+        {'item': 'a spellforged kukri', 'level': 46, 'slot': 'weapon', 'spell': 'fire.spray.ii', 'materials': '11x metal'},
+        {'item': 'a shod staff of sparks', 'level': 48, 'slot': 'weapon', 'spell': 'mighty.impact.i', 'materials': '13x wood'},
+        {'item': 'a runic warglaive', 'level': 48, 'slot': 'weapon', 'spell': 'hurricane.blade.ii', 'materials': '13x metal'},
+        {'item': 'a shimmering arcane fauchard', 'level': 48, 'slot': 'weapon', 'spell': None, 'materials': '13x metal'},
+        {'item': 'a tome of spirit', 'level': 51, 'slot': 'weapon', 'spell': 'chaos.crush.iii', 'materials': '12x wood'},
+        {'item': 'a glamored kris', 'level': 51, 'slot': 'weapon', 'spell': 'icy.veins.iii', 'materials': '12x metal'},
+        {'item': 'a spellforged war axe', 'level': 51, 'slot': 'weapon', 'spell': None, 'materials': '12x metal'},
+        {'item': "a Rigan mariner's battle staff", 'level': 53, 'slot': 'weapon', 'spell': 'hurricane.force.ii', 'materials': '14x wood'},
+        {'item': 'a runic messer blade', 'level': 53, 'slot': 'weapon', 'spell': 'lightning.sword.ii', 'materials': '14x metal'},
+        {'item': 'a shimmering arcane guisarme', 'level': 53, 'slot': 'weapon', 'spell': None, 'materials': '14x metal'},
+        {'item': 'a arcane-forged morning star', 'level': 56, 'slot': 'weapon', 'spell': 'lightning.smash.ii', 'materials': '13x metal'},
+        {'item': 'a glamored rapier', 'level': 56, 'slot': 'weapon', 'spell': 'inflame.ii', 'materials': '13x metal'},
+        {'item': 'a spellforged katzbalger', 'level': 56, 'slot': 'weapon', 'spell': 'power.slash.ii', 'materials': '13x metal'},
+        {'item': 'a carved staff of psionic devastation', 'level': 58, 'slot': 'weapon', 'spell': 'mighty.impact.ii', 'materials': '15x wood'},
+        {'item': 'a runic dane axe', 'level': 58, 'slot': 'weapon', 'spell': 'stone.slash.iii', 'materials': '15x metal'},
+        {'item': 'a shimmering arcane ahlspiess', 'level': 58, 'slot': 'weapon', 'spell': 'shock.strike.ii', 'materials': '15x metal'},
+        {'item': "a masterwork war mage's hammer", 'level': 61, 'slot': 'weapon', 'spell': 'crushing.rocks.ii', 'materials': '14x metal'},
+        {'item': "a masterwork spell-thief's razor", 'level': 61, 'slot': 'weapon', 'spell': None, 'materials': '14x metal'},
+        {'item': 'a masterwork imbued bastard sword', 'level': 61, 'slot': 'weapon', 'spell': None, 'materials': '14x metal'},
+        {'item': 'a masterwork staff of storms', 'level': 63, 'slot': 'weapon', 'spell': 'surging.storm.ii', 'materials': '16x wood'},
+        {'item': 'a masterwork runeblade', 'level': 63, 'slot': 'weapon', 'spell': None, 'materials': '16x metal'},
+        {'item': "a masterwork warcaster's lance", 'level': 63, 'slot': 'weapon', 'spell': None, 'materials': '16x metal'},
+        {'item': 'a flawless wand of wonder', 'level': 66, 'slot': 'weapon', 'spell': None, 'materials': '16x wood, 2x small jar of Kaidite oil'},
+        {'item': "a flawless archmage's misericorde", 'level': 66, 'slot': 'weapon', 'spell': 'petrifying.thrust.ii', 'materials': '16x metal, 2x Kaidite flux'},
+        {'item': 'a flawless mageblade ', 'level': 66, 'slot': 'weapon', 'spell': None, 'materials': '16x metal, 2x Kaidite flux'},
+        {'item': 'a flawless spire of cataclysm', 'level': 68, 'slot': 'weapon', 'spell': 'mighty.impact.iii', 'materials': '18x wood, 3x small jar of Kaidite oil'},
+        {'item': 'a flawless spellreaver', 'level': 68, 'slot': 'weapon', 'spell': None, 'materials': '18x metal, 3x Kaidite flux'},
+        {'item': 'a flawless war scythe of the void', 'level': 68, 'slot': 'weapon', 'spell': None, 'materials': '18x metal, 3x Kaidite flux'},
+    ],
+    'Shield Crafting': [
+        {'item': "a novice's walking stick of intelligence", 'level': 2, 'slot': 'weapon', 'spell': 'intelligence.i', 'materials': '3x wood, 1x rough sapphire of intelligence'},
+        {'item': "a novice's walking stick of wisdom", 'level': 2, 'slot': 'weapon', 'spell': 'wisdom.i', 'materials': '3x wood, 1x rough ruby of wisdom'},
+        {'item': 'a light buckler of dexterity', 'level': 3, 'slot': 'shield', 'spell': 'dexterity.i', 'materials': '6x leather, 1x rough emerald of dexterity'},
+        {'item': 'a light buckler of agility', 'level': 3, 'slot': 'shield', 'spell': 'agility.i', 'materials': '6x leather, 1x rough emerald of agility'},
+        {'item': 'a stout round shield of strength', 'level': 6, 'slot': 'shield', 'spell': 'strength.i', 'materials': '6x metal, 1x rough ruby of strength'},
+        {'item': 'a stout round shield of evasion', 'level': 6, 'slot': 'shield', 'spell': 'evade.enhance.i', 'materials': '6x metal, 1x rough sapphire of evasion'},
+        {'item': "a novice's quarterstaff of intelligence", 'level': 6, 'slot': 'weapon', 'spell': 'intelligence.i', 'materials': '5x wood, 1x rough sapphire of intelligence'},
+        {'item': "a novice's quarterstaff of wisdom", 'level': 6, 'slot': 'weapon', 'spell': 'wisdom.i', 'materials': '5x wood, 1x rough ruby of wisdom'},
+        {'item': "a acolyte's walking stick of intelligence", 'level': 11, 'slot': 'weapon', 'spell': 'intelligence.i', 'materials': '7x wood, 1x rough sapphire of intelligence'},
+        {'item': "a acolyte's walking stick of wisdom", 'level': 11, 'slot': 'weapon', 'spell': 'wisdom.i', 'materials': '7x wood, 1x rough ruby of wisdom'},
+        {'item': "a acolyte's quarterstaff of intelligence", 'level': 16, 'slot': 'weapon', 'spell': 'intelligence.i', 'materials': '9x wood, 1x rough sapphire of intelligence'},
+        {'item': "a acolyte's quarterstaff of wisdom", 'level': 16, 'slot': 'weapon', 'spell': 'wisdom.i', 'materials': '9x wood, 1x rough ruby of wisdom'},
+        {'item': 'a crested buckler of dexterity', 'level': 17, 'slot': 'shield', 'spell': 'dexterity.i', 'materials': '7x leather, 1x rough emerald of dexterity'},
+        {'item': 'a crested buckler of agility', 'level': 17, 'slot': 'shield', 'spell': 'agility.i', 'materials': '7x leather, 1x rough emerald of agility'},
+        {'item': 'a kite shield of strength', 'level': 20, 'slot': 'shield', 'spell': 'strength.i', 'materials': '7x metal, 1x rough ruby of strength'},
+        {'item': 'a kite shield of evasion', 'level': 20, 'slot': 'shield', 'spell': 'evade.enhance.i', 'materials': '7x metal, 1x rough sapphire of evasion'},
+        {'item': "a apprentice's walking stick of intelligence", 'level': 21, 'slot': 'weapon', 'spell': 'intelligence.i', 'materials': '11x wood, 1x rough sapphire of intelligence'},
+        {'item': "a apprentice's walking stick of wisdom", 'level': 21, 'slot': 'weapon', 'spell': 'wisdom.i', 'materials': '11x wood, 1x rough ruby of wisdom'},
+        {'item': "a apprentice's quarterstaff of intelligence", 'level': 26, 'slot': 'weapon', 'spell': 'intelligence.i', 'materials': '13x wood, 1x rough sapphire of intelligence'},
+        {'item': "a apprentice's quarterstaff of wisdom", 'level': 26, 'slot': 'weapon', 'spell': 'wisdom.i', 'materials': '13x wood, 1x rough ruby of wisdom'},
+        {'item': "a mage's walking stick of intelligence", 'level': 31, 'slot': 'weapon', 'spell': 'intelligence.i', 'materials': '15x wood, 1x rough sapphire of intelligence'},
+        {'item': "a mage's walking stick of wisdom", 'level': 31, 'slot': 'weapon', 'spell': 'wisdom.i', 'materials': '15x wood, 1x rough ruby of wisdom'},
+        {'item': 'a hardened deflector of dexterity', 'level': 32, 'slot': 'shield', 'spell': 'dexterity.i', 'materials': '9x leather, 1x rough emerald of dexterity'},
+        {'item': 'a hardened deflector of agility', 'level': 32, 'slot': 'shield', 'spell': 'agility.i', 'materials': '9x leather, 1x rough emerald of agility'},
+        {'item': "a knight's heater shield of strength", 'level': 35, 'slot': 'shield', 'spell': 'strength.i', 'materials': '9x metal, 1x rough ruby of strength'},
+        {'item': "a knight's heater shield of evasion", 'level': 35, 'slot': 'shield', 'spell': 'evade.enhance.i', 'materials': '9x metal, 1x rough sapphire of evasion'},
+        {'item': "a mage's quarterstaff of intelligence", 'level': 36, 'slot': 'weapon', 'spell': 'intelligence.i', 'materials': '17x wood, 1x rough sapphire of intelligence'},
+        {'item': "a mage's quarterstaff of wisdom", 'level': 36, 'slot': 'weapon', 'spell': 'wisdom.i', 'materials': '17x wood, 1x rough ruby of wisdom'},
+        {'item': "a mage's battlestaff of intelligence", 'level': 41, 'slot': 'weapon', 'spell': 'intelligence.i', 'materials': '19x wood, 1x rough sapphire of intelligence'},
+        {'item': "a mage's battlestaff of wisdom", 'level': 41, 'slot': 'weapon', 'spell': 'wisdom.i', 'materials': '19x wood, 1x rough ruby of wisdom'},
+        {'item': 'a imbued quarterstaff of intelligence', 'level': 46, 'slot': 'weapon', 'spell': 'intelligence.ii', 'materials': '21x wood, 1x hazy sapphire of intelligence'},
+        {'item': 'a imbued quarterstaff of wisdom', 'level': 46, 'slot': 'weapon', 'spell': 'wisdom.ii', 'materials': '21x wood, 1x hazy ruby of wisdom'},
+        {'item': 'a intricately tooled targe of dexterity', 'level': 47, 'slot': 'shield', 'spell': 'dexterity.ii', 'materials': '12x leather, 1x hazy emerald of dexterity'},
+        {'item': 'a intricately tooled targe of agility', 'level': 47, 'slot': 'shield', 'spell': 'agility.ii', 'materials': '12x leather, 1x hazy emerald of agility'},
+        {'item': "a legionnaire's pavise of strength", 'level': 50, 'slot': 'shield', 'spell': 'strength.ii', 'materials': '12x metal, 1x hazy ruby of strength'},
+        {'item': "a legionnaire's pavise of evasion", 'level': 50, 'slot': 'shield', 'spell': 'evade.enhance.ii', 'materials': '12x metal, 1x hazy sapphire of evasion'},
+        {'item': 'a imbued battlestaff of intelligence', 'level': 51, 'slot': 'weapon', 'spell': 'intelligence.ii', 'materials': '23x wood, 1x hazy sapphire of intelligence'},
+        {'item': 'a imbued battlestaff of wisdom', 'level': 51, 'slot': 'weapon', 'spell': 'wisdom.ii', 'materials': '23x wood, 1x hazy ruby of wisdom'},
+        {'item': "a high mage's quarterstaff of intelligence", 'level': 56, 'slot': 'weapon', 'spell': 'intelligence.ii', 'materials': '25x wood, 1x hazy sapphire of intelligence'},
+        {'item': "a high mage's quarterstaff of wisdom", 'level': 56, 'slot': 'weapon', 'spell': 'wisdom.ii', 'materials': '25x wood, 1x hazy ruby of wisdom'},
+        {'item': "a high mage's battlestaff of intelligence", 'level': 61, 'slot': 'weapon', 'spell': 'intelligence.iii', 'materials': '28x wood, 1x flawless sapphire of intelligence, 3x small jar of Kaidite oil'},
+        {'item': "a high mage's battlestaff of wisdom", 'level': 61, 'slot': 'weapon', 'spell': 'wisdom.iii', 'materials': '28x wood, 1x flawless ruby of wisdom, 3x small jar of Kaidite oil'},
+        {'item': "a assassin's guard of dexterity", 'level': 62, 'slot': 'shield', 'spell': 'dexterity.iii', 'materials': '15x leather, 1x flawless emerald of dexterity, 2x small jar of Kaidite oil'},
+        {'item': "a assassin's guard of agility", 'level': 62, 'slot': 'shield', 'spell': 'agility.ii', 'materials': '15x leather, 1x flawless emerald of agility, 2x small jar of Kaidite oil'},
+        {'item': 'a dragon-emblazoned tower shield of strength', 'level': 65, 'slot': 'shield', 'spell': 'strength.iii', 'materials': '15x metal, 1x flawless ruby of strength, 2x Kaidite flux'},
+        {'item': 'a dragon-emblazoned tower shield of evasion', 'level': 65, 'slot': 'shield', 'spell': 'evade.enhance.iii', 'materials': '15x metal, 1x flawless sapphire of evasion, 2x Kaidite flux'},
+    ],
+    'Siegecraft': [
+        {'item': 'a wooden ballista bolt', 'level': 4, 'slot': None, 'spell': None, 'materials': "2x plank of wood, 1x carpenter's saw, 1x carpenter's hammer"},
+        {'item': 'a pile of fist sized rocks', 'level': 6, 'slot': None, 'spell': None, 'materials': '2x block of stone, 1x sledgehammer, 1x stone chisel'},
+        {'item': 'a simple windlass', 'level': 7, 'slot': None, 'spell': None, 'materials': "4x plank of wood, 1x carpenter's saw, 1x carpenter's hammer, 2x bag of nails, 1x bundle of rope"},
+        {'item': 'a simple launching mechanism', 'level': 8, 'slot': None, 'spell': None, 'materials': "8x plank of wood, 1x carpenter's saw, 1x carpenter's hammer, 5x bag of nails, 2x bundle of rope"},
+        {'item': 'a pair of iron axles', 'level': 10, 'slot': None, 'spell': None, 'materials': '1x pound of iron'},
+        {'item': 'a steel tipped ballista bolt', 'level': 14, 'slot': None, 'spell': None, 'materials': "2x plank of wood, 1x carpenter's saw, 1x carpenter's hammer, 1x bag of nails, 1x steel ballista bolt head"},
+        {'item': 'a small boulder', 'level': 15, 'slot': None, 'spell': None, 'materials': '3x block of stone, 1x sledgehammer, 1x stone chisel'},
+        {'item': 'a wheeled wooden frame', 'level': 17, 'slot': None, 'spell': None, 'materials': "12x plank of wood, 1x carpenter's saw, 1x carpenter's hammer, 5x bag of nails, 1x pair of iron axles"},
+        {'item': 'a barbed alloy ballista bolt', 'level': 24, 'slot': None, 'spell': None, 'materials': "2x plank of wood, 1x carpenter's saw, 1x carpenter's hammer, 1x bag of nails, 1x barbed alloy ballista bolt head"},
+        {'item': 'a light ballista', 'level': 25, 'slot': None, 'spell': None, 'materials': '1x wheeled wooden frame, 1x simple windlass, 1x bag of nails'},
+        {'item': 'a several large boulders', 'level': 26, 'slot': None, 'spell': None, 'materials': '4x block of stone, 1x sledgehammer, 1x stone chisel'},
+        {'item': 'a light catapult', 'level': 30, 'slot': None, 'spell': None, 'materials': '1x wheeled wooden frame, 1x simple launching mechanism, 2x bag of nails'},
+        {'item': 'a glob of burning oil', 'level': 32, 'slot': None, 'spell': None, 'materials': '2x block of stone, 1x sledgehammer, 1x stone chisel, 2x flask of volatile oil'},
+        {'item': 'a flaming ballista bolt', 'level': 34, 'slot': None, 'spell': None, 'materials': "2x plank of wood, 1x carpenter's saw, 1x carpenter's hammer, 1x bag of nails, 1x flask of volatile oil"},
+        {'item': 'a glob of Hellfire', 'level': 38, 'slot': None, 'spell': None, 'materials': '2x block of stone, 1x sledgehammer, 1x stone chisel, 2x orb of hellfire'},
+        {'item': 'a bolt of Hellfire', 'level': 40, 'slot': None, 'spell': None, 'materials': "2x plank of wood, 1x carpenter's saw, 1x carpenter's hammer, 1x bag of nails, 1x orb of hellfire"},
+    ],
+    'Fortifications': [
+        {'item': 'a wooden frame', 'level': 13, 'slot': None, 'spell': None, 'materials': "7x plank of wood, 1x carpenter's saw, 1x carpenter's hammer, 2x bag of nails"},
+        {'item': 'a wooden foundation', 'level': 14, 'slot': None, 'spell': None, 'materials': "5x plank of wood, 1x carpenter's saw, 1x carpenter's hammer, 1x bag of nails"},
+        {'item': 'a wooden wall', 'level': 15, 'slot': None, 'spell': None, 'materials': '7x plank of wood, 1x wooden frame, 1x wooden foundation'},
+        {'item': 'a short wooden bridge', 'level': 15, 'slot': None, 'spell': None, 'materials': '2x plank of wood, 1x wooden frame, 2x wooden foundation, 1x bag of nails'},
+        {'item': 'a small wooden ramp', 'level': 15, 'slot': None, 'spell': None, 'materials': '2x plank of wood, 1x wooden frame, 2x wooden foundation, 1x bag of nails'},
+        {'item': 'a set of iron reinforcements', 'level': 27, 'slot': None, 'spell': None, 'materials': '2x pound of iron'},
+        {'item': 'a reinforced wooden frame', 'level': 28, 'slot': None, 'spell': None, 'materials': "10x plank of wood, 1x carpenter's saw, 1x carpenter's hammer, 4x bag of nails, 1x set of iron reinforcements"},
+        {'item': 'a reinforced wooden foundation', 'level': 29, 'slot': None, 'spell': None, 'materials': "7x plank of wood, 1x carpenter's saw, 1x carpenter's hammer, 3x bag of nails"},
+        {'item': 'a reinforced wooden wall', 'level': 30, 'slot': None, 'spell': None, 'materials': '10x plank of wood, 1x reinforced wooden frame, 1x reinforced wooden foundation'},
+        {'item': 'a medium wooden bridge', 'level': 30, 'slot': None, 'spell': None, 'materials': '2x plank of wood, 1x reinforced wooden frame, 2x reinforced wooden foundation, 1x bag of nails'},
+        {'item': 'a medium wooden ramp', 'level': 30, 'slot': None, 'spell': None, 'materials': '2x plank of wood, 1x reinforced wooden frame, 2x reinforced wooden foundation, 1x bag of nails'},
+        {'item': 'a bundle of steel rods', 'level': 42, 'slot': None, 'spell': None, 'materials': '1x pound of steel'},
+        {'item': 'a stone frame', 'level': 43, 'slot': None, 'spell': None, 'materials': '4x block of stone, 8x plank of wood, 1x sledgehammer, 1x stone chisel, 1x bundle of steel rods'},
+        {'item': 'a stone foundation', 'level': 44, 'slot': None, 'spell': None, 'materials': '8x block of stone, 4x plank of wood, 1x sledgehammer, 1x stone chisel, 1x bundle of steel rods'},
+        {'item': 'a stone wall', 'level': 45, 'slot': None, 'spell': None, 'materials': '8x block of stone, 1x stone frame, 1x stone foundation'},
+        {'item': 'a long wooden bridge', 'level': 45, 'slot': None, 'spell': None, 'materials': '4x plank of wood, 2x reinforced wooden frame, 2x reinforced wooden foundation, 2x bag of nails'},
+        {'item': 'a large wooden ramp', 'level': 45, 'slot': None, 'spell': None, 'materials': '4x plank of wood, 2x reinforced wooden frame, 2x reinforced wooden foundation, 2x bag of nails'},
+        {'item': 'a set of alloy reinforcements', 'level': 57, 'slot': None, 'spell': None, 'materials': '2x pound of alloy'},
+        {'item': 'a reinforced stone frame', 'level': 58, 'slot': None, 'spell': None, 'materials': '10x block of stone, 6x plank of wood, 1x sledgehammer, 1x stone chisel, 1x bundle of steel rods, 1x set of alloy reinforcements'},
+        {'item': 'a reinforced stone foundation', 'level': 59, 'slot': None, 'spell': None, 'materials': '6x block of stone, 10x plank of wood, 1x sledgehammer, 1x stone chisel, 1x bundle of steel rods'},
+        {'item': 'a reinforced stone wall', 'level': 60, 'slot': None, 'spell': None, 'materials': '10x block of stone, 1x reinforced stone frame, 1x reinforced stone foundation'},
+    ],
+    'Gem Cutting': [
+        {'item': 'a rough emerald of agility', 'level': 15, 'slot': None, 'spell': 'agility.i', 'materials': '1x gemcutting station, 1x uncut rough emerald, 1x coarse dust of swiftness'},
+        {'item': 'a rough emerald of dexterity', 'level': 15, 'slot': None, 'spell': 'dexterity.i', 'materials': '1x gemcutting station, 1x uncut rough emerald, 1x coarse dust of dexterity'},
+        {'item': 'a rough ruby of strength', 'level': 15, 'slot': None, 'spell': 'strength.i', 'materials': '1x gemcutting station, 1x uncut rough ruby, 1x coarse dust of strength'},
+        {'item': 'a rough ruby of wisdom', 'level': 15, 'slot': None, 'spell': 'wisdom.i', 'materials': '1x gemcutting station, 1x uncut rough ruby, 1x coarse dust of the wise'},
+        {'item': 'a rough sapphire of evasion', 'level': 15, 'slot': None, 'spell': 'evade.enhance.i', 'materials': '1x gemcutting station, 1x uncut rough sapphire, 1x coarse dust of evasion'},
+        {'item': 'a rough sapphire of intelligence', 'level': 15, 'slot': None, 'spell': 'intelligence.i', 'materials': '1x gemcutting station, 1x uncut rough sapphire, 1x coarse dust of intellect'},
+        {'item': 'a hazy emerald of agility', 'level': 45, 'slot': None, 'spell': 'agility.ii', 'materials': '1x gemcutting station, 1x uncut hazy emerald, 1x refined dust of swiftness'},
+        {'item': 'a hazy emerald of dexterity', 'level': 45, 'slot': None, 'spell': 'dexterity.ii', 'materials': '1x gemcutting station, 1x uncut hazy emerald, 1x refined dust of dexterity'},
+        {'item': 'a hazy ruby of strength', 'level': 45, 'slot': None, 'spell': 'strength.ii', 'materials': '1x gemcutting station, 1x uncut hazy ruby, 1x refined dust of strength'},
+        {'item': 'a hazy ruby of wisdom', 'level': 45, 'slot': None, 'spell': 'wisdom.ii', 'materials': '1x gemcutting station, 1x uncut hazy ruby, 1x refined dust of the wise'},
+        {'item': 'a hazy sapphire of evasion', 'level': 45, 'slot': None, 'spell': 'evade.enhance.ii', 'materials': '1x gemcutting station, 1x uncut hazy sapphire, 1x refined dust of evasion'},
+        {'item': 'a hazy sapphire of intelligence', 'level': 45, 'slot': None, 'spell': 'intelligence.ii', 'materials': '1x gemcutting station, 1x uncut hazy sapphire, 1x refined dust of intellect'},
+        {'item': 'a flawless emerald of agility', 'level': 60, 'slot': None, 'spell': 'agility.ii', 'materials': '1x gemcutting station, 1x uncut flawless emerald, 1x pure dust of swiftness'},
+        {'item': 'a flawless emerald of dexterity', 'level': 60, 'slot': None, 'spell': 'dexterity.iii', 'materials': '1x gemcutting station, 1x uncut flawless emerald, 1x pure dust of dexterity'},
+        {'item': 'a flawless ruby of strength', 'level': 60, 'slot': None, 'spell': 'strength.iii', 'materials': '1x gemcutting station, 1x uncut flawless ruby, 1x pure dust of strength'},
+        {'item': 'a flawless ruby of wisdom', 'level': 60, 'slot': None, 'spell': 'wisdom.iii', 'materials': '1x gemcutting station, 1x uncut flawless ruby, 1x pure dust of the wise'},
+        {'item': 'a flawless sapphire of evasion', 'level': 60, 'slot': None, 'spell': 'evade.enhance.iii', 'materials': '1x gemcutting station, 1x uncut flawless sapphire, 1x pure dust of evasion'},
+        {'item': 'a flawless sapphire of intelligence', 'level': 60, 'slot': None, 'spell': 'intelligence.iii', 'materials': '1x gemcutting station, 1x uncut flawless sapphire, 1x pure dust of intellect'},
+    ],
+    'Infernal Armaments': [
+        {'item': 'a blackwood bow', 'level': 40, 'slot': 'weapon', 'spell': None, 'materials': '12 pounds of wood held'},
+        {'item': 'a shroud of smoke', 'level': 40, 'slot': 'cloak', 'spell': None, 'materials': '9 pounds of studded leather held'},
+        {'item': 'an infernal longbow', 'level': 55, 'slot': 'weapon', 'spell': None, 'materials': '12 pounds of wood held'},
+        {'item': 'a cloak of stitched shadows', 'level': 55, 'slot': 'cloak', 'spell': None, 'materials': '9 pounds of studded leather held'},
+        {'item': 'a longbow of screaming nightmares', 'level': 65, 'slot': 'weapon', 'spell': None, 'materials': '12 pounds of wood held'},
+        {'item': 'a flameborne cloak', 'level': 65, 'slot': 'cloak', 'spell': None, 'materials': '9 pounds of studded leather held'},
+        {'item': 'a longbow of forged hellfire', 'level': 70, 'slot': 'weapon', 'spell': None, 'materials': '12 pounds of wood held'},
+        {'item': 'a drape of rippling hellfire', 'level': 70, 'slot': 'cloak', 'spell': 'dexterity.iii', 'materials': '9 pounds of studded leather held'},
+    ],
+}
+
+# Weapon/Armor/Sigil enchant materials - where to find them, sourced
+# from Master File.xlsx's own "Enchant & Craft Mats" sheet (Type='enchant'
+# rows only; Type='ingredient' rows there are plain crafting materials,
+# a different concern). Each entry: item (the drop's own name), realm/
+# area/mob (where it drops), category ('Weapon'/'Armor'/'Sigil'), tier
+# (i-vi, roman numeral), use_display (e.g. "Embed Shock Sigil ii"), level
+# (the enchant/embed's own iLevel requirement), and note - only ever set
+# for a Kaid Sigil entry, cross-referencing which of Evil/Good/Chaos
+# specializes in that same element at lower tiers (each of those three
+# only ever covers 2 of the 6 elements; Kaid alone covers all 6, picking
+# up where the specializing realm's own tiers stop).
+CRAFTING_ENCHANTS = [
+    {'item': 'silver nugget', 'realm': 'Chaos', 'area': 'Darikor', 'mob': 'miner', 'category': 'Weapon', 'tier': 'i', 'use_display': 'Enchant Weapon i', 'level': 1, 'note': ''},
+    {'item': 'turtle shell', 'realm': 'Chaos', 'area': 'Darikor Coast', 'mob': 'snapping rigan sea-turtle', 'category': 'Armor', 'tier': 'i', 'use_display': 'Enchant Armor i', 'level': 1, 'note': ''},
+    {'item': 'static charge', 'realm': 'Chaos', 'area': 'Fort Darkbane', 'mob': 'elven scribe', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Shock Protect Sigil i', 'level': 1, 'note': ''},
+    {'item': 'gray rock', 'realm': 'Chaos', 'area': 'Plains of Hevak', 'mob': 'kobold rebel leader', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Earth Sigil i', 'level': 1, 'note': ''},
+    {'item': 'sharp thorn', 'realm': 'Chaos', 'area': 'Shores of the Thundermist River', 'mob': 'protective dryad', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Earth Protect Sigil i', 'level': 1, 'note': ''},
+    {'item': 'vial of fireflies', 'realm': 'Chaos', 'area': 'Tenebrous Hollow', 'mob': 'elven hunter', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Shock Sigil i', 'level': 1, 'note': ''},
+    {'item': 'vial of fireflies', 'realm': 'Chaos', 'area': 'Tenebrous Hollow', 'mob': 'elven tracker', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Shock Sigil i', 'level': 1, 'note': ''},
+    {'item': 'wyvern scales', 'realm': 'Chaos', 'area': 'Abrishamkar Mountains', 'mob': 'mountain wyvern', 'category': 'Armor', 'tier': 'ii', 'use_display': 'Enchant Armor ii', 'level': 15, 'note': ''},
+    {'item': 'eel eye', 'realm': 'Chaos', 'area': 'Doral Straits', 'mob': 'red striped water eel', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Shock Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'silver rock', 'realm': 'Chaos', 'area': 'Enchanted Woods of Acornak', 'mob': 'greenwood faerie', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Earth Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'rhinocerous horn', 'realm': 'Chaos', 'area': 'Enchanted Woods of Acornak', 'mob': 'druid of the forest', 'category': 'Weapon', 'tier': 'ii', 'use_display': 'Enchant Weapon ii', 'level': 15, 'note': ''},
+    {'item': 'delicate leaf', 'realm': 'Chaos', 'area': 'Greater Rulan Jungle', 'mob': 'black-leaved huron', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Earth Protect Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'pulsating sphere of energy', 'realm': 'Chaos', 'area': 'Verulian Forest', 'mob': 'enormous wrinkled pulsating tendril', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Shock Protect Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'snow worm larva', 'realm': 'Chaos', 'area': 'Arachenlair Forest', 'mob': 'fully-grown black widow', 'category': 'Armor', 'tier': 'iii', 'use_display': 'Enchant Armor iii', 'level': 30, 'note': ''},
+    {'item': 'black rock', 'realm': 'Chaos', 'area': 'Cavern of Roots', 'mob': 'swarm of root weevils', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Earth Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'crocodile tear', 'realm': 'Chaos', 'area': 'Curdled Blood Marsh', 'mob': 'venomous giant crocodile', 'category': 'Weapon', 'tier': 'iii', 'use_display': 'Enchant Weapon iii', 'level': 30, 'note': ''},
+    {'item': 'lump of clay', 'realm': 'Chaos', 'area': 'Deadlands', 'mob': 'underdweller', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Earth Protect Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'spectral spark', 'realm': 'Chaos', 'area': "Misery's Crossing", 'mob': 'spirit of a niordian missionary', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Shock Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'shard of power', 'realm': 'Chaos', 'area': 'Throrfiril', 'mob': 'throrfiril mage', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Shock Protect Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'charged crystal', 'realm': 'Chaos', 'area': 'Caverns of Gaggsith', 'mob': 'sable-robed drow cultist', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Shock Sigil iv', 'level': 45, 'note': ''},
+    {'item': 'skeletal dragon bone', 'realm': 'Chaos', 'area': 'Nomadic Caravan', 'mob': 'sunburnt scavenger', 'category': 'Armor', 'tier': 'iv', 'use_display': 'Enchant Armor iv', 'level': 45, 'note': ''},
+    {'item': 'golden rock', 'realm': 'Chaos', 'area': "Pirate's Cove", 'mob': 'elite brigand guardsman', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Earth Sigil iv', 'level': 45, 'note': ''},
+    {'item': 'blue icicle', 'realm': 'Chaos', 'area': 'Ruins of Gnovormir', 'mob': 'vermillion-robed wraith', 'category': 'Weapon', 'tier': 'iv', 'use_display': 'Enchant Weapon iv', 'level': 45, 'note': ''},
+    {'item': 'blue icicle', 'realm': 'Chaos', 'area': 'Throrfiril Royal Citadel', 'mob': 'cairngorm mage', 'category': 'Weapon', 'tier': 'iv', 'use_display': 'Enchant Weapon iv', 'level': 45, 'note': ''},
+    {'item': 'skeletal dragon bone', 'realm': 'Chaos', 'area': 'Tomb of the Dragon King', 'mob': 'undead dragon sentinel', 'category': 'Armor', 'tier': 'iv', 'use_display': 'Enchant Armor iv', 'level': 45, 'note': ''},
+    {'item': 'small piece of ember', 'realm': 'Evil', 'area': 'Bluffs of Zden', 'mob': 'red spectre', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Fire Protect Sigil i', 'level': 1, 'note': ''},
+    {'item': 'turtle shell', 'realm': 'Evil', 'area': 'Greenmist Palisades', 'mob': 'Tamian refugee', 'category': 'Armor', 'tier': 'i', 'use_display': 'Enchant Armor i', 'level': 1, 'note': ''},
+    {'item': 'silver nugget', 'realm': 'Evil', 'area': 'Northern Wharves', 'mob': 'sentinel', 'category': 'Weapon', 'tier': 'i', 'use_display': 'Enchant Weapon i', 'level': 1, 'note': ''},
+    {'item': 'snow elk hide', 'realm': 'Evil', 'area': 'Pine Forest/Tundra', 'mob': 'warden of the forest', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Cold Protect Sigil i', 'level': 1, 'note': ''},
+    {'item': 'ice crystal', 'realm': 'Evil', 'area': 'Rowangroves', 'mob': 'pixie mage', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Cold Sigil i', 'level': 1, 'note': ''},
+    {'item': 'fire snake scale', 'realm': 'Evil', 'area': 'Village of Reilyn', 'mob': 'Tamian mage', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Fire Sigil i', 'level': 1, 'note': ''},
+    {'item': "yeti's paw", 'realm': 'Evil', 'area': 'Arctic Glacier', 'mob': 'large yeti', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Cold Protect Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'ice shard', 'realm': 'Evil', 'area': 'Barrows of Zden', 'mob': 'mist wraith', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Cold Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'ice shard', 'realm': 'Evil', 'area': 'Barrows of Zden', 'mob': 'phantasmal warrior', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Cold Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'lava rock', 'realm': 'Evil', 'area': 'Great Swamp', 'mob': 'fire salamander', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Fire Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'glowing lump of coal', 'realm': 'Evil', 'area': 'Valley of Giants', 'mob': 'magma man', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Fire Protect Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'rhinocerous horn', 'realm': 'Evil', 'area': 'Valley of Zden', 'mob': 'bandit captain', 'category': 'Weapon', 'tier': 'ii', 'use_display': 'Enchant Weapon ii', 'level': 15, 'note': ''},
+    {'item': 'wyvern scales', 'realm': 'Evil', 'area': 'Wastes of Olmran', 'mob': 'orcish scavenger', 'category': 'Armor', 'tier': 'ii', 'use_display': 'Enchant Armor ii', 'level': 15, 'note': ''},
+    {'item': 'ice gem', 'realm': 'Evil', 'area': 'Cerulean Lakes', 'mob': 'ice elemental', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Cold Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'hunk of black rock', 'realm': 'Evil', 'area': "Dunes of Kad'Iril", 'mob': 'nomad spirit', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Fire Protect Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'fiery ruby', 'realm': 'Evil', 'area': "Lord Garon's Keep", 'mob': 'hobgoblin', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Fire Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'crocodile tear', 'realm': 'Evil', 'area': 'Orc Caverns', 'mob': 'disgusting orc warlock', 'category': 'Weapon', 'tier': 'iii', 'use_display': 'Enchant Weapon iii', 'level': 30, 'note': ''},
+    {'item': 'crystal hydra eye', 'realm': 'Evil', 'area': 'Serpents Pass', 'mob': 'hydra', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Cold Protect Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'snow worm larva', 'realm': 'Evil', 'area': 'Snarewoods', 'mob': 'fully-grown black widow', 'category': 'Armor', 'tier': 'iii', 'use_display': 'Enchant Armor iii', 'level': 30, 'note': ''},
+    {'item': 'skeletal dragon bone', 'realm': 'Evil', 'area': 'Black Keep', 'mob': 'mounted skeletal knight', 'category': 'Armor', 'tier': 'iv', 'use_display': 'Enchant Armor iv', 'level': 45, 'note': ''},
+    {'item': 'skeletal dragon bone', 'realm': 'Evil', 'area': 'Great Desert', 'mob': 'sand witch', 'category': 'Armor', 'tier': 'iv', 'use_display': 'Enchant Armor iv', 'level': 45, 'note': ''},
+    {'item': 'blue diamond', 'realm': 'Evil', 'area': 'Temple of the Divine Horn', 'mob': 'unicorn priest', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Cold Sigil iv', 'level': 45, 'note': ''},
+    {'item': 'blue icicle', 'realm': 'Evil', 'area': 'Underdark', 'mob': 'dark elf wizard', 'category': 'Weapon', 'tier': 'iv', 'use_display': 'Enchant Weapon iv', 'level': 45, 'note': ''},
+    {'item': 'fire dragon tongue', 'realm': 'Evil', 'area': 'Underground Temple', 'mob': 'moira mage', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Fire Sigil iv', 'level': 45, 'note': ''},
+    {'item': 'silver nugget', 'realm': 'Good', 'area': 'Azure Rainforest', 'mob': 'large snapping turtle', 'category': 'Weapon', 'tier': 'i', 'use_display': 'Enchant Weapon i', 'level': 1, 'note': ''},
+    {'item': 'turtle shell', 'realm': 'Good', 'area': 'Bladegrass', 'mob': 'large, grey tortoise', 'category': 'Armor', 'tier': 'i', 'use_display': 'Enchant Armor i', 'level': 1, 'note': ''},
+    {'item': 'mist willow leaf', 'realm': 'Good', 'area': 'Chui Rainforest', 'mob': 'mist willow', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Water Protect Sigil i', 'level': 1, 'note': ''},
+    {'item': 'frog tongue', 'realm': 'Good', 'area': "Forests of Shalifi's Demise", 'mob': 'bullfrog', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Water Sigil i', 'level': 1, 'note': ''},
+    {'item': 'shimmering crystal', 'realm': 'Good', 'area': 'Mountain Caves', 'mob': 'dark dwarven mageguard', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Lightning Protect Sigil i', 'level': 1, 'note': ''},
+    {'item': 'lightning rod', 'realm': 'Good', 'area': 'Remorse Mountains', 'mob': 'Aarkcroa huntress', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Lightning Sigil i', 'level': 1, 'note': ''},
+    {'item': 'lightning rod', 'realm': 'Good', 'area': 'Remorse Mountains', 'mob': 'mountain goblin', 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Lightning Sigil i', 'level': 1, 'note': ''},
+    {'item': 'sparkling gem', 'realm': 'Good', 'area': 'Cavern of Shadows', 'mob': 'mangy minotaur brute', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Lightning Protect Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'small water beetle', 'realm': 'Good', 'area': 'Karimere Timber Forest', 'mob': 'Karimere logger', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Water Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'wyvern scales', 'realm': 'Good', 'area': 'Karimere Timber Forest', 'mob': 'emerald forest wyvern', 'category': 'Armor', 'tier': 'ii', 'use_display': 'Enchant Armor ii', 'level': 15, 'note': ''},
+    {'item': 'silver wire', 'realm': 'Good', 'area': 'Medoran Forest', 'mob': 'mean little gremlin', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Lightning Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'rhinocerous horn', 'realm': 'Good', 'area': 'Myrobi Hills', 'mob': 'Myrobi hunter', 'category': 'Weapon', 'tier': 'ii', 'use_display': 'Enchant Weapon ii', 'level': 15, 'note': ''},
+    {'item': 'wave talisman', 'realm': 'Good', 'area': 'Ninja Caves', 'mob': 'blue-robed student ninja', 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Water Protect Sigil ii', 'level': 15, 'note': ''},
+    {'item': 'crocodile tear', 'realm': 'Good', 'area': 'Crescent Moon Gorge', 'mob': 'barbarian shaman', 'category': 'Weapon', 'tier': 'iii', 'use_display': 'Enchant Weapon iii', 'level': 30, 'note': ''},
+    {'item': 'shimmering fragment of calcite', 'realm': 'Good', 'area': 'Crystal Towers of Fala', 'mob': 'blue calcite chimera', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Water Protect Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'pulsing rock', 'realm': 'Good', 'area': "Cverick's Tower", 'mob': 'bael spirit', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Lightning Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'blue beak', 'realm': 'Good', 'area': 'Island of Mingo', 'mob': 'blue-footed booby', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Water Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'glowing diamond', 'realm': 'Good', 'area': 'Twisted Jungle', 'mob': 'Yarubian shaman', 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Lightning Protect Sigil iii', 'level': 30, 'note': ''},
+    {'item': 'snow worm larva', 'realm': 'Good', 'area': 'Venomvein Timberland', 'mob': 'fully-grown black widow', 'category': 'Armor', 'tier': 'iii', 'use_display': 'Enchant Armor iii', 'level': 30, 'note': ''},
+    {'item': 'bolt of lightning', 'realm': 'Good', 'area': 'Acheronian Keep', 'mob': 'black robed warlock guard', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Lightning Sigil iv', 'level': 45, 'note': ''},
+    {'item': 'skeletal dragon bone', 'realm': 'Good', 'area': 'Allorien', 'mob': 'pack of allorien castle hounds', 'category': 'Armor', 'tier': 'iv', 'use_display': 'Enchant Armor iv', 'level': 45, 'note': ''},
+    {'item': 'skeletal dragon bone', 'realm': 'Good', 'area': 'Chiligulla Mountains', 'mob': 'Chiligullian huntmaster', 'category': 'Armor', 'tier': 'iv', 'use_display': 'Enchant Armor iv', 'level': 45, 'note': ''},
+    {'item': 'blue icicle', 'realm': 'Good', 'area': 'Crystal Towers of Fala', 'mob': 'blue calcite chimera', 'category': 'Weapon', 'tier': 'iv', 'use_display': 'Enchant Weapon iv', 'level': 45, 'note': ''},
+    {'item': 'drop of pure spring water', 'realm': 'Good', 'area': 'Karimere Highlands', 'mob': 'high plains drifter', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Water Sigil iv', 'level': 45, 'note': ''},
+    {'item': 'blue icicle', 'realm': 'Good', 'area': 'Shady Brush Hills', 'mob': 'vampire banshee', 'category': 'Weapon', 'tier': 'iv', 'use_display': 'Enchant Weapon iv', 'level': 45, 'note': ''},
+    {'item': 'shard of power', 'realm': 'Kaid', 'area': 'Fire Valley', 'mob': None, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Shock Protect Sigil iii', 'level': 30, 'note': 'From Kaid'},
+    {'item': 'bolt of lightning', 'realm': 'Kaid', 'area': 'Freehold Coast', 'mob': 'satyr', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Lightning Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': 'golden rock', 'realm': 'Kaid', 'area': 'Kaid Local', 'mob': 'weathered traveler', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Earth Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': 'drop of pure spring water', 'realm': 'Kaid', 'area': 'Kaid Wilderness', 'mob': 'kaidite prospector', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Water Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': 'blue diamond', 'realm': 'Kaid', 'area': 'Plains of Helk', 'mob': 'pale rider', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Cold Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': 'shard of energy', 'realm': 'Kaid', 'area': 'Riverswift Downs', 'mob': 'minotaur priest', 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Lightning Sigil v', 'level': 60, 'note': 'From Kaid'},
+    {'item': 'fire root', 'realm': 'Kaid', 'area': 'Kaid Red & Purple', 'mob': 'All 70+ Mobs', 'category': 'Armor', 'tier': 'v', 'use_display': 'Enchant Armor v', 'level': 60, 'note': ''},
+    {'item': 'pulsing orb', 'realm': 'Kaid', 'area': 'Kaid Red & Purple', 'mob': 'All 70+ Mobs', 'category': 'Weapon', 'tier': 'v', 'use_display': 'Enchant Weapon v', 'level': 60, 'note': ''},
+    {'item': 'fragment of utter darkness', 'realm': 'Kaid', 'area': 'N/A', 'mob': 'N/A', 'category': 'Armor', 'tier': 'vi', 'use_display': 'Enchant Armor vi', 'level': 60, 'note': ''},
+    {'item': 'sphere of chaotic force', 'realm': 'Kaid', 'area': 'N/A', 'mob': 'N/A', 'category': 'Weapon', 'tier': 'vi', 'use_display': 'Enchant Weapon vi', 'level': 60, 'note': ''},
+    {'item': 'prismatic sphere of pure energy', 'realm': 'Kaid', 'area': 'N/A', 'mob': 'N/A', 'category': 'Sigil', 'tier': 'vi', 'use_display': 'Embed Fire Sigil vi', 'level': 60, 'note': 'From Kaid'},
+    {'item': 'prismatic sphere of pure energy', 'realm': 'Kaid', 'area': 'N/A', 'mob': 'N/A', 'category': 'Sigil', 'tier': 'vi', 'use_display': 'Embed Cold Sigil vi', 'level': 60, 'note': 'From Kaid'},
+    {'item': 'A smoldering piece of brimstone', 'realm': 'Kaid', 'area': 'Tokat Bamboo Forest', 'mob': 'demented Tokat witch-doctor', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Fire Protect Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': 'frozen core', 'realm': 'Kaid', 'area': 'Town of Green Hills', 'mob': 'Green Hills Inquisitor', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Cold Protect Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': "storm's eye", 'realm': 'Kaid', 'area': 'River Valley', 'mob': 'wind duke', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Shock Protect Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': 'liquid heart', 'realm': 'Kaid', 'area': 'Sun Gulf', 'mob': 'boiling water elemental', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Water Protect Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': "nature's heart", 'realm': 'Kaid', 'area': 'Nosho Rainforest', 'mob': 'rainforest nymph', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Earth Protect Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': 'charged cystal', 'realm': 'Kaid', 'area': 'Fire Valley', 'mob': 'quickling lord', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Shock Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': 'fire dragon tongue', 'realm': 'Kaid', 'area': 'Kaid Merchant Quarters', 'mob': 'dark magician', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Fire Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': 'blue diamond', 'realm': 'Kaid', 'area': 'Plains of Helk', 'mob': 'plainswalker', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Cold Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': 'charged crystal ball', 'realm': 'Kaid', 'area': 'Nahaz Bay', 'mob': 'elder of the nameless tribe', 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Lightning Protect Sigil iv', 'level': 45, 'note': 'From Kaid'},
+    {'item': "mermaid's tear", 'realm': 'Kaid', 'area': 'Nahaz Bay', 'mob': 'mermaid siren', 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Water Sigil v', 'level': 60, 'note': 'From Kaid'},
+    {'item': "winter's glare", 'realm': 'Kaid', 'area': 'Kaid Slum Quarters', 'mob': "Al'Tizor zealot", 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Cold Sigil v', 'level': 60, 'note': 'From Kaid'},
+    {'item': 'shard of potential', 'realm': 'Kaid', 'area': 'Kaid Religious Quarters', 'mob': 'priest of Ahrimal', 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Shock Sigil v', 'level': 60, 'note': 'From Kaid'},
+    {'item': 'small vial of magma', 'realm': 'Kaid', 'area': 'Peaks of Ahrimal', 'mob': 'Ahrimal zealot', 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Fire Sigil v', 'level': 60, 'note': 'From Kaid'},
+    {'item': 'translucent rock', 'realm': 'Kaid', 'area': 'Green Valley', 'mob': 'green valley ranger', 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Earth Sigil v', 'level': 60, 'note': 'From Kaid'},
+]
+
+
+# Every drop-location row from Master File.xlsx's "Enchant & Craft
+# Mats" sheet (both Type='enchant' and Type='ingredient' rows) -
+# used to cross-reference a CRAFTING_RECIPES entry's own materials
+# against where each one can actually be found, so a recipe needing a
+# drop-able ingredient (as opposed to a plain by-weight material like
+# cloth/leather/metal/wood) can show that right under it - see
+# _crafting_material_drop_sources.
+CRAFTING_MATERIAL_SOURCES = [
+    {'item': 'silver nugget', 'realm': 'Chaos', 'area': 'Darikor', 'mob': 'miner', 'level': 1},
+    {'item': 'turtle shell', 'realm': 'Chaos', 'area': 'Darikor Coast', 'mob': 'snapping rigan sea-turtle', 'level': 1},
+    {'item': 'static charge', 'realm': 'Chaos', 'area': 'Fort Darkbane', 'mob': 'elven scribe', 'level': 1},
+    {'item': 'gray rock', 'realm': 'Chaos', 'area': 'Plains of Hevak', 'mob': 'kobold rebel leader', 'level': 1},
+    {'item': 'sharp thorn', 'realm': 'Chaos', 'area': 'Shores of the Thundermist River', 'mob': 'protective dryad', 'level': 1},
+    {'item': 'vial of fireflies', 'realm': 'Chaos', 'area': 'Tenebrous Hollow', 'mob': 'elven hunter', 'level': 1},
+    {'item': 'vial of fireflies', 'realm': 'Chaos', 'area': 'Tenebrous Hollow', 'mob': 'elven tracker', 'level': 1},
+    {'item': 'wyvern scales', 'realm': 'Chaos', 'area': 'Abrishamkar Mountains', 'mob': 'mountain wyvern', 'level': 15},
+    {'item': 'eel eye', 'realm': 'Chaos', 'area': 'Doral Straits', 'mob': 'red striped water eel', 'level': 15},
+    {'item': 'silver rock', 'realm': 'Chaos', 'area': 'Enchanted Woods of Acornak', 'mob': 'greenwood faerie', 'level': 15},
+    {'item': 'rhinocerous horn', 'realm': 'Chaos', 'area': 'Enchanted Woods of Acornak', 'mob': 'druid of the forest', 'level': 15},
+    {'item': 'delicate leaf', 'realm': 'Chaos', 'area': 'Greater Rulan Jungle', 'mob': 'black-leaved huron', 'level': 15},
+    {'item': 'pulsating sphere of energy', 'realm': 'Chaos', 'area': 'Verulian Forest', 'mob': 'enormous wrinkled pulsating tendril', 'level': 15},
+    {'item': 'snow worm larva', 'realm': 'Chaos', 'area': 'Arachenlair Forest', 'mob': 'fully-grown black widow', 'level': 30},
+    {'item': 'black rock', 'realm': 'Chaos', 'area': 'Cavern of Roots', 'mob': 'swarm of root weevils', 'level': 30},
+    {'item': 'crocodile tear', 'realm': 'Chaos', 'area': 'Curdled Blood Marsh', 'mob': 'venomous giant crocodile', 'level': 30},
+    {'item': 'lump of clay', 'realm': 'Chaos', 'area': 'Deadlands', 'mob': 'underdweller', 'level': 30},
+    {'item': 'spectral spark', 'realm': 'Chaos', 'area': "Misery's Crossing", 'mob': 'spirit of a niordian missionary', 'level': 30},
+    {'item': 'shard of power', 'realm': 'Chaos', 'area': 'Throrfiril', 'mob': 'throrfiril mage', 'level': 30},
+    {'item': 'charged crystal', 'realm': 'Chaos', 'area': 'Caverns of Gaggsith', 'mob': 'sable-robed drow cultist', 'level': 45},
+    {'item': 'skeletal dragon bone', 'realm': 'Chaos', 'area': 'Nomadic Caravan', 'mob': 'sunburnt scavenger', 'level': 45},
+    {'item': 'golden rock', 'realm': 'Chaos', 'area': "Pirate's Cove", 'mob': 'elite brigand guardsman', 'level': 45},
+    {'item': 'blue icicle', 'realm': 'Chaos', 'area': 'Ruins of Gnovormir', 'mob': 'vermillion-robed wraith', 'level': 45},
+    {'item': 'blue icicle', 'realm': 'Chaos', 'area': 'Throrfiril Royal Citadel', 'mob': 'cairngorm mage', 'level': 45},
+    {'item': 'skeletal dragon bone', 'realm': 'Chaos', 'area': 'Tomb of the Dragon King', 'mob': 'undead dragon sentinel', 'level': 45},
+    {'item': 'bar of bronze', 'realm': 'Chaos', 'area': 'Abrishamkar Mountains', 'mob': 'mountain nomad', 'level': 15},
+    {'item': 'pound of steel', 'realm': 'Chaos', 'area': 'Citadel of Gnovormir', 'mob': 'animated metal skeleton', 'level': 60},
+    {'item': 'bar of steel', 'realm': 'Chaos', 'area': 'Crystalline Mines', 'mob': 'skeleton slave', 'level': 60},
+    {'item': 'pound of steel', 'realm': 'Chaos', 'area': 'Crystalline Mines', 'mob': 'skeleton slave', 'level': 60},
+    {'item': 'chunk of iron', 'realm': 'Chaos', 'area': 'Darikor', 'mob': 'iron ore dealer', 'level': 15},
+    {'item': 'pile of leather', 'realm': 'Chaos', 'area': 'Darikor', 'mob': 'leather dealer', 'level': 15},
+    {'item': 'handful of scales', 'realm': 'Chaos', 'area': "Drakurat's Spine", 'mob': 'mounted dragon rider sentinel', 'level': 60},
+    {'item': 'pile of scales', 'realm': 'Chaos', 'area': "Drakurat's Spine", 'mob': 'mounted dragon rider sentinel', 'level': 60},
+    {'item': 'yard of cotton', 'realm': 'Chaos', 'area': 'Enchanted Woods of Acornak', 'mob': 'leprachaun', 'level': 1},
+    {'item': 'swatch of silk', 'realm': 'Chaos', 'area': 'Greater Wailing Woods', 'mob': 'gaunt mummy', 'level': 45},
+    {'item': 'swatch of gossamer cloth', 'realm': 'Chaos', 'area': 'Nomadic Caravans', 'mob': 'sunburnt scavenger', 'level': 60},
+    {'item': 'bar of iron', 'realm': 'Chaos', 'area': "Pirate's Cove", 'mob': 'black market trader', 'level': 45},
+    {'item': 'piece of bronze', 'realm': 'Chaos', 'area': 'Plains of Hevak', 'mob': 'goblin weaponsmith', 'level': 1},
+    {'item': 'swatch of cotton', 'realm': 'Chaos', 'area': 'Sea of Grass', 'mob': 'old man', 'level': 1},
+    {'item': 'scrap of suede', 'realm': 'Chaos', 'area': 'Shores of the Thundermist River', 'mob': 'grizzly bear', 'level': 30},
+    {'item': 'yard of fine silk', 'realm': 'Chaos', 'area': 'Utilla Town', 'mob': 'town trader', 'level': 45},
+    {'item': 'small piece of ember', 'realm': 'Evil', 'area': 'Bluffs of Zden', 'mob': 'red spectre', 'level': 1},
+    {'item': 'turtle shell', 'realm': 'Evil', 'area': 'Greenmist Palisades', 'mob': 'Tamian refugee', 'level': 1},
+    {'item': 'silver nugget', 'realm': 'Evil', 'area': 'Northern Wharves', 'mob': 'sentinel', 'level': 1},
+    {'item': 'snow elk hide', 'realm': 'Evil', 'area': 'Pine Forest/Tundra', 'mob': 'warden of the forest', 'level': 1},
+    {'item': 'ice crystal', 'realm': 'Evil', 'area': 'Rowangroves', 'mob': 'pixie mage', 'level': 1},
+    {'item': 'fire snake scale', 'realm': 'Evil', 'area': 'Village of Reilyn', 'mob': 'Tamian mage', 'level': 1},
+    {'item': "yeti's paw", 'realm': 'Evil', 'area': 'Arctic Glacier', 'mob': 'large yeti', 'level': 15},
+    {'item': 'ice shard', 'realm': 'Evil', 'area': 'Barrows of Zden', 'mob': 'mist wraith', 'level': 15},
+    {'item': 'ice shard', 'realm': 'Evil', 'area': 'Barrows of Zden', 'mob': 'phantasmal warrior', 'level': 15},
+    {'item': 'lava rock', 'realm': 'Evil', 'area': 'Great Swamp', 'mob': 'fire salamander', 'level': 15},
+    {'item': 'glowing lump of coal', 'realm': 'Evil', 'area': 'Valley of Giants', 'mob': 'magma man', 'level': 15},
+    {'item': 'rhinocerous horn', 'realm': 'Evil', 'area': 'Valley of Zden', 'mob': 'bandit captain', 'level': 15},
+    {'item': 'wyvern scales', 'realm': 'Evil', 'area': 'Wastes of Olmran', 'mob': 'orcish scavenger', 'level': 15},
+    {'item': 'ice gem', 'realm': 'Evil', 'area': 'Cerulean Lakes', 'mob': 'ice elemental', 'level': 30},
+    {'item': 'hunk of black rock', 'realm': 'Evil', 'area': "Dunes of Kad'Iril", 'mob': 'nomad spirit', 'level': 30},
+    {'item': 'fiery ruby', 'realm': 'Evil', 'area': "Lord Garon's Keep", 'mob': 'hobgoblin', 'level': 30},
+    {'item': 'crocodile tear', 'realm': 'Evil', 'area': 'Orc Caverns', 'mob': 'disgusting orc warlock', 'level': 30},
+    {'item': 'crystal hydra eye', 'realm': 'Evil', 'area': 'Serpents Pass', 'mob': 'hydra', 'level': 30},
+    {'item': 'snow worm larva', 'realm': 'Evil', 'area': 'Snarewoods', 'mob': 'fully-grown black widow', 'level': 30},
+    {'item': 'skeletal dragon bone', 'realm': 'Evil', 'area': 'Black Keep', 'mob': 'mounted skeletal knight', 'level': 45},
+    {'item': 'skeletal dragon bone', 'realm': 'Evil', 'area': 'Great Desert', 'mob': 'sand witch', 'level': 45},
+    {'item': 'blue diamond', 'realm': 'Evil', 'area': 'Temple of the Divine Horn', 'mob': 'unicorn priest', 'level': 45},
+    {'item': 'blue icicle', 'realm': 'Evil', 'area': 'Underdark', 'mob': 'dark elf wizard', 'level': 45},
+    {'item': 'fire dragon tongue', 'realm': 'Evil', 'area': 'Underground Temple', 'mob': 'moira mage', 'level': 45},
+    {'item': 'flask of volatile oil', 'realm': 'Evil', 'area': 'Marshlands', 'mob': 'marsh gar', 'level': 60},
+    {'item': 'bundle of yew', 'realm': 'Evil', 'area': 'Serpentine Mountain', 'mob': 'lumbering mountain giant', 'level': 60},
+    {'item': 'swatch of silk', 'realm': 'Evil', 'area': 'Black Keep', 'mob': 'bone mage', 'level': 45},
+    {'item': 'square of suede', 'realm': 'Evil', 'area': 'Frozen Wastelands', 'mob': 'snow elk', 'level': 45},
+    {'item': 'pound of steel', 'realm': 'Evil', 'area': 'Grey Mountains', 'mob': 'rock spirit', 'level': 45},
+    {'item': 'pile of cloth', 'realm': 'Evil', 'area': 'Northern Wharves', 'mob': 'cloth dealer', 'level': 1},
+    {'item': 'bar of iron', 'realm': 'Evil', 'area': 'Northern Wharves', 'mob': 'iron ore dealer', 'level': 1},
+    {'item': 'mithril trinket', 'realm': 'Evil', 'area': 'Northern Wharves', 'mob': 'mithril dealer', 'level': 1},
+    {'item': 'bar of iron', 'realm': 'Evil', 'area': 'Orc Caverns', 'mob': 'lumbering cave troll', 'level': 30},
+    {'item': 'chunk of iron', 'realm': 'Evil', 'area': 'Wastes of Olmran', 'mob': 'plains nomad', 'level': 30},
+    {'item': 'bundle of oak', 'realm': 'Evil', 'area': 'Valley of the Giants', 'mob': 'verbeeg', 'level': 30},
+    {'item': 'pound of steel', 'realm': 'Evil', 'area': 'Pyramid of the Sun', 'mob': 'animated, one-armed mummy torso', 'level': 60},
+    {'item': 'bar of bronze', 'realm': 'Evil', 'area': 'Spider Caves', 'mob': 'rock spider', 'level': 1},
+    {'item': 'bar of bronze', 'realm': 'Evil', 'area': 'Reilyn', 'mob': 'Reilyn peddler', 'level': 1},
+    {'item': 'pile of cloth', 'realm': 'Evil', 'area': 'Tamia Town Center', 'mob': 'cloth dealer', 'level': 15},
+    {'item': 'yard of oak', 'realm': 'Evil', 'area': 'Dark Forest', 'mob': 'ancient forest spirit', 'level': 15},
+    {'item': 'scrap of rough leather', 'realm': 'Evil', 'area': 'Great Swamp', 'mob': 'giant green newt', 'level': 45},
+    {'item': 'handful of scrap leather', 'realm': 'Evil', 'area': 'Tamia Town Center', 'mob': 'leather dealer', 'level': 15},
+    {'item': 'scrap of hide', 'realm': 'Evil', 'area': 'Tamian Foothills', 'mob': 'Tamian Trapper', 'level': 1},
+    {'item': 'silver nugget', 'realm': 'Good', 'area': 'Azure Rainforest', 'mob': 'large snapping turtle', 'level': 1},
+    {'item': 'turtle shell', 'realm': 'Good', 'area': 'Bladegrass', 'mob': 'large, grey tortoise', 'level': 1},
+    {'item': 'mist willow leaf', 'realm': 'Good', 'area': 'Chui Rainforest', 'mob': 'mist willow', 'level': 1},
+    {'item': 'frog tongue', 'realm': 'Good', 'area': "Forests of Shalifi's Demise", 'mob': 'bullfrog', 'level': 1},
+    {'item': 'shimmering crystal', 'realm': 'Good', 'area': 'Mountain Caves', 'mob': 'dark dwarven mageguard', 'level': 1},
+    {'item': 'lightning rod', 'realm': 'Good', 'area': 'Remorse Mountains', 'mob': 'Aarkcroa huntress', 'level': 1},
+    {'item': 'lightning rod', 'realm': 'Good', 'area': 'Remorse Mountains', 'mob': 'mountain goblin', 'level': 1},
+    {'item': 'sparkling gem', 'realm': 'Good', 'area': 'Cavern of Shadows', 'mob': 'mangy minotaur brute', 'level': 15},
+    {'item': 'small water beetle', 'realm': 'Good', 'area': 'Karimere Timber Forest', 'mob': 'Karimere logger', 'level': 15},
+    {'item': 'wyvern scales', 'realm': 'Good', 'area': 'Karimere Timber Forest', 'mob': 'emerald forest wyvern', 'level': 15},
+    {'item': 'silver wire', 'realm': 'Good', 'area': 'Medoran Forest', 'mob': 'mean little gremlin', 'level': 15},
+    {'item': 'rhinocerous horn', 'realm': 'Good', 'area': 'Myrobi Hills', 'mob': 'Myrobi hunter', 'level': 15},
+    {'item': 'wave talisman', 'realm': 'Good', 'area': 'Ninja Caves', 'mob': 'blue-robed student ninja', 'level': 15},
+    {'item': 'crocodile tear', 'realm': 'Good', 'area': 'Crescent Moon Gorge', 'mob': 'barbarian shaman', 'level': 30},
+    {'item': 'shimmering fragment of calcite', 'realm': 'Good', 'area': 'Crystal Towers of Fala', 'mob': 'blue calcite chimera', 'level': 30},
+    {'item': 'pulsing rock', 'realm': 'Good', 'area': "Cverick's Tower", 'mob': 'bael spirit', 'level': 30},
+    {'item': 'blue beak', 'realm': 'Good', 'area': 'Island of Mingo', 'mob': 'blue-footed booby', 'level': 30},
+    {'item': 'glowing diamond', 'realm': 'Good', 'area': 'Twisted Jungle', 'mob': 'Yarubian shaman', 'level': 30},
+    {'item': 'snow worm larva', 'realm': 'Good', 'area': 'Venomvein Timberland', 'mob': 'fully-grown black widow', 'level': 30},
+    {'item': 'bolt of lightning', 'realm': 'Good', 'area': 'Acheronian Keep', 'mob': 'black robed warlock guard', 'level': 45},
+    {'item': 'skeletal dragon bone', 'realm': 'Good', 'area': 'Allorien', 'mob': 'pack of allorien castle hounds', 'level': 45},
+    {'item': 'skeletal dragon bone', 'realm': 'Good', 'area': 'Chiligulla Mountains', 'mob': 'Chiligullian huntmaster', 'level': 45},
+    {'item': 'blue icicle', 'realm': 'Good', 'area': 'Crystal Towers of Fala', 'mob': 'blue calcite chimera', 'level': 45},
+    {'item': 'drop of pure spring water', 'realm': 'Good', 'area': 'Karimere Highlands', 'mob': 'high plains drifter', 'level': 45},
+    {'item': 'blue icicle', 'realm': 'Good', 'area': 'Shady Brush Hills', 'mob': 'vampire banshee', 'level': 45},
+    {'item': 'swatch of silk', 'realm': 'Good', 'area': 'Allorien', 'mob': 'allorien philosopher', 'level': 60},
+    {'item': 'swatch of rough wool', 'realm': 'Good', 'area': 'Carendel', 'mob': 'cloth dealer', 'level': 15},
+    {'item': 'pile of leather', 'realm': 'Good', 'area': 'Carendel', 'mob': 'leather dealer', 'level': 15},
+    {'item': 'yard of maple', 'realm': 'Good', 'area': 'Carendel', 'mob': 'master craftsman', 'level': 15},
+    {'item': 'flask of volatile oil', 'realm': 'Good', 'area': 'Chasmanic Swamp', 'mob': 'primeval thick scaled werecroc', 'level': 60},
+    {'item': 'pound of steel', 'realm': 'Good', 'area': 'Chiligulla Mountains', 'mob': 'village male', 'level': 45},
+    {'item': 'handful of scales', 'realm': 'Good', 'area': 'Chui Savanna', 'mob': 'hunting lioness', 'level': 45},
+    {'item': 'scrap of suede', 'realm': 'Good', 'area': 'Chui Savanna', 'mob': 'hunting lioness', 'level': 45},
+    {'item': 'bar of iron', 'realm': 'Good', 'area': 'Crescent Moon Gorge', 'mob': 'barbarian blacksmith', 'level': 45},
+    {'item': 'piece of bronze', 'realm': 'Good', 'area': "Grazzt's Refuge", 'mob': 'kobold pickpocket', 'level': 15},
+    {'item': 'square of rough leather', 'realm': 'Good', 'area': 'Island of Mingo', 'mob': 'wild pig', 'level': 30},
+    {'item': 'yard of oak', 'realm': 'Good', 'area': 'Karimere Timber Forest', 'mob': 'Karimere logger', 'level': 30},
+    {'item': 'bar of bronze', 'realm': 'Good', 'area': 'Nogrim, the Deep City', 'mob': 'angry miner', 'level': 15},
+    {'item': 'chunk of iron', 'realm': 'Good', 'area': 'Nogrim, the Deep City', 'mob': 'angry miner', 'level': 15},
+    {'item': 'yard of fine silk', 'realm': 'Good', 'area': 'Shrouded City of Craebaen', 'mob': 'craebaen citizen', 'level': 30},
+    {'item': 'shard of power', 'realm': 'Kaid', 'area': 'Fire Valley', 'mob': None, 'level': 30},
+    {'item': 'bolt of lightning', 'realm': 'Kaid', 'area': 'Freehold Coast', 'mob': 'satyr', 'level': 45},
+    {'item': 'golden rock', 'realm': 'Kaid', 'area': 'Kaid Local', 'mob': 'weathered traveler', 'level': 45},
+    {'item': 'drop of pure spring water', 'realm': 'Kaid', 'area': 'Kaid Wilderness', 'mob': 'kaidite prospector', 'level': 45},
+    {'item': 'blue diamond', 'realm': 'Kaid', 'area': 'Plains of Helk', 'mob': 'pale rider', 'level': 45},
+    {'item': 'shard of energy', 'realm': 'Kaid', 'area': 'Riverswift Downs', 'mob': 'minotaur priest', 'level': 60},
+    {'item': 'fire root', 'realm': 'Kaid', 'area': 'Kaid Red & Purple', 'mob': 'All 70+ Mobs', 'level': 60},
+    {'item': 'pulsing orb', 'realm': 'Kaid', 'area': 'Kaid Red & Purple', 'mob': 'All 70+ Mobs', 'level': 60},
+    {'item': 'fragment of utter darkness', 'realm': 'Kaid', 'area': 'N/A', 'mob': 'N/A', 'level': 60},
+    {'item': 'sphere of chaotic force', 'realm': 'Kaid', 'area': 'N/A', 'mob': 'N/A', 'level': 60},
+    {'item': 'Kaidite flux', 'realm': 'Kaid', 'area': 'Kaid Military Quarters', 'mob': 'Red Legion armorer', 'level': 60},
+    {'item': 'lump of raw alloy', 'realm': 'Kaid', 'area': 'Fire Valley - Crevice', 'mob': 'lost miner', 'level': 60},
+    {'item': 'bar of pure alloy', 'realm': 'Kaid', 'area': 'Golem Lake', 'mob': 'dirty dwarven miner', 'level': 60},
+    {'item': 'small jar of Kaidite oil', 'realm': 'Kaid', 'area': 'Kaid Slum Quarters', 'mob': 'shady fence', 'level': 60},
+    {'item': 'spool of tough sinew', 'realm': 'Kaid', 'area': 'Kaid Slum Quarters', 'mob': 'grisly old man', 'level': 60},
+    {'item': 'gleaming Kaidite thread', 'realm': 'Kaid', 'area': 'Kaid Religious Quarters', 'mob': 'white-robed priestess', 'level': 60},
+    {'item': 'yard of rosewood', 'realm': 'Kaid', 'area': 'Field of Sorrow', 'mob': 'harvester', 'level': 60},
+    {'item': 'small lump of mithril', 'realm': 'Kaid', 'area': 'Terngild, Lost City of Gold - Tunnel', 'mob': 'skilled dwarven miner', 'level': 60},
+    {'item': 'yard of ironwood', 'realm': 'Kaid', 'area': 'Xian Forest', 'mob': 'ancient tree spirit', 'level': 60},
+    {'item': 'yard of translucent wispweave', 'realm': 'Kaid', 'area': 'Elven Nation Border', 'mob': 'Sylvantri healer', 'level': 60},
+    {'item': 'handful of glimmering wyvern scales', 'realm': 'Kaid', 'area': 'Dire Mountains', 'mob': 'dire wyvern', 'level': 60},
+    {'item': 'pile of pristine wyvern scales', 'realm': 'Kaid', 'area': 'Terngild, Lost City of Gold - Tower', 'mob': 'Terngild dragon master', 'level': 60},
+    {'item': 'bar of refined mithril', 'realm': 'Kaid', 'area': 'Temple of Ahrimal', 'mob': 'Ahrimal elite temple guard', 'level': 60},
+    {'item': 'prismatic sphere of pure energy', 'realm': 'Kaid', 'area': 'N/A', 'mob': 'N/A', 'level': 60},
+    {'item': 'prismatic sphere of pure energy', 'realm': 'Kaid', 'area': 'N/A', 'mob': 'N/A', 'level': 60},
+    {'item': 'A smoldering piece of brimstone', 'realm': 'Kaid', 'area': 'Tokat Bamboo Forest', 'mob': 'demented Tokat witch-doctor', 'level': 45},
+    {'item': 'frozen core', 'realm': 'Kaid', 'area': 'Town of Green Hills', 'mob': 'Green Hills Inquisitor', 'level': 45},
+    {'item': "storm's eye", 'realm': 'Kaid', 'area': 'River Valley', 'mob': 'wind duke', 'level': 45},
+    {'item': 'liquid heart', 'realm': 'Kaid', 'area': 'Sun Gulf', 'mob': 'boiling water elemental', 'level': 45},
+    {'item': "nature's heart", 'realm': 'Kaid', 'area': 'Nosho Rainforest', 'mob': 'rainforest nymph', 'level': 45},
+    {'item': 'charged cystal', 'realm': 'Kaid', 'area': 'Fire Valley', 'mob': 'quickling lord', 'level': 45},
+    {'item': 'fire dragon tongue', 'realm': 'Kaid', 'area': 'Kaid Merchant Quarters', 'mob': 'dark magician', 'level': 45},
+    {'item': 'blue diamond', 'realm': 'Kaid', 'area': 'Plains of Helk', 'mob': 'plainswalker', 'level': 45},
+    {'item': 'charged crystal ball', 'realm': 'Kaid', 'area': 'Nahaz Bay', 'mob': 'elder of the nameless tribe', 'level': 45},
+    {'item': "mermaid's tear", 'realm': 'Kaid', 'area': 'Nahaz Bay', 'mob': 'mermaid siren', 'level': 60},
+    {'item': "winter's glare", 'realm': 'Kaid', 'area': 'Kaid Slum Quarters', 'mob': "Al'Tizor zealot", 'level': 60},
+    {'item': 'shard of potential', 'realm': 'Kaid', 'area': 'Kaid Religious Quarters', 'mob': 'priest of Ahrimal', 'level': 60},
+    {'item': 'small vial of magma', 'realm': 'Kaid', 'area': 'Peaks of Ahrimal', 'mob': 'Ahrimal zealot', 'level': 60},
+    {'item': 'translucent rock', 'realm': 'Kaid', 'area': 'Green Valley', 'mob': 'green valley ranger', 'level': 60},
+]
+
+
 CREDITS = [
     ("Gnawbie", "Majority of Content"),
     ("Claude", "Programming"),
@@ -2310,11 +3210,13 @@ class App(tk.Tk):
         # Prioritize/Hard Search/Search-all-characters, etc.) needs more
         # vertical space than the old 815px default fit - tall enough that
         # the shared Min/Max/Specific Level + search buttons under the Build
-        # tab were cut off below the visible window on first launch. 836 is
-        # the confirmed comfortable height (measured from a live test run).
-        # Width widened to 1425 (measured from the running exe, resized to
-        # comfortably fit Manual tab's 3-tab Gear Constraints mini-notebook).
-        self.geometry("1425x836")
+        # tab were cut off below the visible window on first launch. Width
+        # 1425 (measured from the running exe, resized to comfortably fit
+        # Manual tab's 3-tab Gear Constraints mini-notebook); height 859 -
+        # the user's own resized default as of v6.6.0 (measured live via
+        # GetClientRect against the running exe, matching Tkinter's own
+        # geometry() convention of client-area size, not outer window size).
+        self.geometry("1425x859")
         self.minsize(1150, 750)
         self.resizable(True, True)
         self._set_app_icon()
@@ -3464,12 +4366,14 @@ class App(tk.Tk):
         self.tab_results = ttk.Frame(nb, padding=12)
         self.tab_saved = ttk.Frame(nb, padding=12)
         self.tab_area_items = ttk.Frame(nb, padding=12)
+        self.tab_crafting = ttk.Frame(nb, padding=12)
 
         nb.add(self.tab_parse,  text='▶  Parse')
         nb.add(self.tab_build, text='🔨  Build')
         nb.add(self.tab_results, text='📊  Results')  # Always visible
         nb.add(self.tab_saved, text='📌  Saved Builds')  # One tab holds every save
         nb.add(self.tab_area_items, text='🗺  Area Items')
+        nb.add(self.tab_crafting, text='⚒  Crafting')
 
         self.notebook = nb  # Store reference to notebook
         # 16 = the 8+8 padx/pady nb itself is packed with, just above.
@@ -3482,6 +4386,7 @@ class App(tk.Tk):
         self._build_results_tab()
         self._build_saved_builds_tab()
         self._build_area_items_tab()
+        self._build_crafting_tab()
 
     def _build_file_list_section(self, parent, resizable=False):
         """Builds one copy of the "Load Log Files" section (toolbar +
@@ -10146,21 +11051,155 @@ class App(tk.Tk):
             self._render_saved_builds()
             self._save_config()
 
+    _SAVED_ROW_DISPLAY_TO_LOOKUP_SLOT = {
+        'Head': 'head', 'Cloak': 'cloak', 'Body': 'body', 'Hands': 'hands',
+        'Legs': 'legs', 'Feet': 'feet', 'Weapon': 'weapon', 'Off-Hand': 'weapon_off',
+        'Shield': 'shield', 'Jewel': 'jewel', 'Claw': 'claw', 'Stomach': 'edible',
+    }
+    # What a real master_data item's own Slot field actually holds for each
+    # lookup group - only used to fabricate a synthetic item (see below) when
+    # no real match is found, so its _bank_item_key still comes out right.
+    # Claw items are Slot=weapon/Type=claw (never Slot=claw - see is_claw_item
+    # throughout this file), and weapon_off shares the plain weapon pool too.
+    _SAVED_ROW_LOOKUP_TO_RAW_SLOT = {
+        'jewel': 'jewel', 'claw': 'weapon', 'edible': 'edible', 'weapon_off': 'weapon',
+        'head': 'head', 'cloak': 'cloak', 'body': 'body', 'hands': 'hands',
+        'legs': 'legs', 'feet': 'feet', 'weapon': 'weapon', 'shield': 'shield',
+    }
+
+    def _rebuild_build_dict_from_saved_rows(self, rows):
+        """Reconstructs a {slot: item} build dict (plus the matching
+        attempted_slots set, and a separate list for any manually-added
+        rows) from a Saved Build's flat row tuples - what lets a Load'ed
+        build use the exact same right-click Remove/Rebuild/Search Full
+        Database machinery a freshly-searched build gets, instead of
+        being a read-only snapshot. A save only ever stored the DISPLAYED
+        row text, never the underlying item objects or which internal
+        slot key (jewel_1 vs jewel_2, say) each row came from, so both
+        have to be recovered here.
+
+        Each row's own Item/Type/Spell/Level is looked back up against
+        self.master_data (exact match) to recover the real item object -
+        so Bank/Locker icons, Alt Options, and every other field stay
+        accurate. If the loaded database has since changed and nothing
+        matches, a lightweight item dict is built straight from the
+        row's own displayed text instead - plenty for Remove/exclude
+        (_bank_item_key only ever needs Item/Slot/Level) even though a
+        couple of richer fields end up blank.
+
+        A jewel/claw/edible row can't tell jewel_1 from jewel_2 apart by
+        its display text alone (both just say "Jewel") - assigned in the
+        order encountered instead, the same ambiguity _search_missing_
+        slots already lives with elsewhere; harmless since nothing else
+        in the app treats the two differently. A row whose Alt Options
+        cell reads 'Manual Input' was added via the Manual tab (see
+        _add_manual_item_to_results) rather than being a real build slot
+        - those go into their own returned list instead of the build
+        dict, so they keep working exactly like a live manual addition
+        (its own tracked "Remove" menu) once merged into self.
+        manual_optimal_items by the caller."""
+        ambiguous_next = {'jewel': 1, 'claw': 1, 'edible': 1}
+
+        master_index = {}
+        for candidate in self.master_data:
+            key = (
+                (candidate.get('Item') or '').strip(),
+                (candidate.get('Type') or '').strip(),
+                (candidate.get('Spell') or '').strip(),
+                str(candidate.get('Level') or '').strip(),
+            )
+            master_index.setdefault(key, candidate)
+
+        build = {}
+        attempted = set()
+        manual_items = []
+
+        for row in rows:
+            row = tuple(row) + ('',) * max(0, 12 - len(row))
+            if str(row[0]).startswith('█'):
+                continue
+            display_slot, item_name, item_type, spell, sigil, level, mob, area, alt_options = (
+                str(row[2]), row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[11]
+            )
+            lookup_key = (str(item_name).strip(), str(item_type).strip(),
+                         str(spell).strip(), str(level).strip())
+            found = master_index.get(lookup_key)
+
+            if alt_options == 'Manual Input':
+                item = dict(found) if found else {
+                    'Item': item_name, 'Type': item_type, 'Spell': spell, 'Sigil': sigil,
+                    'Level': level, 'Mob': mob, 'Area': area, 'Realm': '',
+                }
+                item['Slot'] = display_slot.lower()
+                manual_items.append(item)
+                continue
+
+            lookup_slot = self._SAVED_ROW_DISPLAY_TO_LOOKUP_SLOT.get(display_slot)
+            if lookup_slot is None:
+                continue  # unrecognized/corrupted save row - skip rather than guess
+
+            if lookup_slot in ambiguous_next:
+                n = ambiguous_next[lookup_slot]
+                ambiguous_next[lookup_slot] += 1
+                slot_key = f'{lookup_slot}_{n}'
+            else:
+                slot_key = lookup_slot
+
+            attempted.add(slot_key)
+            # An empty-slot placeholder row ("No suitable item found", etc.)
+            # - every real item row always has a Type and a Level, this
+            # kind of row never does (see _build_dict_to_rows).
+            if not item_type and not level:
+                continue
+
+            if found is not None:
+                build[slot_key] = found
+            else:
+                build[slot_key] = {
+                    'Item': item_name, 'Type': item_type, 'Spell': spell, 'Sigil': sigil,
+                    'Level': level, 'Mob': mob, 'Area': area, 'Realm': '',
+                    'Slot': self._SAVED_ROW_LOOKUP_TO_RAW_SLOT.get(lookup_slot, lookup_slot),
+                }
+
+        return build, attempted, manual_items
+
     def _load_saved_build_to_results(self, index):
-        """Saved Builds sub-tab's own "Load" button - copies that build's
-        rows into the Results tab exactly as they were saved, then jumps
-        there so they're immediately visible. Switches Results into 'all'
-        display mode (same as Show All Matches) rather than 'optimal',
-        since right-click Remove/Rebuild there depends on a freshly
-        computed self.build_variants that a loaded snapshot doesn't have -
-        'all' mode has no right-click action at all, which is the correct,
-        safe behavior for viewing a past save."""
+        """Saved Builds sub-tab's own "Load" button - reconstructs that
+        build's rows into a real {slot: item} build (see
+        _rebuild_build_dict_from_saved_rows) and loads it into the
+        Results tab in ordinary 'optimal' (Best Per Slot) mode, so every
+        right-click action - Remove, Search Full Database for This Slot,
+        both Rebuild options - works on a loaded build exactly like it
+        does on a freshly-searched one, instead of the previous read-only
+        'all' mode dump."""
         if not (0 <= index < len(self.saved_builds)):
             return
         save = self.saved_builds[index]
-        self.results_display_mode.set('all')
+        build, attempted, manual_items = self._rebuild_build_dict_from_saved_rows(save['rows'])
+
+        self._reset_hard_search_state()
+        self._all_combos_generator = None
+        self._all_combos_ctx = None
+        self._all_combos_pending = None
+
+        self.results_display_mode.set('optimal')
+        self.optimal_build = build
+        self.build_variants = [build]
+        self.build_variant_labels = None
+        self.attempted_slots = attempted
+        self.last_uncovered_bases = set()
+        self.last_wanted_chips_by_base = {}
+        self.manual_optimal_items = manual_items
+
+        self.build_variant_combo['values'] = ['Build 1']
+        self.build_variant_var.set('Build 1')
+        self.build_variant_combo.config(state='disabled')
+        if hasattr(self, 'load_more_combos_button'):
+            self.load_more_combos_button.pack_forget()
+
+        self.last_optimal_results = self._apply_manual_optimal_items(self._all_variants_rows())
         self.search_results_tv.delete(*self.search_results_tv.get_children())
-        for row in save['rows']:
+        for row in self.last_optimal_results:
             self.search_results_tv.insert('', 'end', values=row)
         self._autosize_results_columns()
         self.notebook.select(self.tab_results)
@@ -10239,6 +11278,307 @@ class App(tk.Tk):
 
             for row in save['rows']:
                 tv.insert('', 'end', values=row)
+
+    # ── CRAFTING TAB ──────────────────────────────────────────
+    _CRAFTING_SLOT_DISPLAY = {
+        'head': 'Head', 'cloak': 'Cloak', 'body': 'Body', 'hands': 'Hands',
+        'legs': 'Legs', 'feet': 'Feet', 'weapon': 'Weapon', 'shield': 'Shield',
+    }
+
+    @staticmethod
+    def _crafting_spell_display(spell):
+        """'strength.ii' -> 'Strength ii' for the Spell column; blank for
+        a recipe with no spell (most weapons/siege/fortification items).
+        rpartition, not partition - a spell base can itself contain a dot
+        (e.g. 'evade.enhance.ii'), so the tier is always whatever follows
+        the LAST dot, never the first."""
+        if not spell:
+            return ''
+        base, _, tier = spell.rpartition('.')
+        return f"{base.title()} {tier}" if tier else base.title()
+
+    @staticmethod
+    def _parse_crafting_materials(materials_text):
+        """'3x cloth, 1x rough ruby of strength' -> [('3', 'cloth'),
+        ('1', 'rough ruby of strength')] - reverses the formatting
+        CRAFTING_RECIPES' own materials string was built with."""
+        parts = []
+        for chunk in materials_text.split(', '):
+            qty, sep, name = chunk.partition('x ')
+            if sep:
+                parts.append((qty, name))
+        return parts
+
+    @staticmethod
+    def _crafting_material_drop_sources(material_name):
+        """Cross-references one recipe material against CRAFTING_MATERIAL_
+        SOURCES (every drop-location row from Master File.xlsx's own
+        "Enchant & Craft Mats" sheet) - substring match in either
+        direction, so a generic material name like "cloth" surfaces every
+        specific drop-able variant ("pile of cloth", "swatch of gossamer
+        cloth", ...), and a specific material name like "spool of
+        gleaming Kaidite thread" still matches the sheet's own shorter
+        item name ("gleaming Kaidite thread"). A recipe's plain by-weight
+        base materials (cloth/leather/metal/wood counted in raw pounds,
+        as opposed to a distinct drop like Kaidite flux) simply won't
+        match anything here most of the time - that's expected, not an
+        error; nothing gets shown for those."""
+        name = material_name.strip().lower()
+        if not name:
+            return []
+        return [e for e in CRAFTING_MATERIAL_SOURCES
+                if name in e['item'].lower() or e['item'].lower() in name]
+
+    def _build_crafting_recipe_tree(self, parent, recipes, group_by):
+        """Builds one Crafting sub-tab's recipe tree - see
+        _build_crafting_tab for how each sub-tab's recipes/group_by are
+        chosen. group_by controls what each row nests under:
+          'slot'     - the recipe's own wearable slot (Head/Cloak/etc,
+                       via _CRAFTING_SLOT_DISPLAY) - the armor/Infernal
+                       Armaments tabs, where slot is the useful axis
+                       ("what can I make for this slot").
+          'spell'    - spell base (Wearable Materials/jewels - each
+                       spell's Rough/Hazy/Flawless tiers nest under it).
+          'category' - the recipe's own '_category' tag (Wearable
+                       Materials' Jewels vs. Studded Leather groups,
+                       Siegecraft's combined Siege + Fortifications).
+          None       - no grouping, every recipe is its own top-level
+                       row (the 5 weapon skills and Shield Crafting,
+                       where every recipe already shares one slot and
+                       none carry a spell).
+
+        Every recipe row also gets a further nested branch, one node per
+        material that's actually a drop-able item (not just a plain
+        by-weight base material) rather than a mob drop - see
+        _crafting_material_drop_sources - with that material's own known
+        Realm/Area/Mob location(s) as its children."""
+        cols = ('Level', 'Spell', 'Materials')
+        tv_frame = ttk.Frame(parent)
+        tv_frame.pack(fill='both', expand=True)
+        tv = ttk.Treeview(tv_frame, columns=cols, show='tree headings', height=20)
+        tv.heading('#0', text='Item')
+        tv.column('#0', width=280, anchor='w')
+        for c, w in zip(cols, (55, 95, 520)):
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column_recursive(tv, c, False))
+            tv.column(c, width=w, anchor='w' if c == 'Materials' else 'center')
+        vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        tv.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        def insert_leaf(parent_iid, r):
+            item_iid = tv.insert(parent_iid, 'end', text=r['item'], values=(
+                r['level'], self._crafting_spell_display(r['spell']), r['materials']))
+            # A material that's actually a drop-able item (not just a
+            # plain by-weight base material) gets its own nested branch -
+            # one node per matched material, with its known drop
+            # location(s) (Realm - Area - Mob) as children of that.
+            for qty, name in self._parse_crafting_materials(r['materials']):
+                sources = self._crafting_material_drop_sources(name)
+                if not sources:
+                    continue
+                mat_iid = tv.insert(item_iid, 'end', text=f"📍 {name}", open=False)
+                for src in sources:
+                    location = ' - '.join(
+                        p for p in (src['realm'], src['area'], src['mob']) if p and p != 'N/A')
+                    tv.insert(mat_iid, 'end', text=src['item'],
+                             values=(src['level'], '', location))
+
+        if group_by is None:
+            for r in sorted(recipes, key=lambda r: r['level']):
+                insert_leaf('', r)
+        elif group_by == 'slot':
+            groups = {}
+            for r in recipes:
+                groups.setdefault(r.get('slot'), []).append(r)
+            for slot in sorted(groups, key=lambda s: self._CRAFTING_SLOT_DISPLAY.get(s, s or '')):
+                label = self._CRAFTING_SLOT_DISPLAY.get(slot, (slot or 'Other').title())
+                parent_iid = tv.insert('', 'end', text=label, open=False)
+                for r in sorted(groups[slot], key=lambda r: r['level']):
+                    insert_leaf(parent_iid, r)
+        elif group_by == 'spell':
+            groups = {}
+            for r in recipes:
+                # rsplit, not split - see _crafting_spell_display's own
+                # comment: the base itself can contain a dot.
+                base = (r['spell'] or '').rsplit('.', 1)[0]
+                groups.setdefault(base, []).append(r)
+            for base in sorted(groups):
+                parent_iid = tv.insert('', 'end', text=base.title(), open=False)
+                for r in sorted(groups[base], key=lambda r: r['level']):
+                    insert_leaf(parent_iid, r)
+        elif group_by == 'category':
+            groups = {}
+            for r in recipes:
+                groups.setdefault(r.get('_category', ''), []).append(r)
+            for cat in sorted(groups):
+                parent_iid = tv.insert('', 'end', text=cat, open=False)
+                for r in sorted(groups[cat], key=lambda r: r['level']):
+                    insert_leaf(parent_iid, r)
+
+        return tv
+
+    def _build_crafting_tab(self):
+        """Crafting main tab - three top-level sub-tabs: Equipment (a
+        repository of crafting recipes, grouped Armor/Weapon/Infernal
+        Armaments/Materials - see CRAFTING_RECIPES's own module-level
+        comment for where this data came from), Siegecraft, and Enchants
+        (see CRAFTING_ENCHANTS) covering where to find Weapon/Armor/Sigil
+        enchant materials, grouped by realm. Framework only for now - far
+        from every material/recipe in the game is captured yet; more
+        gets folded into CRAFTING_RECIPES/CRAFTING_ENCHANTS as it's
+        learned, without needing any change here."""
+        outer = self.tab_crafting
+        ttk.Label(outer, text="Crafting", font=('Arial', 13, 'bold')).pack(anchor='w', pady=(0, 10))
+
+        inner_nb = ttk.Notebook(outer)
+        inner_nb.pack(fill='both', expand=True)
+        self._track_notebook_selected_tab_height(inner_nb, track_resize=False)
+
+        def add_group_tab(nb, title):
+            """One sub-tab of `nb` that's itself a small notebook of
+            per-skill recipe trees (Armor/Weapon/Materials) - returns
+            that inner notebook for add_skill_tab to add into."""
+            frame = ttk.Frame(nb, padding=10)
+            nb.add(frame, text=title)
+            group_nb = ttk.Notebook(frame)
+            group_nb.pack(fill='both', expand=True)
+            return group_nb
+
+        def add_skill_tab(nb, title, recipes, group_by):
+            frame = ttk.Frame(nb, padding=6)
+            nb.add(frame, text=title)
+            self._build_crafting_recipe_tree(frame, recipes, group_by)
+
+        # Equipment - one top-level tab holding Armor/Weapon/Infernal
+        # Armaments/Materials together, since all four are "what gear can
+        # I make" in one way or another; Siegecraft and Enchants stay
+        # separate top-level tabs (neither is about wearable/wielded gear).
+        equipment_nb = add_group_tab(inner_nb, 'Equipment')
+
+        # Armor - one Equipment sub-tab holding a sub-tab per material.
+        # Wearable (slot != None) recipes only; a material's own
+        # raw-ingredient recipes (e.g. Studded's "square of X studded
+        # leather") live under Materials instead, alongside jewels - both
+        # are "materials needed to make wearable gear", not gear themselves.
+        armor_nb = add_group_tab(equipment_nb, 'Armor')
+        for material in ('Cloth', 'Leather', 'Studded', 'Plate'):
+            wearable = [r for r in CRAFTING_RECIPES[material] if r.get('slot')]
+            add_skill_tab(armor_nb, material, wearable, 'slot')
+
+        # Weapon - one Equipment sub-tab holding a sub-tab per weapon
+        # skill, plus Shield Crafting alongside them (per the user's own
+        # "include shields win weapon tab"). Every recipe here already
+        # shares one slot and none carry a spell, so a flat level-sorted
+        # list (no grouping) is all that's useful per sub-tab.
+        weapon_nb = add_group_tab(equipment_nb, 'Weapon')
+        for skill in ('Crushing Weapon', 'Slashing Weapon', 'Thrusting Weapon',
+                      'Fired Weapon', 'Magical Weapon', 'Shield Crafting'):
+            add_skill_tab(weapon_nb, skill, CRAFTING_RECIPES[skill], None)
+
+        # Left alone as its own Equipment sub-tab, not folded into Armor/
+        # Weapon - it mixes both (bows are weapons, cloaks are armor) and
+        # the user asked to leave it be.
+        infernal_frame = ttk.Frame(equipment_nb, padding=10)
+        equipment_nb.add(infernal_frame, text='Infernal Armaments')
+        self._build_crafting_recipe_tree(infernal_frame, CRAFTING_RECIPES['Infernal Armaments'], 'slot')
+
+        # Materials - jewels (Rough/Hazy/Flawless, grouped by spell) plus
+        # any non-jewel ingredient recipes for wearable gear (currently
+        # just Studded's material squares) - "we will have other items
+        # that will be needed for this" per the original request, so this
+        # tab's own sub-tabs are where a future material (e.g. a
+        # leather-tanning or metal-forging step) would get added
+        # alongside Jewels, without touching this method.
+        materials_nb = add_group_tab(equipment_nb, 'Materials')
+        jewels = [dict(r, _category='Jewels') for r in CRAFTING_RECIPES['Gem Cutting']]
+        studded_mats = [dict(r, _category='Studded Leather')
+                        for r in CRAFTING_RECIPES['Studded'] if not r.get('slot')]
+        add_skill_tab(materials_nb, 'Jewels', jewels, 'spell')
+        add_skill_tab(materials_nb, 'Studded Leather', studded_mats, None)
+
+        # Siegecraft and Fortifications are two separate in-game skills
+        # but share one tab here (grouped by their own '_category' tag)
+        # since the original request only described one Siegecraft tab.
+        siege_combined = (
+            [dict(r, _category='Siegecraft') for r in CRAFTING_RECIPES['Siegecraft']]
+            + [dict(r, _category='Fortifications') for r in CRAFTING_RECIPES['Fortifications']]
+        )
+        siege_frame = ttk.Frame(inner_nb, padding=10)
+        inner_nb.add(siege_frame, text='Siegecraft')
+        self._build_crafting_recipe_tree(siege_frame, siege_combined, 'category')
+
+        # Enchants - where to find Weapon/Armor/Sigil enchant materials,
+        # grouped by Realm then category. A different schema from a
+        # crafting recipe (this is "where does this drop", not "what
+        # does this item need"), so it gets its own tree builder rather
+        # than reusing _build_crafting_recipe_tree.
+        enchants_frame = ttk.Frame(inner_nb, padding=10)
+        inner_nb.add(enchants_frame, text='Enchants')
+        self._build_crafting_enchants_tree(enchants_frame, CRAFTING_ENCHANTS)
+
+    @staticmethod
+    def _enchant_sigil_element(use_display):
+        # 'Embed Shock Sigil ii' -> 'shock'; 'Shock Protect Sigil ii' -> 'shock'
+        words = use_display.lower().split()
+        return words[1] if words[0] == 'embed' else words[0]
+
+    def _build_crafting_enchants_tree(self, parent, entries):
+        """Enchants sub-tab - where to find Weapon/Armor/Sigil enchant
+        materials, grouped Realm -> Category (Weapon/Armor/Sigil), sorted
+        by tier/level within each.
+
+        A Kaid Sigil entry doesn't get its own Kaid/Sigil branch - Evil/
+        Good/Chaos each specialize in exactly 2 of the 6 elements at
+        lower tiers, and Kaid is just where every element continues past
+        that realm's own top tier (see CRAFTING_ENCHANTS's own module-
+        level comment), so a Kaid Sigil is grouped under whichever of
+        those three realms actually specializes in its element instead -
+        its own Note column flags it as "From Kaid" so it's still clear
+        where it actually drops despite living under a different realm's
+        branch. Kaid's Weapon/Armor entries have no element to regroup
+        by, so those stay under Kaid as normal."""
+        cols = ('Use', 'Level', 'Mob', 'Area', 'Note')
+        tv_frame = ttk.Frame(parent)
+        tv_frame.pack(fill='both', expand=True)
+        tv = ttk.Treeview(tv_frame, columns=cols, show='tree headings', height=20)
+        tv.heading('#0', text='Item')
+        tv.column('#0', width=220, anchor='w')
+        for c, w in zip(cols, (170, 50, 160, 160, 210)):
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column_recursive(tv, c, False))
+            tv.column(c, width=w, anchor='w' if c in ('Mob', 'Area', 'Note') else 'center')
+        vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        tv.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        element_home_realm = {}
+        for e in entries:
+            if e['category'] == 'Sigil' and e['realm'] != 'Kaid':
+                element_home_realm.setdefault(self._enchant_sigil_element(e['use_display']), e['realm'])
+
+        by_realm = {}
+        for e in entries:
+            group_realm = e['realm']
+            if e['category'] == 'Sigil' and e['realm'] == 'Kaid':
+                group_realm = element_home_realm.get(self._enchant_sigil_element(e['use_display']), 'Kaid')
+            by_realm.setdefault(group_realm, {}).setdefault(e['category'], []).append(e)
+
+        # Evil/Good/Chaos/Kaid - the same left-to-right order used
+        # everywhere else in this app's own realm checkboxes.
+        realm_order = ['Evil', 'Good', 'Chaos', 'Kaid']
+        for realm in sorted(by_realm, key=lambda r: realm_order.index(r) if r in realm_order else 99):
+            realm_iid = tv.insert('', 'end', text=realm, open=False)
+            for category in ('Weapon', 'Armor', 'Sigil'):
+                items = by_realm[realm].get(category)
+                if not items:
+                    continue
+                cat_iid = tv.insert(realm_iid, 'end', text=category, open=False)
+                for e in sorted(items, key=lambda e: (e['level'], e['item'])):
+                    tv.insert(cat_iid, 'end', text=e['item'], values=(
+                        e['use_display'], e['level'], e['mob'] or '', e['area'] or '', e['note']))
+
+        return tv
 
     # ── AREA ITEMS TAB ────────────────────────────────────────
     def _build_area_items_tab(self):
