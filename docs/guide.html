@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v7.0.0</p>
+    <p class="tagline">Full usage guide - v7.1.0</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -381,10 +381,15 @@
     <ul>
       <li><b>Equipment</b> - itself a small notebook:
         <ul>
-          <li><b>Armor</b> - Cloth/Leather/Studded/Plate, each its own sub-tab, recipes grouped by slot (Head/Cloak/Body/Hands/Legs/Feet).</li>
-          <li><b>Weapon</b> - all 5 weapon-crafting skills (Crushing/Slashing/Thrusting/Fired/Magical) plus Shield Crafting, each a flat level-sorted list.</li>
+          <li><b>Armor</b> - Cloth/Leather/Studded/Plate, each its own sub-tab, recipes grouped by slot (Head/Cloak/Body/Hands/Legs/Feet), then by spell within each slot.</li>
+          <li><b>Weapon</b> - itself a small notebook:
+            <ul>
+              <li><b>Crushing/Slashing/Thrusting/Fired Weapon</b> - each grouped into One-Handed and Two-Handed branches.</li>
+              <li><b>Magical Weapon</b> - three branches: <b>Has Spell</b> (grouped by element - Fire/Cold/Lightning/Earth/Water, with any proc that doesn't map to a real element falling back to Physical), <b>No Spell</b>, and <b>Parry Staff</b> (Shield Crafting's full recipe list, folded in here and grouped by slot then spell - there's no separate Shield Crafting sub-tab anymore).</li>
+              <li><b>Materials</b> - base-material "quality" variants used in weapon crafting: Jewels (jewel-cutting recipes, grouped by spell), Leather (with a nested Studded branch for its own recipes/materials), Cloth, Plate, and Weapons (Wood and Metal branches; Kaidite flux, Kaidite oil, and tough sinew stay ungrouped at the top since none of those are wood or metal). Each material name expands to its real mob drop location(s).</li>
+            </ul>
+          </li>
           <li><b>Infernal Armaments</b> - left as its own sub-tab since it mixes both weapons and armor pieces.</li>
-          <li><b>Materials</b> - jewel-cutting recipes (Rough/Hazy/Flawless, grouped by spell) plus any raw-material recipe needed for wearable gear (currently just Studded's own "square of X studded leather" steps).</li>
         </ul>
       </li>
       <li><b>Siegecraft</b> - Siegecraft and Fortifications recipes together, grouped under those two headers.</li>

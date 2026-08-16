@@ -140,7 +140,14 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.0.0 (Current)
+### v7.1.0 (Current)
+- **Crafting tab refinements**, all within Equipment:
+  - **Weapon** crafting skills (Crushing/Slashing/Thrusting/Fired) now group recipes into **One-Handed**/**Two-Handed** branches instead of a plain level-sorted list.
+  - **Magical Weapon** now has three branches: **Has Spell** (grouped by element - Fire/Cold/Lightning/Earth/Water, with unmatched procs falling back to Physical), **No Spell**, and **Parry Staff** (Shield Crafting's full recipe list, folded in here and grouped by slot then spell - Shield Crafting is no longer a separate sub-tab).
+  - **Armor** (Cloth/Leather/Studded/Plate) now groups recipes by slot, then by spell within each slot, instead of a flat per-slot list.
+  - Added a new **Materials** sub-tab under Weapon, listing every base-material "quality" variant (Cloth/Leather/Plate materials, plus Wood and Metal for Weapons) sourced from the master file's own ingredient list, each with its real mob drop location(s) nested underneath. Weapons' own Materials tab groups those into **Wood** and **Metal** branches; Kaidite flux, Kaidite oil, and tough sinew stay ungrouped since they're none of the above.
+
+### v7.0.0
 - Added a new top-level **Crafting** tab - a repository of crafting recipes and material sources, organized into:
   - **Equipment** - Armor (Cloth/Leather/Studded/Plate, each grouped by slot), Weapon (all 5 weapon-crafting skills plus Shield Crafting), Infernal Armaments, and Materials (jewel-cutting recipes grouped by spell, plus Studded's own raw-material recipes).
   - **Siegecraft** - Siegecraft and Fortifications recipes together.
