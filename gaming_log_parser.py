@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.1.1"
+VERSION = "7.1.2"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -11846,10 +11846,22 @@ class App(tk.Tk):
         words = use_display.lower().split()
         return words[1] if words[0] == 'embed' else words[0]
 
+    @staticmethod
+    def _enchant_sigil_kind(use_display):
+        # A Sigil's own use_display is always either 'Embed <Element> Sigil
+        # <tier>' (embeds elemental damage into a weapon) or '<Element>
+        # Protect Sigil <tier>' (a defensive ward - goes on armor) - every
+        # one of CRAFTING_ENCHANTS's own 67 Sigil entries fits one of
+        # these two shapes with no exceptions.
+        return 'Weapon Sigil' if use_display.lower().startswith('embed ') else 'Armor Sigil'
+
     def _build_crafting_enchants_tree(self, parent, entries):
         """Enchants sub-tab - where to find Weapon/Armor/Sigil enchant
-        materials, grouped Realm -> Category (Weapon/Armor/Sigil), sorted
-        by tier/level within each.
+        materials, grouped Realm -> Category (Weapon/Armor/Weapon Sigil/
+        Armor Sigil), sorted by tier/level within each. A Sigil entry's
+        own use_display text (Embed vs Protect - see
+        _enchant_sigil_kind) determines which of the two Sigil branches
+        it lands under.
 
         A Kaid Sigil entry doesn't get its own Kaid/Sigil branch - Evil/
         Good/Chaos each specialize in exactly 2 of the 6 elements at
@@ -11885,14 +11897,15 @@ class App(tk.Tk):
             group_realm = e['realm']
             if e['category'] == 'Sigil' and e['realm'] == 'Kaid':
                 group_realm = element_home_realm.get(self._enchant_sigil_element(e['use_display']), 'Kaid')
-            by_realm.setdefault(group_realm, {}).setdefault(e['category'], []).append(e)
+            group_category = self._enchant_sigil_kind(e['use_display']) if e['category'] == 'Sigil' else e['category']
+            by_realm.setdefault(group_realm, {}).setdefault(group_category, []).append(e)
 
         # Evil/Good/Chaos/Kaid - the same left-to-right order used
         # everywhere else in this app's own realm checkboxes.
         realm_order = ['Evil', 'Good', 'Chaos', 'Kaid']
         for realm in sorted(by_realm, key=lambda r: realm_order.index(r) if r in realm_order else 99):
             realm_iid = tv.insert('', 'end', text=realm, open=False)
-            for category in ('Weapon', 'Armor', 'Sigil'):
+            for category in ('Weapon', 'Armor', 'Weapon Sigil', 'Armor Sigil'):
                 items = by_realm[realm].get(category)
                 if not items:
                     continue
