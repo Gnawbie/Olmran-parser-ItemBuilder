@@ -21,11 +21,70 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.2.0"
+VERSION = "7.3.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
 GITHUB_REPO = "Gnawbie/Olmran-parser-ItemBuilder"
+
+# Dark Mode (see App._apply_theme/_build_update_bar's toggle button) - a
+# single named-role palette per theme, applied two ways: (1) a global
+# ttk.Style reconfiguration covering every stock ttk widget class used
+# anywhere in the app (Frame/Label/Button/Notebook/Entry/Combobox/
+# Treeview/Checkbutton/Radiobutton/Labelframe/Scrollbar/Separator, plus
+# this file's own custom WeaponRow/WeaponRowAlt/Accent styles) - this
+# alone covers the large majority of the UI automatically; (2)
+# _restyle_widget_recursive walks the entire live widget tree for the
+# two things ttk.Style can't reach: plain tk widgets that never follow
+# ttk theming at all (Text/Listbox/Canvas/Menu/Toplevel - explicitly
+# pushed to the palette's bg/fg), and any individual ttk widget that was
+# given an explicit hardcoded foreground/background color at creation
+# time (this file has ~80 such spots, mostly muted status-text grays and
+# a couple of hyperlink blues/status reds/greens) - _LIGHT_TO_DARK_FG_
+# REMAP maps each such light-mode literal to a dark-mode-readable
+# equivalent, applied to any widget whose CURRENT foreground/background
+# matches a known light-mode value, so those ~80 call sites never had to
+# be touched individually.
+LIGHT_PALETTE = {
+    'bg': '#f0f0f0', 'fg': '#000000',
+    'entry_bg': '#ffffff', 'entry_fg': '#000000',
+    'tree_bg': '#ffffff', 'tree_fg': '#000000',
+    'tree_selected_bg': '#0078d7', 'tree_selected_fg': '#ffffff',
+    'button_bg': '#e1e1e1', 'button_active_bg': '#d5d5d5',
+    'tab_bg': '#d9d9d9', 'tab_selected_bg': '#f0f0f0',
+    'border': '#888888', 'border_subtle': '#bbbbbb',
+    'select_bg': '#0078d7', 'select_fg': '#ffffff',
+}
+DARK_PALETTE = {
+    'bg': '#2b2b2b', 'fg': '#e0e0e0',
+    'entry_bg': '#3c3f41', 'entry_fg': '#e0e0e0',
+    'tree_bg': '#313335', 'tree_fg': '#e0e0e0',
+    'tree_selected_bg': '#3a6ea5', 'tree_selected_fg': '#ffffff',
+    'button_bg': '#454545', 'button_active_bg': '#565656',
+    'tab_bg': '#3c3f41', 'tab_selected_bg': '#2b2b2b',
+    'border': '#666666', 'border_subtle': '#3a3a3a',
+    'select_bg': '#3a6ea5', 'select_fg': '#ffffff',
+}
+# {light-mode hex literal (lowercase): dark-mode equivalent} - covers
+# every distinct hardcoded foreground/background color this file uses
+# (see the module comment above). Muted grays get progressively lighter
+# in the same rank order they were progressively darker in light mode
+# (readability need is the same, just inverted); link/status colors get
+# a brighter variant with equivalent hue for dark-background contrast.
+_LIGHT_TO_DARK_FG_REMAP = {
+    '#222': '#eeeeee', '#222222': '#eeeeee',
+    '#444': '#dddddd', '#444444': '#dddddd',
+    '#555': '#cccccc', '#555555': '#cccccc',
+    '#666': '#bbbbbb', '#666666': '#bbbbbb',
+    '#888': '#999999', '#888888': '#777777',
+    '#bbbbbb': '#3a3a3a',
+    '#dcdad5': '#3a3a3a',
+    '#a33': '#ef5350', '#a33333': '#ef5350',
+    '#2a2': '#66bb6a', '#226622': '#66bb6a',
+    '#ff0000': '#ff6b6b',
+    '#0645ad': '#8ab4f8',
+    '#2a6bb2': '#6fa8dc',
+}
 
 # The two distributed .exe flavors (see OlmranItemBuilder.spec vs
 # OlmranItemBuilder_Folder.spec) are told apart at runtime by whether a
@@ -2713,15 +2772,20 @@ CRAFTING_MATERIAL_SOURCES = [
 
 
 def _build_crafting_material_lookup():
-    """{lowercase item name: [{'realm','area','mob','level'}, ...]} merging
-    CRAFTING_MATERIAL_SOURCES and CRAFTING_ENCHANTS (both share the same
-    item/realm/area/mob/level shape) - the Bank Build Mats tab's own
-    source of truth for which pasted Inventory-listing item names are
-    recognized crafting/enchant materials, and every real-world location
-    each one drops (a name can appear more than once across either list,
-    e.g. the same material dropping from different mobs - every location
-    is kept, not just the first). Computed once at import time since both
-    source lists are static module data, never rebuilt at runtime."""
+    """{lowercase item name: [{'realm','area','mob','level','use_display'},
+    ...]} merging CRAFTING_MATERIAL_SOURCES and CRAFTING_ENCHANTS (both
+    share the same item/realm/area/mob/level shape) - the Bank Build Mats
+    tab's own source of truth for which pasted Inventory-listing item
+    names are recognized crafting/enchant materials, and every real-world
+    location each one drops (a name can appear more than once across
+    either list, e.g. the same material dropping from different mobs -
+    every location is kept, not just the first). use_display is only
+    ever set for a CRAFTING_ENCHANTS entry (its own real recipe/enchant
+    use, e.g. "Enchant Weapon v"/"Embed Cold Sigil iv") - blank for a
+    CRAFTING_MATERIAL_SOURCES-only material (a generic base ingredient
+    with no single specific use captured). Computed once at import time
+    since both source lists are static module data, never rebuilt at
+    runtime."""
     lookup = {}
     for entries in (CRAFTING_MATERIAL_SOURCES, CRAFTING_ENCHANTS):
         for e in entries:
@@ -2729,7 +2793,8 @@ def _build_crafting_material_lookup():
             if not name:
                 continue
             loc = {'realm': e.get('realm') or '', 'area': e.get('area') or '',
-                   'mob': e.get('mob') or '', 'level': e.get('level') or ''}
+                   'mob': e.get('mob') or '', 'level': e.get('level') or '',
+                   'use_display': e.get('use_display') or ''}
             if loc not in lookup.setdefault(name, []):
                 lookup[name].append(loc)
     return lookup
@@ -3154,10 +3219,15 @@ class LogFileViewer(tk.Toplevel):
             return
 
         text.insert('1.0', content)
-        text.tag_configure('highlight', background='#fff59d')
+        # foreground='black' pinned explicitly on both tags - a light
+        # pastel highlight background reads fine with dark text
+        # regardless of Dark Mode (which would otherwise make this
+        # Text widget's own base text color light, illegible against
+        # these same light tag backgrounds).
+        text.tag_configure('highlight', background='#fff59d', foreground='black')
         # A different color from 'highlight' above (the originally-opened
         # target line) so a search match is never confused with it.
-        text.tag_configure('search_match', background='#ffb74d')
+        text.tag_configure('search_match', background='#ffb74d', foreground='black')
         line_start = f"{line_num}.0"
         text.tag_add('highlight', line_start, f"{line_num}.end")
         text.config(state='disabled')
@@ -3414,6 +3484,13 @@ class App(tk.Tk):
 
         # Auto-load the bundled community equipment list on startup, if present
         self._auto_load_community_list()
+
+        # Applied last, once every widget already exists - _apply_theme's
+        # own recursive half needs the full tree built to walk it. A no-op
+        # if dark mode wasn't on last session (defaults to the light
+        # theme _build_ui's own ttk.Style call already set up).
+        if self.dark_mode_var.get():
+            self._apply_theme()
         self._suppress_config_saves = False
 
         # Save config on close
@@ -3506,6 +3583,7 @@ class App(tk.Tk):
                     self.last_save_dir = config.get('last_save_dir', os.path.expanduser("~"))
                     self.armor_defaults = config.get('armor_defaults', {})
                     self.weapon_combo_defaults = config.get('weapon_combo_defaults', {})
+                    self._persisted_dark_mode = config.get('dark_mode', False)
                     # Raw data only (no tk.StringVar yet - the Saved Builds tab
                     # isn't built until later in __init__) - _build_saved_builds_tab
                     # turns this into self.saved_builds.
@@ -3614,6 +3692,7 @@ class App(tk.Tk):
                 self._persisted_counters_file_rows = COUNTERS_FILE_LIST_DEFAULT_ROWS
                 self._persisted_locker_groups = []
                 self._persisted_locker_group_counter = 0
+                self._persisted_dark_mode = False
         except Exception:
             self.last_open_dir = os.path.expanduser("~")
             self.last_save_dir = os.path.expanduser("~")
@@ -3638,6 +3717,7 @@ class App(tk.Tk):
             self._persisted_counters_file_rows = COUNTERS_FILE_LIST_DEFAULT_ROWS
             self._persisted_locker_groups = []
             self._persisted_locker_group_counter = 0
+            self._persisted_dark_mode = False
 
     def _save_config(self):
         """Save configuration to file"""
@@ -3656,6 +3736,7 @@ class App(tk.Tk):
                 'last_save_dir': self.last_save_dir,
                 'armor_defaults': getattr(self, 'armor_defaults', {}),
                 'weapon_combo_defaults': getattr(self, 'weapon_combo_defaults', {}),
+                'dark_mode': bool(getattr(self, 'dark_mode_var', None) and self.dark_mode_var.get()),
                 'saved_builds': [
                     {'name': save['name'].get(), 'headers': list(save['headers']),
                      'rows': [list(row) for row in save['rows']]}
@@ -3802,6 +3883,15 @@ class App(tk.Tk):
 
         button_row = ttk.Frame(bar)
         button_row.pack(side='top', anchor='e')
+        # Persisted (see _load_config/_save_config's own 'dark_mode' key) -
+        # applied once at the end of __init__ if it was on last session,
+        # after every widget already exists (see _apply_theme's own
+        # docstring for why toggling always works on a fully-built tree
+        # instead of needing this button built first).
+        self.dark_mode_var = tk.BooleanVar(value=getattr(self, '_persisted_dark_mode', False))
+        self.dark_mode_button = ttk.Button(button_row, text="Dark Mode",
+                                           command=self._toggle_dark_mode)
+        self.dark_mode_button.pack(side='left', padx=(0,8))
         ttk.Button(button_row, text="Download Page",
                   command=self._open_download_page).pack(side='left', padx=(0,8))
         self.update_check_button = ttk.Button(button_row, text="Check for Update",
@@ -3838,6 +3928,155 @@ class App(tk.Tk):
         download and install a new version manually instead of using
         Check for Update's self-updater."""
         webbrowser.open("https://gnawbie.github.io/Olmran-parser-ItemBuilder/")
+
+    def _toggle_dark_mode(self):
+        """"Dark Mode" button - flips self.dark_mode_var and re-applies the
+        theme immediately (see _apply_theme), then persists the choice so
+        it's remembered next launch."""
+        self.dark_mode_var.set(not self.dark_mode_var.get())
+        self._apply_theme()
+        self._save_config()
+
+    def _apply_theme(self):
+        """Switches the whole app between LIGHT_PALETTE and DARK_PALETTE
+        (see self.dark_mode_var) - live, no restart needed. Two parts:
+
+        1. A global ttk.Style reconfiguration covering every stock ttk
+           widget class this file actually uses. This alone re-colors the
+           large majority of the UI, since almost everything is a ttk
+           widget pulling its colors from the current style.
+        2. _restyle_widget_recursive walks the entire live widget tree
+           for the two things step 1 can't reach: plain tk widgets that
+           never follow ttk theming at all (Text/Listbox/Canvas -
+           explicitly pushed to the palette), and any individual ttk
+           widget that was given an explicit hardcoded foreground/
+           background color at creation time (see _LIGHT_TO_DARK_FG_
+           REMAP's own module comment) - remapped only if its CURRENT
+           color matches a known light-mode literal, so toggling back to
+           light mode later correctly reverses it via the same table
+           (built as a two-way lookup below) rather than needing a
+           separate light-mode remap table maintained in parallel.
+
+        tk.Menu (this file's own right-click context menus) and a
+        TCombobox's popdown Listbox are never part of the widget tree
+        _restyle_widget_recursive walks (a popup Menu isn't a real child
+        of anything in the geometry sense, and a Combobox's dropdown
+        Listbox is a separate top-level Tk creates on demand) - both are
+        instead colored via self.option_add, which sets a default in
+        Tk's own option database consulted at CREATION time, covering
+        every menu/popdown created from this point on automatically,
+        including ones that don't exist yet (every one of this file's
+        ~10 right-click menus is built fresh per click, well after this
+        runs)."""
+        dark = self.dark_mode_var.get()
+        p = DARK_PALETTE if dark else LIGHT_PALETTE
+
+        style = ttk.Style(self)
+        style.theme_use('clam')
+        style.configure('.', background=p['bg'], foreground=p['fg'],
+                        fieldbackground=p['entry_bg'])
+        style.configure('TFrame', background=p['bg'])
+        style.configure('TLabel', background=p['bg'], foreground=p['fg'])
+        style.configure('TButton', background=p['button_bg'], foreground=p['fg'])
+        style.map('TButton', background=[('active', p['button_active_bg'])])
+        style.configure('Accent.TButton', font=('Arial', 10, 'bold'),
+                        background=p['button_bg'], foreground=p['fg'])
+        style.map('Accent.TButton', background=[('active', p['button_active_bg'])])
+        style.configure('TCheckbutton', background=p['bg'], foreground=p['fg'])
+        style.map('TCheckbutton', background=[('active', p['bg'])])
+        style.configure('TRadiobutton', background=p['bg'], foreground=p['fg'])
+        style.map('TRadiobutton', background=[('active', p['bg'])])
+        style.configure('TNotebook', background=p['bg'], bordercolor=p['border'])
+        style.configure('TNotebook.Tab', font=('Arial', 10, 'bold'), padding=[12, 6],
+                        background=p['tab_bg'], foreground=p['fg'])
+        style.map('TNotebook.Tab',
+                 background=[('selected', p['tab_selected_bg'])],
+                 foreground=[('selected', p['fg'])])
+        style.configure('TEntry', fieldbackground=p['entry_bg'], foreground=p['entry_fg'],
+                        insertcolor=p['entry_fg'])
+        style.configure('TCombobox', fieldbackground=p['entry_bg'], foreground=p['entry_fg'],
+                        background=p['button_bg'], arrowcolor=p['fg'])
+        style.map('TCombobox', fieldbackground=[('readonly', p['entry_bg'])],
+                 foreground=[('readonly', p['entry_fg'])])
+        style.configure('Treeview', background=p['tree_bg'], fieldbackground=p['tree_bg'],
+                        foreground=p['tree_fg'])
+        style.configure('Treeview.Heading', background=p['button_bg'], foreground=p['fg'])
+        style.map('Treeview.Heading', background=[('active', p['button_active_bg'])])
+        style.map('Treeview',
+                 background=[('selected', p['tree_selected_bg'])],
+                 foreground=[('selected', p['tree_selected_fg'])])
+        style.configure('TLabelframe', background=p['bg'], foreground=p['fg'],
+                        bordercolor=p['border'])
+        style.configure('TLabelframe.Label', background=p['bg'], foreground=p['fg'])
+        style.configure('TScrollbar', background=p['button_bg'], troughcolor=p['bg'],
+                        arrowcolor=p['fg'])
+        style.configure('TSeparator', background=p['border'])
+        style.configure('TPanedwindow', background=p['bg'])
+        style.configure('WeaponRow.TFrame', borderwidth=1, relief='solid',
+                        bordercolor=p['border'], background=p['bg'])
+        style.configure('WeaponRowAlt.TFrame', borderwidth=1, relief='solid',
+                        bordercolor=p['border_subtle'], background=p['bg'])
+
+        # Menu popups and a Combobox's own popdown Listbox - see this
+        # method's own docstring for why option_add (not the recursive
+        # walker) is what reaches these.
+        self.option_add('*Menu.background', p['bg'])
+        self.option_add('*Menu.foreground', p['fg'])
+        self.option_add('*Menu.activeBackground', p['select_bg'])
+        self.option_add('*Menu.activeForeground', p['select_fg'])
+        self.option_add('*TCombobox*Listbox.background', p['entry_bg'])
+        self.option_add('*TCombobox*Listbox.foreground', p['entry_fg'])
+        self.option_add('*TCombobox*Listbox.selectBackground', p['select_bg'])
+        self.option_add('*TCombobox*Listbox.selectForeground', p['select_fg'])
+
+        self.configure(bg=p['bg'])
+        fg_remap = ({v: k for k, v in _LIGHT_TO_DARK_FG_REMAP.items()} if not dark
+                   else _LIGHT_TO_DARK_FG_REMAP)
+        self._restyle_widget_recursive(self, p, fg_remap)
+
+    def _restyle_widget_recursive(self, widget, palette, fg_remap):
+        """Recursively walks `widget`'s entire subtree, restyling the two
+        things ttk.Style can't reach on its own - see _apply_theme's own
+        docstring. fg_remap is a one-directional {old hex: new hex} map,
+        already flipped by the caller for a light<-dark toggle vs. a
+        dark<-light one, so this method itself never needs to know which
+        direction is currently active."""
+        cls = widget.winfo_class()
+        try:
+            if cls in ('Frame', 'Toplevel'):
+                widget.configure(background=palette['bg'])
+            elif cls == 'Canvas':
+                widget.configure(background=palette['bg'], highlightbackground=palette['bg'])
+            elif cls == 'Text':
+                widget.configure(background=palette['entry_bg'], foreground=palette['entry_fg'],
+                                 insertbackground=palette['entry_fg'],
+                                 selectbackground=palette['select_bg'],
+                                 selectforeground=palette['select_fg'])
+            elif cls == 'Listbox':
+                widget.configure(background=palette['entry_bg'], foreground=palette['entry_fg'],
+                                 selectbackground=palette['select_bg'],
+                                 selectforeground=palette['select_fg'])
+        except tk.TclError:
+            pass  # a handful of frames (e.g. the border-mask strips) have no such option
+
+        # Any widget (ttk or plain tk) that was given an explicit
+        # foreground/background color at creation time overrides
+        # whatever the style/class default above would otherwise show -
+        # remap it if it currently matches a known light<->dark literal.
+        for option in ('foreground', 'background'):
+            try:
+                current = str(widget.cget(option)).lower()
+            except tk.TclError:
+                continue
+            remapped = fg_remap.get(current)
+            if remapped:
+                try:
+                    widget.configure(**{option: remapped})
+                except tk.TclError:
+                    pass
+
+        for child in widget.winfo_children():
+            self._restyle_widget_recursive(child, palette, fg_remap)
 
     @staticmethod
     def _version_tuple(v):
@@ -10310,12 +10549,12 @@ class App(tk.Tk):
                  "game yet.", foreground='#666', wraplength=760, justify='left').pack(anchor='w', pady=(0,8))
         bank_mats_tree_frame = ttk.Frame(bank_mats_tab)
         bank_mats_tree_frame.pack(fill='both', expand=True)
-        mats_cols = ('Item', 'Character', 'Count', 'Level', 'Realm', 'Area', 'Mob', 'Note')
+        mats_cols = ('Item', 'Character', 'Count', 'Level', 'Realm', 'Area', 'Mob', 'Use', 'Note')
         mats_col_widths = {'Item': 220, 'Character': 100, 'Count': 55, 'Level': 50, 'Realm': 80,
-                           'Area': 220, 'Mob': 220, 'Note': 70}
+                           'Area': 220, 'Mob': 220, 'Use': 150, 'Note': 70}
         self.bank_mats_tv = ttk.Treeview(bank_mats_tree_frame, columns=mats_cols, show='headings', height=20)
         for col in mats_cols:
-            heading_anchor = 'w' if col in ('Item', 'Character', 'Area', 'Mob') else 'center'
+            heading_anchor = 'w' if col in ('Item', 'Character', 'Area', 'Mob', 'Use') else 'center'
             self.bank_mats_tv.heading(col, text=col, anchor=heading_anchor,
                                       command=lambda c=col: _sort_treeview_column(self.bank_mats_tv, c, False))
             self.bank_mats_tv.column(col, width=mats_col_widths[col], stretch=False, anchor=heading_anchor)
@@ -11756,10 +11995,10 @@ class App(tk.Tk):
                        or none at all, making that the useful first
                        split rather than slot (always Slot=weapon here)
                        or hands.
-          'spell'    - spell base (Wearable Materials/jewels - each
+          'spell'    - spell base (Wearable Materials/Gems - each
                        spell's Rough/Hazy/Flawless tiers nest under it).
           'category' - the recipe's own '_category' tag (Wearable
-                       Materials' Jewels vs. Studded Leather groups,
+                       Materials' Gems vs. Studded Leather groups,
                        Siegecraft's combined Siege + Fortifications).
           None       - no grouping, every recipe is its own top-level
                        row (none of the current sub-tabs use this
@@ -11986,7 +12225,7 @@ class App(tk.Tk):
         equipment_nb.add(infernal_frame, text='Infernal Armaments')
         self._build_crafting_recipe_tree(infernal_frame, CRAFTING_RECIPES['Infernal Armaments'], 'slot')
 
-        # Materials - jewels (Rough/Hazy/Flawless, grouped by spell), the
+        # Materials - Gems (Rough/Hazy/Flawless, grouped by spell), the
         # special-quality material variants documented so far (Cloth/
         # Leather/Plate/Wood - see CRAFTING_MATERIAL_QUALITY_CATEGORIES),
         # and Studded (folded into Leather's own tree rather than a
@@ -11995,8 +12234,8 @@ class App(tk.Tk):
         # original request, so a future material would get its own
         # sub-tab here too, without touching this method.
         materials_nb = add_group_tab(equipment_nb, 'Materials')
-        jewels = [dict(r, _category='Jewels') for r in CRAFTING_RECIPES['Gem Cutting']]
-        add_skill_tab(materials_nb, 'Jewels', jewels, 'spell')
+        gems = [dict(r, _category='Gems') for r in CRAFTING_RECIPES['Gem Cutting']]
+        add_skill_tab(materials_nb, 'Gems', gems, 'spell')
 
         leather_frame = ttk.Frame(materials_nb, padding=6)
         materials_nb.add(leather_frame, text='Leather')
@@ -15251,6 +15490,8 @@ class App(tk.Tk):
             self._create_bank_character_tab(char_name)
         else:
             self._relocate_bank_character_tab_if_needed(char_name)
+        self._reconcile_locker_tab_visibility(char_name)
+        if char_name in self.bank_character_widgets:
             self._refresh_bank_character_tab(char_name)
         self._refresh_bank_saved_tab()
         self._refresh_bank_mats_tab()
@@ -15367,8 +15608,19 @@ class App(tk.Tk):
 
         A Locker with a group_id lands inside that Locker Group's own
         notebook instead of bank_lockers_sub_notebook directly, if that
-        group still exists - see _get_locker_group."""
+        group still exists - see _get_locker_group.
+
+        Refuses to build anything at all for a mats-only Locker (is_locker,
+        no equippable gear saved, but has crafting materials) - its
+        materials already show up in the Mats tab, so an otherwise-empty
+        gear table under Lockers would just be clutter. See
+        _reconcile_locker_tab_visibility for what tears an existing tab
+        back down (or builds one for the first time) as a Locker's own
+        content crosses this boundary in either direction on a later
+        Import save."""
         cdata = self.bank_characters.get(char_name, {})
+        if cdata.get('is_locker') and not cdata.get('order') and cdata.get('materials'):
+            return
         if cdata.get('is_locker'):
             group = self._get_locker_group(cdata.get('group_id'))
             parent_notebook = group['notebook'] if group else self.bank_lockers_sub_notebook
@@ -17073,7 +17325,11 @@ class App(tk.Tk):
         CRAFTING_MATERIAL_LOOKUP entry has no location data at all - shown
         with a "Legacy?" Note, since it may be an item with no live recipe
         left (some Gem Cutting spell types were never captured - see that
-        regex's own comment). Guarded with hasattr for the same reason
+        regex's own comment). A "Use" cell shows the material's own real
+        Weapon/Armor/Sigil recipe/enchant use (e.g. "Enchant Weapon v"/
+        "Embed Cold Sigil iv") when it's a CRAFTING_ENCHANTS-sourced
+        material - blank for a generic base ingredient with no single
+        specific use captured. Guarded with hasattr for the same reason
         _refresh_trade_tab is."""
         if not hasattr(self, 'bank_mats_tv'):
             return
@@ -17086,10 +17342,12 @@ class App(tk.Tk):
                 realms = sorted({loc['realm'] for loc in locations if loc['realm']})
                 areas = sorted({loc['area'] for loc in locations if loc['area']})
                 mobs = sorted({loc['mob'] for loc in locations if loc['mob']})
+                uses = sorted({loc['use_display'] for loc in locations if loc['use_display']})
                 note = 'Legacy?' if not locations else ''
                 rows.append((
                     name, char_name, count,
-                    '; '.join(levels), '; '.join(realms), '; '.join(areas), '; '.join(mobs), note,
+                    '; '.join(levels), '; '.join(realms), '; '.join(areas), '; '.join(mobs),
+                    '; '.join(uses), note,
                 ))
         rows.sort(key=lambda r: (r[0].lower(), r[1].lower()))
         for row in rows:
@@ -17303,6 +17561,32 @@ class App(tk.Tk):
         w['tab'].destroy()
         del self.bank_character_widgets[char_name]
         self._create_bank_character_tab(char_name)
+
+    def _reconcile_locker_tab_visibility(self, char_name):
+        """A mats-only Locker (is_locker, no equippable gear saved, but has
+        crafting materials) doesn't get its own tab under Lockers - its
+        materials already show up in the Mats tab instead, so an
+        otherwise-empty gear table there would just be clutter (see
+        _create_bank_character_tab's own guard, which refuses to build
+        one in the first place). This is what reconciles an EXISTING
+        tab's presence against that same rule after a later Import save,
+        in either direction: tears the tab down if a save just cleared a
+        Locker's last piece of gear down to materials-only, or builds one
+        for the first time if gear gets added to a previously mats-only
+        Locker. A Locker with neither gear nor materials (e.g. a paste of
+        unrecognized junk) keeps whatever tab it already has rather than
+        vanishing with nothing anywhere to manage/delete it from - only
+        the specifically mats-only case is ever hidden."""
+        cdata = self.bank_characters.get(char_name)
+        if cdata is None:
+            return
+        is_mats_only = bool(cdata.get('is_locker')) and not cdata.get('order') and bool(cdata.get('materials'))
+        has_tab = char_name in self.bank_character_widgets
+        if is_mats_only and has_tab:
+            w = self.bank_character_widgets.pop(char_name)
+            w['tab'].destroy()
+        elif not is_mats_only and not has_tab:
+            self._create_bank_character_tab(char_name)
 
     # ── LOCKER GROUPS ("+" TAB, DRAG-TO-GROUP) ─────────────────
     def _get_locker_group(self, group_id):

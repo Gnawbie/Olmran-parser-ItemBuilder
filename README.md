@@ -140,7 +140,13 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.2.0 (Current)
+### v7.3.0 (Current)
+- **Dark Mode**: a new "Dark Mode" button (top bar, next to Download Page) switches the whole app between light and dark instantly - no restart needed. Covers every tab and widget: standard ttk styling (frames, buttons, notebooks, entries, comboboxes, treeviews, checkboxes, scrollbars), plain Tk widgets that don't follow ttk theming (Text/Canvas/Listbox), and right-click context menus. Persists across restarts.
+- **Crafting tab**: the **Jewels** sub-tab under Materials is renamed to **Gems**.
+- **Bank Build - Mats tab**: added a **Use** column showing a material's own real Weapon/Armor/Sigil recipe/enchant use (e.g. "Enchant Weapon v", "Embed Cold Sigil iv") when it's a known enchant material - blank for a generic base ingredient with no single specific use captured.
+- **Bank Build - Lockers**: a Locker whose entire saved list is crafting materials only (no equippable gear at all) no longer gets its own tab under Lockers - its materials already show up in the Mats tab, so an otherwise-empty gear table there was just clutter. Adding real gear to it later makes its tab reappear; clearing that gear back down to materials-only removes it again.
+
+### v7.2.0
 - **Bank Build - Character Items/Lockers**:
   - The leading Bank icon now shows **🎽** instead of 📦/bold-L for an item currently worn/equipped, derived from "(w)" markers in an Inventory listing paste or armor/jewel slots in an "Items in use:" listing paste (Held Right/Left don't count - wielded, not worn).
   - The weapon Slot cell now shows **One-Handed**/**Two-Handed** instead of the bare "Weapon" label, derived from the item's own Type tag - falls back to "Weapon" for anything untagged either way (e.g. a Parry Staff).
