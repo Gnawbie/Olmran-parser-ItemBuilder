@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Olmran Item Builder
+Comment=Parses Olmran/MUD game logs and builds optimal equipment sets
+Exec=olmran-item-builder
+Icon=olmran-item-builder
+Categories=Utility;Game;
+Terminal=false

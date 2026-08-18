@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.1.2"
+VERSION = "7.2.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -1532,6 +1532,31 @@ _BANK_EQUIPPED_SLOT_MAP = {
     'jewel': 'jewel', 'cloak': 'cloak', 'body': 'body',
     'held right': 'weapon', 'held left': 'shield',
 }
+# Which slots count as "worn" for the Character Items tab's own Worn icon
+# (see _parse_bank_paste_text/_bank_saved_display_rows) - armor/jewel
+# slots only, not weapon/shield ("Held Right"/"Held Left" in the Items in
+# use format, "(h)" in the Inventory format) - wielded gear reads as held,
+# not worn.
+_BANK_WORN_SLOTS = {'head', 'feet', 'hands', 'legs', 'jewel', 'cloak', 'body'}
+# Gemcutting's own raw ingredients ("coarse/refined/pure dust of <spell>",
+# "uncut rough/hazy/flawless ruby/sapphire/emerald") - recognized by
+# pattern instead of an exact name list like CRAFTING_MATERIAL_LOOKUP,
+# since CRAFTING_RECIPES['Gem Cutting'] only captures 6 of however many
+# spell types these actually come in (agility/dexterity/strength/wisdom/
+# evasion/intelligence - a "pure dust of silence" or "...of blessings"
+# Locker paste has no matching recipe at all yet, and some may be legacy/
+# unusable items with no live recipe ever coming - "framework only for
+# now", same caveat as the rest of the Crafting tab's own data). A fixed
+# exact-name list would leave a materials-only Locker paste hitting the
+# "No Items" warning just because its own gem/dust flavor wasn't
+# captured - matching by shape instead avoids needing to enumerate every
+# one by hand.
+_GEMCUTTING_INGREDIENT_RE = re.compile(
+    r'^(?:(?:coarse|refined|pure) dust of .+|uncut (?:rough|hazy|flawless) (?:ruby|sapphire|emerald))$')
+
+
+def _is_recognized_crafting_material(cleaned):
+    return cleaned in CRAFTING_MATERIAL_LOOKUP or bool(_GEMCUTTING_INGREDIENT_RE.match(cleaned))
 
 
 def _parse_bank_paste_text(text, master_data=None):
@@ -1568,19 +1593,39 @@ def _parse_bank_paste_text(text, master_data=None):
     than silently discarding it the way clean_item_name's own callers
     always have. Keyed the same as name_counts_by_type's buckets but kept
     flat (not split by content type) since the enchant is a property of
-    the pasted text, not of which listing it came from."""
+    the pasted text, not of which listing it came from.
+
+    worn_names is a set of cleaned names currently worn/equipped, per this
+    paste alone - only the Inventory listing's "(w)" marker and the Items
+    in use listing's armor/jewel slots count (see _BANK_WORN_SLOTS; "(h)"/
+    Held Right/Held Left are wielded, not worn). A Strongbox listing never
+    contributes here - there's no worn concept for bank storage.
+
+    material_counts is {cleaned name: occurrence count} for every
+    Inventory-listing line (any marker, or none) whose name matches a
+    known crafting/enchant material (see CRAFTING_MATERIAL_LOOKUP) - the
+    Bank Build Mats tab's own source data. Checked BEFORE the equippable-
+    gear checks below and mutually exclusive with them (a materal name
+    never also lands in owned_keys/name_counts_by_type/worn_names), since
+    a crafting reagent isn't wearable gear - matches this app's existing
+    "framework only for now" caveat for crafting data (see
+    CRAFTING_MATERIAL_SOURCES/CRAFTING_ENCHANTS's own module comments):
+    an inventory item not yet captured in either list simply isn't
+    recognized as a material, same as it wasn't before this existed."""
     owned_keys = set()
     recognized = 0
     name_counts_by_type = {'bank': {}, 'inventory': {}}
     enchants_by_name = {}
+    worn_names = set()
+    material_counts = {}
     known_item_names = (
         {(item.get('Item') or '').strip().lower() for item in master_data}
         if master_data is not None else None
     )
 
-    def _count(content_type, name):
+    def _count(content_type, name, amount=1):
         bucket = name_counts_by_type[content_type]
-        bucket[name] = bucket.get(name, 0) + 1
+        bucket[name] = bucket.get(name, 0) + amount
 
     for line in text.splitlines():
         line = line.strip()
@@ -1593,13 +1638,24 @@ def _parse_bank_paste_text(text, master_data=None):
             tags = [t.strip() for t in tags_str.split('|')]
             if len(tags) < 2 or not tags[0].isdigit():
                 continue  # consumable/potion (e.g. "restpot5") - no numeric Level
+            cleaned = LootParser.clean_item_name(raw_name).strip().lower()
+            if not cleaned:
+                continue
+            # Checked before the slot-tag validation below - a crafting
+            # material stored in the Strongbox still carries a numeric
+            # Level tag (so it isn't skipped as a consumable above), but
+            # its 2nd tag is never a real gear slot (e.g. "Held Left" for
+            # a held reagent like "a pulsing orb"), which would otherwise
+            # make it fall through as an unrecognized/skipped line -
+            # exactly like the Inventory listing block below, material
+            # and gear are mutually exclusive.
+            if _is_recognized_crafting_material(cleaned):
+                material_counts[cleaned] = material_counts.get(cleaned, 0) + 1
+                continue
             level = tags[0]
             slot = _BANK_SLOT_MAP.get(tags[1].strip().lower())
             if not slot:
                 continue  # "Held Left", "Uses N", or an unrecognized slot tag
-            cleaned = LootParser.clean_item_name(raw_name).strip().lower()
-            if not cleaned:
-                continue
             owned_keys.add((cleaned, slot, level))
             recognized += 1
             _count('bank', cleaned)
@@ -1623,6 +1679,8 @@ def _parse_bank_paste_text(text, master_data=None):
                 recognized += 1
                 _count('inventory', cleaned)
                 enchants_by_name[cleaned] = LootParser.extract_enchant_prefix(value)
+                if slot in _BANK_WORN_SLOTS:
+                    worn_names.add(cleaned)
             continue
 
         # Inventory listing - checked last since it's the most permissive
@@ -1633,17 +1691,29 @@ def _parse_bank_paste_text(text, master_data=None):
         if m:
             marker, raw_name = m.groups()
             is_marked = marker is not None and marker.lower() in ('w', 'h')
+            # A numeric marker ("( 3)") is the real owned quantity, not
+            # just a "this line counts" flag - applies to a recognized
+            # material and to ordinary gear alike (owning several copies
+            # of the same equippable item is exactly what a Strongbox's
+            # own numbered-bracket format already tracks for bank-stored
+            # gear; this is the Inventory listing's equivalent). "(w)"/
+            # "(h)"/no marker at all still mean exactly one.
+            quantity = int(marker) if marker is not None and marker.isdigit() else 1
             cleaned = LootParser.clean_item_name(raw_name).strip().lower()
             if not cleaned:
                 continue
-            if is_marked or (known_item_names is not None and cleaned in known_item_names):
+            if _is_recognized_crafting_material(cleaned):
+                material_counts[cleaned] = material_counts.get(cleaned, 0) + quantity
+            elif is_marked or (known_item_names is not None and cleaned in known_item_names):
                 owned_keys.add((cleaned, None, None))
                 recognized += 1
-                _count('inventory', cleaned)
+                _count('inventory', cleaned, quantity)
                 enchants_by_name[cleaned] = LootParser.extract_enchant_prefix(raw_name)
+                if marker is not None and marker.lower() == 'w':
+                    worn_names.add(cleaned)
             continue
 
-    return owned_keys, recognized, name_counts_by_type, enchants_by_name
+    return owned_keys, recognized, name_counts_by_type, enchants_by_name, worn_names, material_counts
 
 
 def _is_event_realm(realm):
@@ -2642,6 +2712,32 @@ CRAFTING_MATERIAL_SOURCES = [
 ]
 
 
+def _build_crafting_material_lookup():
+    """{lowercase item name: [{'realm','area','mob','level'}, ...]} merging
+    CRAFTING_MATERIAL_SOURCES and CRAFTING_ENCHANTS (both share the same
+    item/realm/area/mob/level shape) - the Bank Build Mats tab's own
+    source of truth for which pasted Inventory-listing item names are
+    recognized crafting/enchant materials, and every real-world location
+    each one drops (a name can appear more than once across either list,
+    e.g. the same material dropping from different mobs - every location
+    is kept, not just the first). Computed once at import time since both
+    source lists are static module data, never rebuilt at runtime."""
+    lookup = {}
+    for entries in (CRAFTING_MATERIAL_SOURCES, CRAFTING_ENCHANTS):
+        for e in entries:
+            name = (e.get('item') or '').strip().lower()
+            if not name:
+                continue
+            loc = {'realm': e.get('realm') or '', 'area': e.get('area') or '',
+                   'mob': e.get('mob') or '', 'level': e.get('level') or ''}
+            if loc not in lookup.setdefault(name, []):
+                lookup[name].append(loc)
+    return lookup
+
+
+CRAFTING_MATERIAL_LOOKUP = _build_crafting_material_lookup()
+
+
 # Special-quality material variants (Materials tab's own Cloth/Leather/
 # Plate/Weapons sub-tabs) - the Type='ingredient' rows of Master
 # File.xlsx's "Enchant & Craft Mats" sheet (Sigil/Ingredient Use =
@@ -3578,6 +3674,8 @@ class App(tk.Tk):
                         'exclude_from_others': bool(cdata.get('exclude_from_others', False)),
                         'group_id': cdata.get('group_id'),
                         'enchants': dict(cdata.get('enchants', {})),
+                        'worn': sorted(cdata.get('worn', set())),
+                        'materials': dict(cdata.get('materials', {})),
                     }
                     for char, cdata in getattr(self, 'bank_characters', {}).items()
                 },
@@ -10017,6 +10115,17 @@ class App(tk.Tk):
                 # the stripped name itself (not this) is always what
                 # matching/identity uses everywhere else.
                 'enchants': dict(_cdata.get('enchants', {})),
+                # Currently worn/equipped item names (🎽 icon, Character
+                # Items tab only) - see _parse_bank_paste_text/_save_bank_
+                # import_to_character. Only ever set by an Inventory-type
+                # paste; absent entirely for a character saved before this
+                # existed.
+                'worn': set(_cdata.get('worn', [])),
+                # Crafting/enchant material counts (Mats tab - see
+                # _refresh_bank_mats_tab/CRAFTING_MATERIAL_LOOKUP), same
+                # "only ever set by an Inventory-type paste" caveat as
+                # 'worn' above.
+                'materials': dict(_cdata.get('materials', {})),
             }
         # Populated per character name by _create_bank_character_tab - widget
         # refs (treeview, checkboxes/vars, status labels) needed to read from
@@ -10185,6 +10294,42 @@ class App(tk.Tk):
         self._track_notebook_selected_tab_height(self.bank_sub_notebook, track_resize=False)
         self._track_notebook_selected_tab_height(self.bank_lockers_sub_notebook, track_resize=False)
 
+        # ── MATS TAB ──
+        # Flat, read-only chart of every recognized crafting/enchant
+        # material any character's own Import paste turned up (see
+        # CRAFTING_MATERIAL_LOOKUP/_parse_bank_paste_text) - which
+        # character has it, how many, and where it actually drops (same
+        # source data the Crafting tab's own recipe trees use). Only a
+        # material this app already knows about shows up here - "framework
+        # only for now", same caveat as the Crafting tab itself.
+        bank_mats_tab = ttk.Frame(bank_sub_notebook, padding=8)
+        bank_sub_notebook.add(bank_mats_tab, text='Mats')
+        ttk.Label(bank_mats_tab, text="Every recognized crafting/enchant material seen in a character's "
+                 "own Import paste, which character has it, how many, and where it drops. Only materials "
+                 "this app's Crafting tab already knows about are captured - not every material in the "
+                 "game yet.", foreground='#666', wraplength=760, justify='left').pack(anchor='w', pady=(0,8))
+        bank_mats_tree_frame = ttk.Frame(bank_mats_tab)
+        bank_mats_tree_frame.pack(fill='both', expand=True)
+        mats_cols = ('Item', 'Character', 'Count', 'Level', 'Realm', 'Area', 'Mob', 'Note')
+        mats_col_widths = {'Item': 220, 'Character': 100, 'Count': 55, 'Level': 50, 'Realm': 80,
+                           'Area': 220, 'Mob': 220, 'Note': 70}
+        self.bank_mats_tv = ttk.Treeview(bank_mats_tree_frame, columns=mats_cols, show='headings', height=20)
+        for col in mats_cols:
+            heading_anchor = 'w' if col in ('Item', 'Character', 'Area', 'Mob') else 'center'
+            self.bank_mats_tv.heading(col, text=col, anchor=heading_anchor,
+                                      command=lambda c=col: _sort_treeview_column(self.bank_mats_tv, c, False))
+            self.bank_mats_tv.column(col, width=mats_col_widths[col], stretch=False, anchor=heading_anchor)
+        mats_vsb = ttk.Scrollbar(bank_mats_tree_frame, orient='vertical', command=self.bank_mats_tv.yview)
+        mats_hsb = ttk.Scrollbar(bank_mats_tree_frame, orient='horizontal', command=self.bank_mats_tv.xview)
+        self.bank_mats_tv.configure(yscrollcommand=mats_vsb.set, xscrollcommand=mats_hsb.set)
+        self.bank_mats_tv.grid(row=0, column=0, sticky='nsew')
+        mats_vsb.grid(row=0, column=1, sticky='ns')
+        mats_hsb.grid(row=1, column=0, sticky='ew')
+        bank_mats_tree_frame.rowconfigure(0, weight=1)
+        bank_mats_tree_frame.columnconfigure(0, weight=1)
+        self.bank_mats_status = ttk.Label(bank_mats_tab, text="", foreground='#666')
+        self.bank_mats_status.pack(anchor='w', pady=(6,0))
+
         # Locker Groups - lets Locker tabs be organized into named folders
         # (each its own real ttk.Notebook, itself one tab of
         # bank_lockers_sub_notebook) via a leftmost "+" tab that never
@@ -10224,6 +10369,7 @@ class App(tk.Tk):
         for _char in self.bank_characters:
             self._create_bank_character_tab(_char)
         self._refresh_bank_saved_tab()
+        self._refresh_bank_mats_tab()
 
         # Adding the "+" tab to what was, at that moment, an empty
         # notebook makes Tk auto-select it immediately (a notebook always
@@ -10870,12 +11016,57 @@ class App(tk.Tk):
                  "own tab - check/uncheck it there to add or remove it here.",
                  foreground='#666', wraplength=760, justify='left').pack(anchor='w', pady=(0,8))
 
+        # Find Item - searches every character/Locker's own FULL Saved
+        # Items list (not just what's flagged Trade=Yes above), so a
+        # player can answer "which of my characters/Lockers actually has
+        # this?" without opening each tab one at a time. Sits right above
+        # the Up For Trade chart, own dedicated result table below it.
+        trade_search_row = ttk.Frame(trade_tab)
+        trade_search_row.pack(fill='x', pady=(0,8))
+        ttk.Label(trade_search_row, text="Find Item:").pack(side='left', padx=(0,4))
+        self.trade_search_var = tk.StringVar()
+        trade_search_entry = ttk.Entry(trade_search_row, textvariable=self.trade_search_var, width=40)
+        trade_search_entry.pack(side='left')
+        trade_search_entry.bind('<KeyRelease>', lambda e: self._refresh_trade_search())
+        ttk.Label(trade_search_row, text="(searches all saved characters/Lockers, not just what's up for trade)",
+                 foreground='#666', font=('Arial', 8, 'italic')).pack(side='left', padx=(6,0))
+
+        trade_search_tree_frame = ttk.Frame(trade_tab)
+        trade_search_tree_frame.pack(fill='both', expand=True, pady=(0,8))
+        trade_search_cols = ('Bank', 'Character', 'Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
+        trade_search_col_widths = {'Bank': 28, 'Character': 100, 'Slot': 55, 'Item': 220, 'Type': 110,
+                                   'Spell': 110, 'Sigil': 60, 'Level': 45, 'Area': 140}
+        self.trade_search_tv = ttk.Treeview(trade_search_tree_frame, columns=trade_search_cols,
+                                            show='headings', height=8)
+        for col in trade_search_cols:
+            heading_anchor = 'w' if col in ('Character', 'Item') else 'center'
+            heading_text = '📦' if col == 'Bank' else col
+            self.trade_search_tv.heading(col, text=heading_text, anchor=heading_anchor,
+                                         command=lambda c=col: _sort_treeview_column(self.trade_search_tv, c, False))
+            self.trade_search_tv.column(col, width=trade_search_col_widths[col], stretch=False,
+                                        anchor=('w' if col in ('Character', 'Item') else 'center'))
+        trade_search_vsb = ttk.Scrollbar(trade_search_tree_frame, orient='vertical',
+                                         command=self.trade_search_tv.yview)
+        trade_search_hsb = ttk.Scrollbar(trade_search_tree_frame, orient='horizontal',
+                                         command=self.trade_search_tv.xview)
+        self.trade_search_tv.configure(yscrollcommand=trade_search_vsb.set, xscrollcommand=trade_search_hsb.set)
+        self.trade_search_tv.grid(row=0, column=0, sticky='nsew')
+        trade_search_vsb.grid(row=0, column=1, sticky='ns')
+        trade_search_hsb.grid(row=1, column=0, sticky='ew')
+        trade_search_tree_frame.rowconfigure(0, weight=1)
+        trade_search_tree_frame.columnconfigure(0, weight=1)
+        self.trade_search_status = ttk.Label(trade_tab, text="", foreground='#666')
+        self.trade_search_status.pack(anchor='w', pady=(0,10))
+
+        ttk.Separator(trade_tab, orient='horizontal').pack(fill='x', pady=(0,10))
+        ttk.Label(trade_tab, text="Up For Trade", font=('Arial', 11, 'bold')).pack(anchor='w', pady=(0,6))
+
         trade_tree_frame = ttk.Frame(trade_tab)
         trade_tree_frame.pack(fill='both', expand=True)
         trade_cols = ('Bank', 'Character', 'Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
         trade_col_widths = {'Bank': 28, 'Character': 100, 'Slot': 55, 'Item': 220, 'Type': 110,
                             'Spell': 110, 'Sigil': 60, 'Level': 45, 'Area': 140}
-        self.trade_tv = ttk.Treeview(trade_tree_frame, columns=trade_cols, show='headings', height=20)
+        self.trade_tv = ttk.Treeview(trade_tree_frame, columns=trade_cols, show='headings', height=12)
         for col in trade_cols:
             heading_anchor = 'w' if col in ('Character', 'Item') else 'center'
             heading_text = '📦' if col == 'Bank' else col
@@ -14997,8 +15188,9 @@ class App(tk.Tk):
             char_name = existing_match
 
         text = self.bank_import_text.get('1.0', tk.END)
-        owned_keys, recognized, name_counts_by_type, enchants_by_name = _parse_bank_paste_text(text, self.master_data)
-        if not owned_keys:
+        owned_keys, recognized, name_counts_by_type, enchants_by_name, worn_names, material_counts = (
+            _parse_bank_paste_text(text, self.master_data))
+        if not owned_keys and not material_counts:
             messagebox.showwarning("No Items",
                 "No equippable items were recognized in the pasted text. Expected a Strongbox "
                 "listing (\"12.) a glowing wispweave hood of fallen snow [60|Head|CP2|evadeenhance2]\", "
@@ -15026,6 +15218,24 @@ class App(tk.Tk):
         # a name not mentioned in this paste keeps whatever enchant it
         # already had from an earlier one.
         cdata.setdefault('enchants', {}).update(enchants_by_name)
+        # Worn (🎽 icon, Character Items tab only - see _bank_saved_
+        # display_rows) - same "this paste wins" rule as sources['inventory']
+        # above, since worn info only ever comes from Inventory-type gear
+        # lines specifically (a Strongbox line has no worn concept, even
+        # a material one): fully replaced by this paste's own worn_names
+        # whenever it actually had Inventory-type gear content, left
+        # alone (not merged/reset) otherwise.
+        if name_counts_by_type['inventory']:
+            cdata['worn'] = set(worn_names)
+        # Mats tab (see _refresh_bank_mats_tab) - unlike worn, a material
+        # can come from EITHER paste format (Strongbox or Inventory), so
+        # this follows sources['bank']/['inventory']'s own "leave the
+        # bucket alone if this paste had nothing of that kind" rule
+        # instead of worn's full-reset one - a paste that only updates
+        # gear shouldn't silently wipe out previously-tracked materials
+        # it never even mentions.
+        if material_counts:
+            cdata['materials'] = dict(material_counts)
         all_names = set()
         for counts in cdata['sources'].values():
             all_names.update(counts)
@@ -15043,13 +15253,21 @@ class App(tk.Tk):
             self._relocate_bank_character_tab_if_needed(char_name)
             self._refresh_bank_character_tab(char_name)
         self._refresh_bank_saved_tab()
+        self._refresh_bank_mats_tab()
         self._recompute_all_saved_item_names()
         self._save_config()
 
         unique_count = len(set().union(*name_counts_by_type.values())) if name_counts_by_type else 0
+        material_note = f" and {len(material_counts)} crafting material(s) to the Mats tab" if material_counts else ""
         self.bank_import_status.config(
             text=f"Saved {recognized} equippable item(s) from the paste to {char_name}'s Saved Items "
-                 f"({unique_count} unique item(s)).")
+                 f"({unique_count} unique item(s)){material_note}.")
+        # Cleared only on a successful save (the "No Items" warning above
+        # returns before this point, leaving a bad/empty paste in place so
+        # it can be fixed) - a fresh paste otherwise has to be manually
+        # selected and deleted before pasting the next character's own
+        # listing.
+        self.bank_import_text.delete('1.0', tk.END)
 
     def _is_bank_owned(self, item):
         """True if this item matches something from the currently active
@@ -15178,8 +15396,8 @@ class App(tk.Tk):
         tree_frame = ttk.Frame(tab)
         tree_frame.pack(fill='both', expand=True)
         saved_cols = ('Bank', 'Slot', 'Drop', 'Enchant', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
-        saved_col_widths = {'Bank': 28, 'Slot': 55, 'Drop': 60, 'Enchant': 90, 'Item': 220, 'Type': 60, 'Spell': 100,
-                           'Sigil': 60, 'Level': 45, 'Area': 140, 'Tag': 110, 'Share': 55, 'Trade': 55}
+        saved_col_widths = {'Bank': 28, 'Slot': 55, 'Drop': 60, 'Enchant': 90, 'Item': 220, 'Type': 60,
+                           'Spell': 100, 'Sigil': 60, 'Level': 45, 'Area': 140, 'Tag': 110, 'Share': 55, 'Trade': 55}
         saved_col_headings = {'Tag': 'Gear Tag', 'Bank': '📦'}
         # A Locker already folds its ENTIRE list into every other
         # character's search unconditionally (is_locker) - the Share
@@ -16046,12 +16264,12 @@ class App(tk.Tk):
         # get wrongly rejected here, leaving its base looking uncovered
         # and pushing it into Pass 2's full-database fallback for no
         # reason. _bank_items_restricted is instead explicitly set True
-        # here (own reason: this pass's own master_data swap already
-        # means every candidate is something owned, same as Hard Search -
-        # see the realm-filter bypass this drives in _find_optimal_build)
-        # regardless of whatever it was left at, since Pass 1 is always
-        # owned-items-only whether or not the preceding search happened
-        # to be a Hard Search at all.
+        # here regardless of whatever it was left at, since Pass 1 is
+        # always owned-items-only whether or not the preceding search
+        # happened to be a Hard Search at all - kept in sync with Hard
+        # Search's own flag even though nothing currently reads it for
+        # filtering purposes (the realm filter it used to bypass now
+        # always applies - see _find_optimal_build's own comment).
         original_master_data = self.master_data
         original_strict_tier = getattr(self, '_hard_search_strict_tier', False)
         original_items_restricted = getattr(self, '_bank_items_restricted', False)
@@ -16716,7 +16934,18 @@ class App(tk.Tk):
         else:
             shared.add(item_name)
         self._save_config()
-        self._refresh_bank_character_tab(char_name)
+        # Updates the Share cell(s) directly rather than a full
+        # _refresh_bank_character_tab redraw - same reason _set_gear_tag
+        # avoids one (see its own docstring): a redraw resets whatever
+        # column the user had just sorted by back to insertion order,
+        # which shouldn't happen just from toggling one checkbox. Every
+        # row for this name gets updated, not just row_iid, since Share
+        # is per (character, item name) - an "::extra::" duplicate copy
+        # shares the same flag.
+        new_cell = '☑' if item_name in shared else '☐'
+        for r in tv.get_children():
+            if tv.set(r, 'Item').removeprefix('::extra:: ') == item_name:
+                tv.set(r, 'Share', new_cell)
 
     def _toggle_trade_item(self, tv, row_iid):
         """Flips one item's Trade flag ("No"/"Yes", defaulting to "No")
@@ -16741,7 +16970,17 @@ class App(tk.Tk):
         else:
             trade.add(item_name)
         self._save_config()
-        self._refresh_bank_character_tab(char_name)
+        # Updates the Trade cell(s) directly rather than a full
+        # _refresh_bank_character_tab redraw - see _toggle_shared_item's
+        # own comment for why (resets the user's current column sort).
+        # The standalone Trade tab is a separate, differently-shaped
+        # table with its own row identity, not tied to this character
+        # tree's own sort state, so _refresh_trade_tab's own full rebuild
+        # is unaffected and left as is.
+        new_cell = 'Yes' if item_name in trade else 'No'
+        for r in tv.get_children():
+            if tv.set(r, 'Item').removeprefix('::extra:: ') == item_name:
+                tv.set(r, 'Trade', new_cell)
         self._refresh_trade_tab()
 
     def _refresh_trade_tab(self):
@@ -16781,6 +17020,82 @@ class App(tk.Tk):
         for row in rows:
             self.trade_tv.insert('', 'end', values=row)
         self.trade_status.config(text=f"{len(rows)} item(s) up for trade.")
+
+    def _refresh_trade_search(self):
+        """Trade tab's "Find Item" search - unlike the Up For Trade chart
+        above it (scoped to Trade=Yes-flagged items only), this searches
+        every character/Locker's own FULL Saved Items list (self.
+        bank_characters[...]['order']), so a player can answer "which of
+        my characters/Lockers actually has this?" without opening each
+        tab one at a time. Case-insensitive substring match against each
+        saved item's own name. Cleared entirely (not "show everything")
+        when the search box is empty - one row per (character, matching
+        item), same shape as the Up For Trade chart, reusing
+        _bank_vault_icon for the leading Bank/Locker icon."""
+        self.trade_search_tv.delete(*self.trade_search_tv.get_children())
+        query = self.trade_search_var.get().strip().lower()
+        if not query:
+            self.trade_search_status.config(text="")
+            return
+        master_by_name = {}
+        for item in self.master_data:
+            master_by_name.setdefault((item.get('Item') or '').strip().lower(), item)
+
+        rows = []
+        for char_name, cdata in self.bank_characters.items():
+            for name in cdata.get('order', []):
+                if query in name.lower():
+                    m = master_by_name.get(name, {})
+                    rows.append((
+                        self._bank_vault_icon(name),
+                        char_name, (m.get('Slot') or '').title(), name,
+                        m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''),
+                        m.get('Level', ''), m.get('Area', ''),
+                    ))
+        rows.sort(key=lambda r: (r[3].lower(), r[1].lower()))
+        for row in rows:
+            self.trade_search_tv.insert('', 'end', values=row)
+        chars_matched = len(set(r[1] for r in rows))
+        self.trade_search_status.config(
+            text=f"{len(rows)} match(es) found across {chars_matched} character(s)/Locker(s)."
+                 if rows else "No matches found.")
+
+    def _refresh_bank_mats_tab(self):
+        """Rebuild the Mats tab's flat chart from every currently-existing
+        character/Locker's own cdata['materials'] (see CRAFTING_MATERIAL_
+        LOOKUP/_is_recognized_crafting_material/_parse_bank_paste_text/
+        _save_bank_import_to_character) - one row per (character, material
+        name), each enriched with every real-world drop location
+        CRAFTING_MATERIAL_LOOKUP has for that name (Realm/Area/Mob/Level
+        cells joined with "; " when a material drops in more than one
+        place). A name recognized only by the Gemcutting ingredient
+        pattern (see _GEMCUTTING_INGREDIENT_RE) rather than an exact
+        CRAFTING_MATERIAL_LOOKUP entry has no location data at all - shown
+        with a "Legacy?" Note, since it may be an item with no live recipe
+        left (some Gem Cutting spell types were never captured - see that
+        regex's own comment). Guarded with hasattr for the same reason
+        _refresh_trade_tab is."""
+        if not hasattr(self, 'bank_mats_tv'):
+            return
+        self.bank_mats_tv.delete(*self.bank_mats_tv.get_children())
+        rows = []
+        for char_name, cdata in self.bank_characters.items():
+            for name, count in cdata.get('materials', {}).items():
+                locations = CRAFTING_MATERIAL_LOOKUP.get(name, [])
+                levels = sorted({str(loc['level']) for loc in locations if loc['level'] != ''}, key=lambda s: (len(s), s))
+                realms = sorted({loc['realm'] for loc in locations if loc['realm']})
+                areas = sorted({loc['area'] for loc in locations if loc['area']})
+                mobs = sorted({loc['mob'] for loc in locations if loc['mob']})
+                note = 'Legacy?' if not locations else ''
+                rows.append((
+                    name, char_name, count,
+                    '; '.join(levels), '; '.join(realms), '; '.join(areas), '; '.join(mobs), note,
+                ))
+        rows.sort(key=lambda r: (r[0].lower(), r[1].lower()))
+        for row in rows:
+            self.bank_mats_tv.insert('', 'end', values=row)
+        self.bank_mats_status.config(
+            text=f"{len(rows)} character-material row(s), {len(set(r[0] for r in rows))} distinct material(s).")
 
     def _set_gear_tag(self, item_name, new_val):
         """Write one item's Gear Tag - global per item name, so this
@@ -16834,34 +17149,42 @@ class App(tk.Tk):
                 return 'Good Gear' if _is_event_realm(item.get('Realm')) else 'Blank'
         return 'Blank'
 
-    def _bank_saved_display_rows(self, order, sources, shared_items=None, trade_items=None, enchants=None):
+    def _bank_saved_display_rows(self, order, sources, shared_items=None, trade_items=None, enchants=None,
+                                 worn_names=None):
         """Row tuples (Bank, Slot, Drop, Enchant, Item, Type, Spell,
         Sigil, Level, Area, Tag[, Share][, Trade]) for a Saved Items
         treeview - shared by the Main aggregate tab and every per-
         character/Locker tab. Bank is the leading icon cell (see
         _bank_vault_icon) - 📦, or a bold "L" if a Locker's own list also
-        has this same name. Each unique name gets one row (enriched from
-        master_data when a name match is found); any copies beyond the
-        first are appended at the bottom, prefixed "::extra::". Drop reads "No
-        Drop" for a Kaid-realm item (Kaid gear doesn't drop when you
-        die), "Drop" for everything else. Enchant is whatever quality/
-        material prefix Import parsing stripped off that name (see
-        LootParser.extract_enchant_prefix/_parse_bank_paste_text), blank
-        if enchants is None or has nothing for that name - purely
-        cosmetic, the stripped name itself is still all that identity/
-        matching ever uses. Tag is whatever's in self.bank_gear_tags for
-        that name, defaulting to "Good Gear" for an Event-realm item (see
-        _is_event_realm) or "Blank" otherwise - see _open_gear_tag_editor/
-        _default_gear_tag_for_item. shared_items is None for Main/a
-        Locker (no Share column at all - see _create_bank_character_tab);
-        for a normal character it's that character's own entry in
-        self.bank_shared_items_by_char, and a trailing Share cell
-        ('☑'/'☐') gets appended per row - see _toggle_shared_item.
-        trade_items is None for Main only (every character AND Locker
-        gets a Trade column); otherwise it's that character/Locker's own
-        entry in self.bank_trade_items_by_char, appending a trailing
-        "Yes"/"No" cell - see
-        _toggle_trade_item. Returns (rows, extra_count)."""
+        has this same name; for a character/Locker tab (worn_names not
+        None), a currently-worn item shows 🎽 there instead - a single
+        cell, not a second column, since only one of "owned via a Locker"
+        or "worn" is worth a glance at once for any given row. Each unique
+        name gets one row (enriched from master_data when a name match is
+        found); any copies beyond the first are appended at the bottom,
+        prefixed "::extra::". Drop reads "No Drop" for a Kaid-realm item
+        (Kaid gear doesn't drop when you die), "Drop" for everything else.
+        Enchant is whatever quality/material prefix Import parsing
+        stripped off that name (see LootParser.extract_enchant_prefix/
+        _parse_bank_paste_text), blank if enchants is None or has nothing
+        for that name - purely cosmetic, the stripped name itself is still
+        all that identity/matching ever uses. Tag is whatever's in
+        self.bank_gear_tags for that name, defaulting to "Good Gear" for
+        an Event-realm item (see _is_event_realm) or "Blank" otherwise -
+        see _open_gear_tag_editor/_default_gear_tag_for_item. shared_items
+        is None for Main/a Locker (no Share column at all - see
+        _create_bank_character_tab); for a normal character it's that
+        character's own entry in self.bank_shared_items_by_char, and a
+        trailing Share cell ('☑'/'☐') gets appended per row - see
+        _toggle_shared_item. trade_items is None for Main only (every
+        character AND Locker gets a Trade column); otherwise it's that
+        character/Locker's own entry in self.bank_trade_items_by_char,
+        appending a trailing "Yes"/"No" cell - see _toggle_trade_item.
+        worn_names is None for Main only (no per-character worn state
+        makes sense on an aggregate view - the same item could be worn on
+        one character and not another) - otherwise that character/
+        Locker's own cdata['worn'] set - see
+        _save_bank_import_to_character. Returns (rows, extra_count)."""
         master_by_name = {}
         for item in self.master_data:
             master_by_name.setdefault((item.get('Item') or '').strip().lower(), item)
@@ -16871,9 +17194,24 @@ class App(tk.Tk):
             display_name = f"::extra:: {name}" if extra else name
             is_kaid = 'kaid' in (m.get('Realm') or '').strip().lower()
             default_tag = 'Good Gear' if _is_event_realm(m.get('Realm')) else 'Blank'
-            row = (
-                self._bank_vault_icon(name),
-                (m.get('Slot') or '').title(), 'No Drop' if is_kaid else 'Drop',
+            bank_icon = '🎽' if worn_names is not None and name in worn_names else self._bank_vault_icon(name)
+            slot_display = (m.get('Slot') or '').title()
+            if slot_display == 'Weapon':
+                # A weapon's own Type carries a '1h'/'2h' tag (e.g. 'crush
+                # 2h', 'direct 1h' - same convention _two_handed_matches/
+                # the Crafting tab's own hands_from_type use) - more
+                # useful here than the bare "Weapon" slot label every
+                # weapon would otherwise show alike. Falls back to
+                # "Weapon" for anything untagged either way (e.g. a Parry
+                # Staff, which is never tagged 2h - see
+                # _two_handed_matches's own comment - or a claw).
+                item_type = (m.get('Type') or '').lower()
+                if '2h' in item_type:
+                    slot_display = 'Two-Handed'
+                elif '1h' in item_type:
+                    slot_display = 'One-Handed'
+            row = (bank_icon,) + (
+                slot_display, 'No Drop' if is_kaid else 'Drop',
                 (enchants or {}).get(name, ''), display_name,
                 m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''), m.get('Level', ''), m.get('Area', ''),
                 self.bank_gear_tags.get(name, default_tag),
@@ -17175,8 +17513,9 @@ class App(tk.Tk):
         shared_items = None if cdata.get('is_locker') else self.bank_shared_items_by_char.get(char_name, set())
         trade_items = self.bank_trade_items_by_char.get(char_name, set())
         enchants = cdata.get('enchants', {})
+        worn_names = cdata.get('worn', set())
         rows, extra_count = self._bank_saved_display_rows(
-            cdata['order'], cdata['sources'], shared_items, trade_items, enchants)
+            cdata['order'], cdata['sources'], shared_items, trade_items, enchants, worn_names)
         w['tv'].delete(*w['tv'].get_children())
         for row in rows:
             w['tv'].insert('', 'end', values=row)
@@ -17225,6 +17564,7 @@ class App(tk.Tk):
         self._save_config()
         self._refresh_bank_character_tab(char_name)
         self._refresh_bank_saved_tab()
+        self._refresh_bank_mats_tab()
 
     def _delete_bank_character(self, char_name):
         """Every character (and Locker) tab's "Delete" button - permanently
@@ -17250,6 +17590,7 @@ class App(tk.Tk):
         self._recompute_all_saved_item_names()
         self._save_config()
         self._refresh_bank_saved_tab()
+        self._refresh_bank_mats_tab()
 
     def _prepare_combo_search(self):
         """Setup phase shared by _find_best_combos/_find_all_combos - an
@@ -17702,19 +18043,16 @@ class App(tk.Tk):
                 continue
 
             # Apply realm filter if any selected ("All" means none - see
-            # _update_realm_all_exclusivity). Skipped entirely whenever
-            # self._bank_items_restricted is set - Bank Build's Hard
-            # Search and Rebuild (Saved Items First)'s own Pass 1 both
-            # restrict candidates to just already-owned Saved Items, so
-            # an item's drop realm is moot: the player already owns it
-            # regardless of where it originally came from. Without this,
-            # an owned item sitting in an unchecked realm (e.g. a Kaid
-            # Purple drop when only Kaid Red/Green/White are checked, or
-            # an Event-realm item when Event isn't checked) would
-            # silently vanish from its own Bank Build/Rebuild search even
-            # though nothing else in the pool can replace it.
+            # _update_realm_all_exclusivity) - applies even when Bank
+            # Build's Hard Search/Rebuild (Saved Items First) has
+            # restricted candidates to just already-owned Saved Items:
+            # a checked "Only Found In" realm is an explicit choice to
+            # exclude everything else, Saved Items included - an owned
+            # item in an unchecked realm should leave that slot empty
+            # ("report exactly what's missing", Hard Search's own point)
+            # rather than silently getting used anyway. No realms checked
+            # at all still means unrestricted, same as everywhere else.
             selected_realms = ([] if self.realm_filter_all_var.get()
-                                   or getattr(self, '_bank_items_restricted', False)
                               else [realm for realm, var in self.realm_filters.items() if var.get()])
             if selected_realms:
                 realm_match = False
@@ -19350,19 +19688,16 @@ class App(tk.Tk):
                 continue
 
             # Apply realm filter if any selected ("All" means none - see
-            # _update_realm_all_exclusivity). Skipped entirely whenever
-            # self._bank_items_restricted is set - Bank Build's Hard
-            # Search and Rebuild (Saved Items First)'s own Pass 1 both
-            # restrict candidates to just already-owned Saved Items, so
-            # an item's drop realm is moot: the player already owns it
-            # regardless of where it originally came from. Without this,
-            # an owned item sitting in an unchecked realm (e.g. a Kaid
-            # Purple drop when only Kaid Red/Green/White are checked, or
-            # an Event-realm item when Event isn't checked) would
-            # silently vanish from its own Bank Build/Rebuild search even
-            # though nothing else in the pool can replace it.
+            # _update_realm_all_exclusivity) - applies even when Bank
+            # Build's Hard Search/Rebuild (Saved Items First) has
+            # restricted candidates to just already-owned Saved Items:
+            # a checked "Only Found In" realm is an explicit choice to
+            # exclude everything else, Saved Items included - an owned
+            # item in an unchecked realm should leave that slot empty
+            # ("report exactly what's missing", Hard Search's own point)
+            # rather than silently getting used anyway. No realms checked
+            # at all still means unrestricted, same as everywhere else.
             selected_realms = ([] if self.realm_filter_all_var.get()
-                                   or getattr(self, '_bank_items_restricted', False)
                               else [realm for realm, var in self.realm_filters.items() if var.get()])
             if selected_realms:
                 realm_match = False
@@ -20645,19 +20980,16 @@ class App(tk.Tk):
                 continue
 
             # Apply realm filter if any selected ("All" means none - see
-            # _update_realm_all_exclusivity). Skipped entirely whenever
-            # self._bank_items_restricted is set - Bank Build's Hard
-            # Search and Rebuild (Saved Items First)'s own Pass 1 both
-            # restrict candidates to just already-owned Saved Items, so
-            # an item's drop realm is moot: the player already owns it
-            # regardless of where it originally came from. Without this,
-            # an owned item sitting in an unchecked realm (e.g. a Kaid
-            # Purple drop when only Kaid Red/Green/White are checked, or
-            # an Event-realm item when Event isn't checked) would
-            # silently vanish from its own Bank Build/Rebuild search even
-            # though nothing else in the pool can replace it.
+            # _update_realm_all_exclusivity) - applies even when Bank
+            # Build's Hard Search/Rebuild (Saved Items First) has
+            # restricted candidates to just already-owned Saved Items:
+            # a checked "Only Found In" realm is an explicit choice to
+            # exclude everything else, Saved Items included - an owned
+            # item in an unchecked realm should leave that slot empty
+            # ("report exactly what's missing", Hard Search's own point)
+            # rather than silently getting used anyway. No realms checked
+            # at all still means unrestricted, same as everywhere else.
             selected_realms = ([] if self.realm_filter_all_var.get()
-                                   or getattr(self, '_bank_items_restricted', False)
                               else [realm for realm, var in self.realm_filters.items() if var.get()])
             if selected_realms:
                 realm_match = False

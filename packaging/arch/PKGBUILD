@@ -1,0 +1,35 @@
+# Maintainer: Gnawbie
+# Builds against the prebuilt Linux binary published on each GitHub
+# Release (see .github/workflows/build-linux.yml) rather than compiling
+# from source - this project is a single-file Tkinter script with no
+# setup.py/pyproject.toml packaging of its own, so wrapping the same
+# PyInstaller onefile binary every other Linux download uses is simpler
+# and more reliable than re-deriving a from-source build here.
+pkgname=olmran-item-builder
+pkgver=7.2.0
+pkgrel=1
+pkgdesc="Parses Olmran/MUD game logs and builds optimal equipment sets"
+arch=('x86_64')
+url="https://github.com/Gnawbie/Olmran-parser-ItemBuilder"
+license=('unknown')
+depends=('tk')
+source=(
+  "OlmranItemBuilder-linux::https://github.com/Gnawbie/Olmran-parser-ItemBuilder/releases/download/v${pkgver}/OlmranItemBuilder-linux"
+  "olmran-item-builder.desktop"
+  "olmran-item-builder.png::https://raw.githubusercontent.com/Gnawbie/Olmran-parser-ItemBuilder/main/swirl_icon_1024.png"
+)
+# Placeholder - run `updpkgsums` (from pacman-contrib) after bumping
+# pkgver for a new release, to fill these in with the real hashes before
+# publishing (e.g. to the AUR). Left as SKIP here since the release
+# asset for a not-yet-tagged pkgver doesn't exist until CI builds it.
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/OlmranItemBuilder-linux" "$pkgdir/usr/bin/olmran-item-builder"
+  install -Dm644 "$srcdir/olmran-item-builder.desktop" \
+    "$pkgdir/usr/share/applications/olmran-item-builder.desktop"
+  install -Dm644 "$srcdir/olmran-item-builder.png" \
+    "$pkgdir/usr/share/pixmaps/olmran-item-builder.png"
+}

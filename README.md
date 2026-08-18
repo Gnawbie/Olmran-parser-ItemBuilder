@@ -140,7 +140,20 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.1.2 (Current)
+### v7.2.0 (Current)
+- **Bank Build - Character Items/Lockers**:
+  - The leading Bank icon now shows **🎽** instead of 📦/bold-L for an item currently worn/equipped, derived from "(w)" markers in an Inventory listing paste or armor/jewel slots in an "Items in use:" listing paste (Held Right/Left don't count - wielded, not worn).
+  - The weapon Slot cell now shows **One-Handed**/**Two-Handed** instead of the bare "Weapon" label, derived from the item's own Type tag - falls back to "Weapon" for anything untagged either way (e.g. a Parry Staff).
+  - Toggling **Share**/**Trade** on a row no longer resets the tab's current column sort - same class of fix Gear Tag already had.
+  - The Import tab's paste box now auto-clears after a successful Save to Saved Items (stays in place if nothing was recognized, so a bad paste can be fixed).
+  - An Inventory listing's "(#)" marker (e.g. "(10) an uncut flawless ruby") is now the real owned quantity, not just a "this line counts" flag - applies to ordinary gear the same way.
+- **Bank Build - new Mats tab**: lists every recognized crafting/enchant material seen in a character's own Import paste (from either the Strongbox bracket format or the Inventory listing format), which character has it, how many, and where it drops. Gemcutting's own raw ingredients ("coarse/refined/pure dust of X", "uncut rough/hazy/flawless ruby/sapphire/emerald") are recognized by name pattern rather than an exact list, so a materials-only Locker paste no longer trips a false "No equippable items" warning just because its own flavor wasn't captured yet - a material with no known drop location shows "Legacy?" instead.
+- **Bank Build - Only Found In**: a character's realm checkboxes now apply during Hard Search too, even against their own Saved Items - a checked realm is a real restriction (an unchecked-realm item is excluded, even if nothing else can fill that slot); nothing checked still means unrestricted, same as everywhere else in the app.
+- **Trade tab**: new **Find Item** search - searches every character's/Locker's full Saved Items list (not just what's flagged Trade=Yes) to see which one has a given item, without opening each tab one at a time.
+- **Critical data-loss fix (carried over from v7.1.1)**: see that entry below if updating from an older version - every launch since v6.4.1 could silently wipe saved characters/Lockers/Saved Builds/Counters reports.
+- **New downloads: Linux and Arch Linux**. A portable `OlmranItemBuilder-linux` binary is now built automatically (via GitHub Actions) and attached to every release, alongside the existing Windows downloads. Arch Linux users can instead build a proper pacman-managed package from the `PKGBUILD` in [`packaging/arch`](packaging/arch) via `makepkg -si` (wraps that same Linux binary, plus a desktop launcher entry). See the [download page](https://gnawbie.github.io/Olmran-parser-ItemBuilder/) for both.
+
+### v7.1.2
 - **Enchants tab**: the **Sigil** branch under each realm is now split into **Weapon Sigil** (items used to "Embed" an element into a weapon) and **Armor Sigil** (items used to "Protect" armor against an element) - previously both kinds were lumped into one Sigil branch.
 
 ### v7.1.1
