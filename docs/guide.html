@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v7.3.0</p>
+    <p class="tagline">Full usage guide - v7.3.1</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -420,6 +420,7 @@
       <li><b>Window looks blurry or oddly scaled on a multi-monitor setup</b> - fixed as of v6.5.0 for setups where each display uses a different Windows display-scaling percentage; update if you're still seeing it.</li>
       <li><b>The Gear Tag dropdown sometimes closes itself instantly, or resets the list's sort order</b> - fixed as of v6.5.3; update if you're still seeing it.</li>
       <li><b>My saved characters, Lockers, Saved Builds, or Counters reports disappeared after closing and reopening the app</b> - a real bug present in every version from v6.4.1 through v7.1.0: the Item Counter's "Consistent" tally auto-restoring on startup could trigger an internal save before the rest of your data had finished loading, silently wiping it. Fixed as of v7.1.1 - update immediately if you're on an older version. This fix only stops it from happening again; it can't recover data an earlier launch already wiped.</li>
+      <li><b>A build shows the same spell at two different tiers (e.g. Wisdom.iii on a Jewel and Wisdom.ii on the Shield)</b> - fixed as of v7.3.1. A mandatory Weapon/Weapon Off-Hand/Shield slot (forced to be filled by a checked Weapon Combo) could get filled with an item whose only spell was an already-covered wanted base at a useless tier, since those three slots were previously exempted from the same "no redundant spell" rule every other slot already followed. They now always get filled with something when a combo requires it, just never specifically a redundant one - the slot is left empty instead if that's the only kind of candidate available.</li>
     </ul>
 
     <footer>

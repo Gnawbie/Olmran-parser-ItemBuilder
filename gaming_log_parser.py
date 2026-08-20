@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.3.0"
+VERSION = "7.3.1"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -19044,8 +19044,12 @@ class App(tk.Tk):
                     wanted_sigil_match if not (item_sigil_bit & used_sigils) else 0)
                 if not new_bases and not effective_wanted_sigil_match and lookup_slot not in fallback_eligible_slots:
                     continue
-                if (not new_bases and item_bitmask
-                        and lookup_slot not in ('weapon', 'weapon_off', 'shield')):
+                # See solve()'s own comment on this exact check in
+                # _find_optimal_build - applies to weapon/shield/weapon_off
+                # too, not just other slots: a combo-mandated slot still
+                # has to be filled with something, just never a redundant-
+                # spell item specifically.
+                if not new_bases and item_bitmask:
                     continue
                 if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
                     continue
@@ -19168,8 +19172,12 @@ class App(tk.Tk):
                     wanted_sigil_match if not (item_sigil_bit & used_sigils) else 0)
                 if not new_bases and not effective_wanted_sigil_match and lookup_slot not in fallback_eligible_slots:
                     continue
-                if (not new_bases and item_bitmask
-                        and lookup_slot not in ('weapon', 'weapon_off', 'shield')):
+                # See solve()'s own comment on this exact check in
+                # _find_optimal_build - applies to weapon/shield/weapon_off
+                # too, not just other slots: a combo-mandated slot still
+                # has to be filled with something, just never a redundant-
+                # spell item specifically.
+                if not new_bases and item_bitmask:
                     continue
                 if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
                     continue
@@ -20661,12 +20669,14 @@ class App(tk.Tk):
                 # that redundantly restates an already-covered wanted base
                 # at a different tier (e.g. wisdom.iii already covered
                 # elsewhere - an item carrying wisdom.ii doesn't get a pass
-                # just because it also has the sigil). weapon/shield/
-                # weapon_off keep the older, looser exemption (a combo
-                # mandates one of those be filled regardless of what it
-                # carries).
-                if (not new_bases and item_bitmask
-                        and lookup_slot not in ('weapon', 'weapon_off', 'shield')):
+                # just because it also has the sigil). Applies to weapon/
+                # shield/weapon_off too now - a combo-mandated slot still
+                # has to be filled with SOMETHING (a genuinely new-spell
+                # item, or a spell-less one via the fallback_eligible_slots
+                # gate above), just never with a redundant-spell item
+                # specifically; the mandate to fill the slot at all is a
+                # separate concern from what it's allowed to carry.
+                if not new_bases and item_bitmask:
                     continue
                 if is_crafted and crafted_n >= MAX_CRAFTED_ITEMS:
                     continue

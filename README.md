@@ -140,7 +140,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.3.0 (Current)
+### v7.3.1 (Current)
+- **Build search fix**: a mandatory Weapon/Weapon Off-Hand/Shield slot (forced to be filled by a checked Weapon Combo) could get filled with an item whose only spell was an already-covered wanted base at a different, useless tier - e.g. Wisdom.iii already covered by a Jewel, and a Shield offering Wisdom.ii (which doesn't stack with it in-game, and contributes nothing) getting picked over one with no spell at all. Every other slot already refused a redundant spell like this; Weapon/Weapon Off-Hand/Shield now do too - they still always get filled with something (a genuinely new-spell item, or a spell-less one), just never specifically a redundant one. If the only candidate for a mandatory slot is redundant-spell-only, the slot is now left empty instead.
+
+### v7.3.0
 - **Dark Mode**: a new "Dark Mode" button (top bar, next to Download Page) switches the whole app between light and dark instantly - no restart needed. Covers every tab and widget: standard ttk styling (frames, buttons, notebooks, entries, comboboxes, treeviews, checkboxes, scrollbars), plain Tk widgets that don't follow ttk theming (Text/Canvas/Listbox), and right-click context menus. Persists across restarts.
 - **Crafting tab**: the **Jewels** sub-tab under Materials is renamed to **Gems**.
 - **Bank Build - Mats tab**: added a **Use** column showing a material's own real Weapon/Armor/Sigil recipe/enchant use (e.g. "Enchant Weapon v", "Embed Cold Sigil iv") when it's a known enchant material - blank for a generic base ingredient with no single specific use captured.
