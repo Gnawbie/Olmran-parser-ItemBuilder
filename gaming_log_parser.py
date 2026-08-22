@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.3.1"
+VERSION = "7.4.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -11076,7 +11076,7 @@ class App(tk.Tk):
         manual_chip_btn_row = ttk.Frame(manual_chip_frame)
         manual_chip_btn_row.pack(anchor='w', pady=(2,0))
         ttk.Button(manual_chip_btn_row, text="Clear All",
-                  command=self._clear_manual_lookup_spells).pack(side='left')
+                  command=self._clear_all_manual_filters).pack(side='left')
         # Only chip add/remove/clear and a master database (re)load trigger
         # an automatic refresh - a realm/armor/level constraint changed
         # elsewhere needs this to pick it up without re-touching any chip.
@@ -11472,20 +11472,65 @@ class App(tk.Tk):
         # item from the build entirely - see _on_results_right_click/
         # _remove_item_from_build, and the two Rebuild buttons above.
         self.search_results_tv.bind('<Button-3>', self._on_results_right_click)
+        # Double-click any row (either display mode) to open the full-detail
+        # chart below - see _on_results_double_click.
+        self.search_results_tv.bind('<Double-1>', self._on_results_double_click)
 
         # Filter controls at bottom
         filter_frame = ttk.Frame(t)
         filter_frame.pack(fill='x', pady=(8,0))
-        
+
         # Remove by Area filter
         ttk.Label(filter_frame, text="Remove Area:").pack(side='left', padx=(0,4))
         self.remove_area_var = tk.StringVar(value='')
         ttk.Entry(filter_frame, textvariable=self.remove_area_var, width=20).pack(side='left', padx=4)
-        ttk.Button(filter_frame, text="Remove Items", 
+        ttk.Button(filter_frame, text="Remove Items",
                   command=self._remove_items_by_area).pack(side='left', padx=4)
-        ttk.Label(filter_frame, text="(e.g. 'Easter 2023', 'Olympics')", 
+        ttk.Label(filter_frame, text="(e.g. 'Easter 2023', 'Olympics')",
                  font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=4)
-        
+
+        # Item Details - the full raw master_data record for whichever row
+        # was last double-clicked (see _on_results_double_click), every
+        # column the loaded master database itself has for that item, not
+        # just the subset of columns the compact table above shows. Not
+        # packed here - starts hidden, and stays hidden until something is
+        # actually double-clicked (see _show_result_detail); "bottom half
+        # of Results" once shown, since it's packed side='bottom' (claims
+        # its own edge first) while results_frame above keeps its own
+        # fill='both', expand=True and simply shrinks to whatever's left.
+        # Each double-click appends to this list rather than replacing it,
+        # so multiple items can be compared side by side; cleared on Close.
+        self._detail_items = []
+        self.result_detail_frame = ttk.LabelFrame(t, text="Item Details", padding=8)
+        detail_header = ttk.Frame(self.result_detail_frame)
+        detail_header.pack(fill='x', pady=(0,6))
+        self.result_detail_title = ttk.Label(detail_header, text="", font=('Arial', 10, 'bold'))
+        self.result_detail_title.pack(side='left')
+        ttk.Button(detail_header, text="✕ Close",
+                  command=self._hide_result_detail).pack(side='right')
+        detail_tree_frame = ttk.Frame(self.result_detail_frame)
+        detail_tree_frame.pack(fill='both', expand=True)
+        # One column per field, single row of values - same "wide table"
+        # shape as every other chart in this app, rather than a Field/
+        # Value pair per row. Columns are rebuilt fresh in
+        # _show_result_detail from whatever fields that specific item's
+        # own master_data record actually has (not fixed here), since
+        # different sheets/rows aren't guaranteed to share the exact same
+        # header set. height=5 reserves room for 5 visible rows so the
+        # chart takes up more of the tab even though only one row of
+        # data is ever actually inserted.
+        self.result_detail_tv = ttk.Treeview(detail_tree_frame, columns=(), show='headings', height=5)
+        detail_vsb = ttk.Scrollbar(detail_tree_frame, orient='vertical',
+                                   command=self.result_detail_tv.yview)
+        detail_hsb = ttk.Scrollbar(detail_tree_frame, orient='horizontal',
+                                   command=self.result_detail_tv.xview)
+        self.result_detail_tv.configure(yscrollcommand=detail_vsb.set, xscrollcommand=detail_hsb.set)
+        self.result_detail_tv.grid(row=0, column=0, sticky='nsew')
+        detail_vsb.grid(row=0, column=1, sticky='ns')
+        detail_hsb.grid(row=1, column=0, sticky='ew')
+        detail_tree_frame.rowconfigure(0, weight=1)
+        detail_tree_frame.columnconfigure(0, weight=1)
+
         # Store the last search results for toggling
         self.last_optimal_results = []
         self.last_all_results = []
@@ -13089,6 +13134,79 @@ class App(tk.Tk):
             self._render_manual_chips()
             self._refresh_manual_lookup_results()
 
+    def _clear_all_manual_filters(self):
+        """Manual tab's "Clear All" button - resets every constraint on
+        every one of Manual's own mini-tabs (Armor Type, Weapon,
+        Melee/Shield, Jewel) and the Only Found In/Events realm filters,
+        plus the Looking Up chips, back to their defaults. Previously
+        this button only cleared the Looking Up chips, which left
+        Melee Weapon Constraints (Damage/Timer/Fumble/Accuracy/Sigil -
+        these apply to weapon items only, never shields) and every
+        other Manual-only filter silently in effect for the rest of
+        the session with no obvious way to spot or reset them - e.g. a
+        forgotten Damage/Accuracy constraint left over from an earlier
+        search would exclude every weapon match while shields kept
+        showing normally, looking exactly like a matching bug."""
+        self.manual_armor_only_var.set(False)
+        self.manual_weapons_only_var.set(False)
+        self.manual_jewel_only_var.set(False)
+        self.manual_min_level_var.set('')
+        self.manual_max_level_var.set('')
+
+        self.manual_realm_filter_all_var.set(False)
+        for var in self.manual_realm_filters.values():
+            var.set(False)
+        for var in self.manual_event_area_vars.values():
+            var.set(False)
+        self.manual_exclude_kaid_var.set(False)
+        self.manual_exclude_event_var.set(False)
+
+        for var in self.manual_armor_type_vars.values():
+            var.set(False)
+        for var in self.manual_slot_only_vars.values():
+            var.set(False)
+        for controls in self.manual_slot_defense_controls.values():
+            controls['use'].set(False)
+            controls['min'].set('normal')
+            controls['max'].set(DEFENSE_LEVELS[-1])
+        for var in self.manual_slot_sigil_vars.values():
+            var.set('Any')
+
+        self.manual_dual_wield_1h_var.set(False)
+        self.manual_dual_wield_1h_main_var.set('Any')
+        self.manual_dual_wield_1h_off_var.set('Any')
+        self.manual_combo_1h_shield_var.set(False)
+        self.manual_combo_1h_shield_style_var.set('Melee')
+        self.manual_combo_1h_shield_damage_var.set('Any')
+        self.manual_combo_2h_shield_var.set(False)
+        self.manual_combo_2h_shield_damage_var.set('Any')
+        self.manual_two_handed_var.set(False)
+        self.manual_two_handed_style_var.set('Melee')
+        self.manual_two_handed_damage_var.set('Any')
+        self.manual_claw_1_var.set(False)
+        self.manual_claw_2_var.set(False)
+        self.manual_claw_1_sigil_var.set('Any')
+        self.manual_claw_2_sigil_var.set('Any')
+        self.manual_combo_fired_1h_shield_var.set(False)
+
+        self.manual_melee_damage_var.set('Any')
+        self.manual_melee_timer_var.set('Any')
+        self.manual_melee_fumble_var.set('Any')
+        self.manual_melee_accuracy_var.set('Any')
+        self.manual_melee_sigil_var.set('Any')
+        self.manual_weapon_weight_min_var.set('')
+        self.manual_weapon_weight_max_var.set('')
+        self.manual_weapon_weight_hard_var.set(False)
+
+        self.manual_shield_defense_var.set('Any')
+        self.manual_shield_sigil_var.set('Any')
+        for var in self.manual_shield_armor_checks.values():
+            var.set(False)
+
+        self.manual_jewel_sigil_var.set('Any')
+
+        self._clear_manual_lookup_spells()
+
     def _clear_manual_lookup_spells(self):
         """Clear every Manual tab lookup chip"""
         self.manual_lookup_spells = []
@@ -13472,6 +13590,43 @@ class App(tk.Tk):
                 row += [item.get('Weight', ''), item.get('Fumble', ''), item.get('Damage', ''),
                        item.get('Timer', ''), item.get('Accuracy', '')]
             self.manual_results_tv.insert('', 'end', iid=str(i), values=row)
+
+        # "None found" feedback rows - a checked category/combo can be
+        # actively part of the search yet end up with zero matches for one
+        # specific slot while a related slot still has plenty (e.g.
+        # 1h/Shield wants both a weapon AND a shield, but every weapon
+        # candidate happens to get excluded by some other active
+        # constraint while shields sail through) - without this, that
+        # silently reads as "the search is broken" rather than "this
+        # exact combination has zero matches right now" (see the real
+        # bug report this came from: a forgotten Melee Weapon Constraint
+        # hid every weapon while shields kept showing normally). Uses
+        # non-numeric iids so a right-click on one of these safely no-ops
+        # via _on_manual_results_right_click's int(iid) ValueError guard,
+        # and they're never added to self._manual_lookup_matches, so they
+        # don't affect the match count or any Add-to-Results-Tab flow.
+        match_slot_counts = {}
+        for item in matches:
+            slot = (item.get('Slot') or '').lower()
+            match_slot_counts[slot] = match_slot_counts.get(slot, 0) + 1
+
+        none_found_slots = []
+        if weapons_checked:
+            if not match_slot_counts.get('weapon'):
+                none_found_slots.append('Weapon')
+            if not match_slot_counts.get('shield'):
+                none_found_slots.append('Shield')
+        if self.manual_jewel_only_var.get() and not match_slot_counts.get('jewel'):
+            none_found_slots.append('Jewel')
+        for slot in checked_slots_only:
+            if not match_slot_counts.get(slot):
+                none_found_slots.append(slot.title())
+
+        for k, label in enumerate(none_found_slots):
+            row = ['', '', '', '', f'No {label} matches found', label, '', '', '', '', '']
+            if weapons_checked:
+                row += ['', '', '', '', '']
+            self.manual_results_tv.insert('', 'end', iid=f'none_{k}', values=row)
 
         self.manual_results_status.config(
             text=f"{len(matches)} matching item{'s' if len(matches) != 1 else ''} found")
@@ -15985,6 +16140,106 @@ class App(tk.Tk):
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _on_results_double_click(self, event):
+        """Double-click any row on the Results tab (Best Per Slot or All
+        Matches - both share this same treeview) to open the Item Details
+        chart at the bottom of the tab, showing every column the loaded
+        master database has for that item (see _find_master_data_record/
+        _show_result_detail) - not just the subset of columns the compact
+        table above already shows. An empty-slot placeholder row ("No
+        suitable item found"/"No available item") or a header/blank-space
+        double-click does nothing. The chart stays hidden until the first
+        double-click ever happens on this tab - see _build_results_tab's
+        own comment for why it isn't packed there."""
+        tv = event.widget
+        if tv.identify_region(event.x, event.y) != 'cell':
+            return
+        row_id = tv.identify_row(event.y)
+        if not row_id:
+            return
+        item_name = tv.set(row_id, 'Item').strip()
+        if not item_name or item_name in ('No suitable item found', 'No available item'):
+            return
+        record = self._find_master_data_record(
+            item_name, tv.set(row_id, 'Slot'), tv.set(row_id, 'Level'), tv.set(row_id, 'Area'))
+        if record is None:
+            return
+        self._show_result_detail(record)
+
+    def _find_master_data_record(self, item_name, slot, level, area):
+        """The full master_data dict for `item_name` - every column the
+        loaded database has, not just Item/Slot/Type/Spell/Sigil/Level/
+        Area/Mob (the subset _build_dict_to_rows shows). Matched by name
+        alone first (case-insensitive); if more than one item shares that
+        exact name (rare, but the item list has no hard uniqueness
+        guarantee), Slot/Level/Area - already visible on the clicked row
+        - narrow it down to the specific one actually shown, same
+        granularity _bank_item_key uses elsewhere. Falls back to the
+        first name match if none of those narrow it to exactly one,
+        rather than showing nothing at all."""
+        name_l = (item_name or '').strip().lower()
+        if not name_l:
+            return None
+        candidates = [it for it in self.master_data if (it.get('Item') or '').strip().lower() == name_l]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        slot_l = (slot or '').strip().lower()
+        level_s = str(level or '').strip()
+        area_s = (area or '').strip()
+        narrowed = [it for it in candidates
+                   if (it.get('Slot') or '').strip().lower() == slot_l
+                   and str(it.get('Level') or '').strip() == level_s
+                   and (it.get('Area') or '').strip() == area_s]
+        return narrowed[0] if narrowed else candidates[0]
+
+    def _show_result_detail(self, item):
+        """Populates and shows the Item Details chart (see
+        _build_results_tab) with every field `item` (a full master_data
+        record) actually has. Double-clicking a new item while the chart
+        is already open APPENDS a new row rather than replacing what's
+        there, so multiple items can be compared side by side; the
+        column set is the union of every shown item's own fields (in
+        first-seen order), so an item missing a field some other shown
+        item has just gets a blank cell there rather than losing the
+        column. Double-clicking the same item again does not duplicate
+        its row. Close (_hide_result_detail) clears the whole list."""
+        if item not in self._detail_items:
+            self._detail_items.append(item)
+        fields = []
+        seen = set()
+        for it in self._detail_items:
+            for f in it.keys():
+                if f not in seen:
+                    seen.add(f)
+                    fields.append(f)
+        tv = self.result_detail_tv
+        tv.delete(*tv.get_children())
+        tv['columns'] = fields
+        for field in fields:
+            tv.heading(field, text=field, anchor='w')
+            # Wide enough for the field name itself plus a little
+            # breathing room - real values vary hugely in length (a
+            # blank Weight vs. a long Area name), so this is a starting
+            # point to scroll from, not an attempt to fit everything.
+            tv.column(field, width=max(70, len(field) * 9 + 24), stretch=False, anchor='w')
+        for it in self._detail_items:
+            tv.insert('', 'end', values=[it.get(f, '') for f in fields])
+        if len(self._detail_items) == 1:
+            self.result_detail_title.config(text=item.get('Item') or '(unnamed item)')
+        else:
+            self.result_detail_title.config(text=f"{len(self._detail_items)} items")
+        self.result_detail_frame.pack(side='bottom', fill='both', pady=(8,0))
+
+    def _hide_result_detail(self):
+        """"✕ Close" on the Item Details chart - hides it entirely and
+        clears the accumulated item list, so the Results tab goes back
+        to exactly how it looked before anything was ever double-clicked
+        and the next double-click starts a fresh comparison."""
+        self._detail_items = []
+        self.result_detail_frame.pack_forget()
 
     def _remove_manual_row_from_results(self, mode, row_index):
         """Removes one manually-added row (see _add_manual_item_to_results)

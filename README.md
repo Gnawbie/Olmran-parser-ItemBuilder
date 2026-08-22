@@ -140,7 +140,12 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.3.1 (Current)
+### v7.4.0 (Current)
+- **Build/Results tab - Item Details chart**: double-clicking any row in the results table (Best Per Slot or All Matches) opens an **Item Details** chart at the bottom of the tab, showing every column the loaded master database has for that item - not just the subset shown in the compact table above. Double-clicking another item **adds it as a new row** instead of replacing the first, so multiple items can be compared side by side (the column set is the union of every shown item's own fields); double-clicking the same item again doesn't duplicate its row. **Close** hides the chart and clears the comparison, so the next double-click starts fresh.
+- **Build/Manual tab - "Clear All" now resets every filter**, not just the Looking Up spell chips: Armor Type, Weapon Types/Combo's, Melee Weapon Constraints, Shield Constraints, Jewel, and Only Found In/Events. Previously a constraint left set on the Melee/Shield mini-tab (e.g. Damage/Accuracy) stayed silently active for the rest of the session with no obvious way to spot or reset it - since those apply only to weapon items and never to shields, a forgotten one could make every weapon vanish from a search while shields kept showing normally, looking exactly like a broken search.
+- **Build/Manual tab - "No <Slot> matches found" rows**: when a checked category/combo (Weapons, Jewel, or a specific "only this piece" armor slot) is actively part of the search but comes up with zero matches for that particular slot while a related slot still has results, the results list now shows a row saying so directly, instead of the missing slot just silently not appearing.
+
+### v7.3.1
 - **Build search fix**: a mandatory Weapon/Weapon Off-Hand/Shield slot (forced to be filled by a checked Weapon Combo) could get filled with an item whose only spell was an already-covered wanted base at a different, useless tier - e.g. Wisdom.iii already covered by a Jewel, and a Shield offering Wisdom.ii (which doesn't stack with it in-game, and contributes nothing) getting picked over one with no spell at all. Every other slot already refused a redundant spell like this; Weapon/Weapon Off-Hand/Shield now do too - they still always get filled with something (a genuinely new-spell item, or a spell-less one), just never specifically a redundant one. If the only candidate for a mandatory slot is redundant-spell-only, the slot is now left empty instead.
 
 ### v7.3.0

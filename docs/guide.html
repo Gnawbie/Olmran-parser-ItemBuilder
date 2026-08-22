@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v7.3.1</p>
+    <p class="tagline">Full usage guide - v7.4.0</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -316,6 +316,8 @@
       <li>Right-click any row in the results table for <b>Add to Results Tab</b> - it adds into whichever Results view is currently showing (Best Per Slot, All Matches, or Manual's own flat list). For Best Per Slot/All Matches, an empty slot of the matching type is filled in place first if one's available; only once every empty slot of that type is already taken does the addition group as an extra row alongside it (so more than one item can occupy the same slot, e.g. 3 different body pieces - this is a curated addition, not a computed build). Manually-added gear survives Remove/Rebuild/Search Missing Slots elsewhere in the build, rather than only lasting until the next one of those recomputes the list. Right-click a manually-added row in the Results tab itself for <b>Remove</b>. Adding an item never switches away from the Manual tab.</li>
       <li>Click any column header in the results table to sort by it; click again to reverse.</li>
       <li>The results table leads with the same <b>Bank</b> (📦) and <b>Locker</b> icon columns as the real Results tab - a plain 📦 marks anything you've already saved anywhere, or a bold "L" plus the first 4 letters of the Locker's name for a Locker-sourced item. Purely informational here, since Manual has no build/scoring concept of its own to prioritize owned items within.</li>
+      <li>If a checked category/combo (Weapons, Jewel, or a specific "only this piece" armor slot) is actively part of the search but comes up with zero matches for one particular slot while a related slot still has results, the table shows a <b>"No &lt;Slot&gt; matches found"</b> row for it directly, rather than that slot just silently not appearing - e.g. checking a Weapon/Shield combo where only shields happen to satisfy every other active constraint shows "No Weapon matches found" alongside the shield rows.</li>
+      <li><b>Clear All</b> resets every Manual-only filter back to its default - Armor Type, Weapon Types/Combo's, Melee Weapon Constraints, Shield Constraints, Jewel, Only Found In/Events, and the Looking Up spell chips - not just the chips. A constraint left set on the Melee/Shield mini-tab (Damage/Timer/Fumble/Accuracy/Sigil - these apply to weapon items only, never shields) has no other obvious way to reset once you've moved to a different mini-tab.</li>
     </ul>
 
     <h3>3.8 Trade</h3>
@@ -341,6 +343,7 @@
       <li>Columns: Bank icon, <b>Locker</b>, Slot, Item, Type, Spell, Sigil, Level, Mob, Area, and <b>Alt Options</b> (other items that tied for that slot). The Locker column shows the first 4 letters of a Locker character's name whenever a row's item came from one - the Bank column shows a bold "L" instead of the usual 📦 for those rows. Edibles show as <b>Stomach</b> in the Slot column.</li>
       <li>Every slot the search actually tried to fill shows a row, even if it stays empty ("No suitable item found") - this no longer depends on whether some other slot happened to leave a wanted spell uncovered.</li>
       <li>A row added via the Manual tab (see 3.7) shows "Manual Input" in Alt Options - right-click it for a simple <b>Remove</b>, distinct from the options below (which resolve back to a real build slot).</li>
+      <li><b>Double-click any row</b> to open an <b>Item Details</b> chart at the bottom of the tab, showing every column the loaded master database has for that item - not just the subset shown above. Double-clicking another item adds it as a new row instead of replacing the first, so multiple items can be compared side by side (the column set becomes the union of every shown item's own fields); double-clicking the same item again doesn't add a duplicate. <b>✕ Close</b> hides the chart and clears the comparison, so the next double-click starts fresh.</li>
       <li><b>🗑 Clear</b> - resets the Results tab back to its empty starting state (no build, no rows, Build Variant disabled). Also clears manually-added items, so they won't silently reappear the next time a search runs.</li>
       <li><b>Right-click a filled item</b> to remove it from the build - the slot stays visible showing "No suitable item found" rather than disappearing, and it stays excluded from every future search until a genuinely new search runs. Two buttons appear once something's been removed:
         <ul>
