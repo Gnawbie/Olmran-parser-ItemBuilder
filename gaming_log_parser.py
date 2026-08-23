@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.4.0"
+VERSION = "7.5.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -71,6 +71,41 @@ DARK_PALETTE = {
 # in the same rank order they were progressively darker in light mode
 # (readability need is the same, just inverted); link/status colors get
 # a brighter variant with equivalent hue for dark-background contrast.
+# The "Darkness" slider (see _build_update_bar) scales just these
+# background-family DARK_PALETTE keys toward black - foreground/text
+# keys (fg, entry_fg, tree_fg, tree_selected_fg, select_fg) and the
+# selection-accent keys (tree_selected_bg, select_bg) are deliberately
+# left out, so text stays readable and the selection highlight stays
+# visually distinct no matter how dark the backgrounds get.
+_DARK_INTENSITY_SCALED_KEYS = ('bg', 'entry_bg', 'tree_bg', 'button_bg', 'button_active_bg',
+                               'tab_bg', 'tab_selected_bg', 'border', 'border_subtle')
+
+def _scale_hex_brightness(hex_color, scale):
+    """Multiplies each RGB channel of `hex_color` by `scale` (0-1) - a
+    uniform brightness scale rather than a flat blend toward black,
+    so colors that started apart (e.g. tab_bg vs bg) stay distinguishable
+    from each other at any scale, just uniformly dimmer."""
+    hex_color = hex_color.lstrip('#')
+    r, g, b = (int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    scaled = tuple(max(0, min(255, round(c * scale))) for c in (r, g, b))
+    return '#{:02x}{:02x}{:02x}'.format(*scaled)
+
+def _dark_palette_for_intensity(intensity):
+    """DARK_PALETTE, with its background-family colors scaled darker by
+    `intensity` (0-100). 0 reproduces DARK_PALETTE exactly (today's
+    default look, unchanged) - 100 scales those colors down to 8% of
+    their original brightness (near-black, but not literally #000000,
+    so bg/tab_bg/button_bg etc. stay just barely distinguishable from
+    each other even at max darkness)."""
+    intensity = max(0, min(100, intensity))
+    scale = 1.0 - (intensity / 100.0) * 0.92
+    if scale >= 0.999:
+        return DARK_PALETTE
+    palette = dict(DARK_PALETTE)
+    for key in _DARK_INTENSITY_SCALED_KEYS:
+        palette[key] = _scale_hex_brightness(DARK_PALETTE[key], scale)
+    return palette
+
 _LIGHT_TO_DARK_FG_REMAP = {
     '#222': '#eeeeee', '#222222': '#eeeeee',
     '#444': '#dddddd', '#444444': '#dddddd',
@@ -1419,6 +1454,27 @@ def _weapon_style_matches(item_type, style):
         return False
     is_direct = 'direct' in item_type
     return is_direct if style == 'Direct' else not is_direct
+
+
+def _aggregate_hits_by_mob(hits):
+    """Rolls a flat list of damage hits (each a dict with 'mob'/'damage')
+    up into the same per-mob shape _compute_damage_stats' own data['mobs']
+    uses ({'mob','damage','hits','avg'}, sorted by Damage descending) -
+    used to build the Damage Counter's per-weapon/spell tabs (see
+    _build_damage_report_frame), where each tab needs this same breakdown
+    but scoped to just that one weapon/spell's own hits rather than every
+    hit in the report."""
+    totals = {}
+    for h in hits:
+        mob = h['mob']
+        entry = totals.setdefault(mob, {'mob': mob, 'damage': 0, 'hits': 0})
+        entry['damage'] += h['damage']
+        entry['hits'] += 1
+    mobs = list(totals.values())
+    for m in mobs:
+        m['avg'] = m['damage'] / m['hits'] if m['hits'] else 0
+    mobs.sort(key=lambda m: m['damage'], reverse=True)
+    return mobs
 
 
 def _item_castable_display(item):
@@ -3584,6 +3640,7 @@ class App(tk.Tk):
                     self.armor_defaults = config.get('armor_defaults', {})
                     self.weapon_combo_defaults = config.get('weapon_combo_defaults', {})
                     self._persisted_dark_mode = config.get('dark_mode', False)
+                    self._persisted_dark_intensity = config.get('dark_intensity', 0)
                     # Raw data only (no tk.StringVar yet - the Saved Builds tab
                     # isn't built until later in __init__) - _build_saved_builds_tab
                     # turns this into self.saved_builds.
@@ -3737,6 +3794,7 @@ class App(tk.Tk):
                 'armor_defaults': getattr(self, 'armor_defaults', {}),
                 'weapon_combo_defaults': getattr(self, 'weapon_combo_defaults', {}),
                 'dark_mode': bool(getattr(self, 'dark_mode_var', None) and self.dark_mode_var.get()),
+                'dark_intensity': (self.dark_intensity_var.get() if getattr(self, 'dark_intensity_var', None) else 0),
                 'saved_builds': [
                     {'name': save['name'].get(), 'headers': list(save['headers']),
                      'rows': [list(row) for row in save['rows']]}
@@ -3883,15 +3941,43 @@ class App(tk.Tk):
 
         button_row = ttk.Frame(bar)
         button_row.pack(side='top', anchor='e')
-        # Persisted (see _load_config/_save_config's own 'dark_mode' key) -
-        # applied once at the end of __init__ if it was on last session,
-        # after every widget already exists (see _apply_theme's own
-        # docstring for why toggling always works on a fully-built tree
-        # instead of needing this button built first).
+        # Persisted (see _load_config/_save_config's own 'dark_mode'/
+        # 'dark_intensity' keys) - applied once at the end of __init__ if
+        # it was on last session, after every widget already exists (see
+        # _apply_theme's own docstring for why toggling always works on a
+        # fully-built tree instead of needing this button built first).
         self.dark_mode_var = tk.BooleanVar(value=getattr(self, '_persisted_dark_mode', False))
-        self.dark_mode_button = ttk.Button(button_row, text="Dark Mode",
+        # A plain tk.Frame (not ttk) so highlightbackground/highlightthickness
+        # actually draw a visible border regardless of the active ttk theme -
+        # groups the Dark Mode button with its own Darkness slider as one
+        # visual unit, pale white so it reads clearly in both Light and Dark
+        # Mode without needing its own light/dark variant.
+        dark_mode_group = tk.Frame(button_row, highlightbackground='#eaeaea',
+                                   highlightcolor='#eaeaea', highlightthickness=1, bd=0)
+        dark_mode_group.pack(side='left', padx=(0,8))
+        self.dark_mode_button = ttk.Button(dark_mode_group, text="Dark Mode",
                                            command=self._toggle_dark_mode)
-        self.dark_mode_button.pack(side='left', padx=(0,8))
+        self.dark_mode_button.pack(side='left', padx=2, pady=2)
+        # Darkness slider - scales DARK_PALETTE's background-family colors
+        # toward black in real time (see _dark_palette_for_intensity);
+        # 0 (default) reproduces today's exact DARK_PALETTE look, so
+        # nobody who never touches this sees any change. Only meaningful
+        # while Dark Mode is actually on - disabled otherwise (see
+        # _toggle_dark_mode), though the value itself is still remembered
+        # either way.
+        self.dark_intensity_var = tk.DoubleVar(value=getattr(self, '_persisted_dark_intensity', 0))
+        # Debounce handle for _on_dark_intensity_change (see its own
+        # docstring) - None whenever no re-theme is currently scheduled.
+        self._dark_intensity_apply_after_id = None
+        self.dark_intensity_label = ttk.Label(dark_mode_group, text="", width=5)
+        self.dark_intensity_scale = ttk.Scale(dark_mode_group, from_=0, to=100, orient='horizontal',
+                                              length=90, variable=self.dark_intensity_var,
+                                              command=self._on_dark_intensity_change)
+        self.dark_intensity_scale.pack(side='left', padx=(4,2), pady=2)
+        self.dark_intensity_label.pack(side='left', padx=(0,4), pady=2)
+        self.dark_intensity_scale.bind('<ButtonRelease-1>', lambda e: self._save_config())
+        self._update_dark_intensity_label()
+        self.dark_intensity_scale.config(state='normal' if self.dark_mode_var.get() else 'disabled')
         ttk.Button(button_row, text="Download Page",
                   command=self._open_download_page).pack(side='left', padx=(0,8))
         self.update_check_button = ttk.Button(button_row, text="Check for Update",
@@ -3932,10 +4018,48 @@ class App(tk.Tk):
     def _toggle_dark_mode(self):
         """"Dark Mode" button - flips self.dark_mode_var and re-applies the
         theme immediately (see _apply_theme), then persists the choice so
-        it's remembered next launch."""
+        it's remembered next launch. Also enables/disables the Darkness
+        slider alongside it - only meaningful while Dark Mode is actually
+        on, though its own value is still kept either way. Cancels any
+        re-theme still queued from a slider drag (see
+        _on_dark_intensity_change) first, so a stale scheduled call can't
+        fire after this toggle's own, more current, apply."""
+        if self._dark_intensity_apply_after_id is not None:
+            self.after_cancel(self._dark_intensity_apply_after_id)
+            self._dark_intensity_apply_after_id = None
         self.dark_mode_var.set(not self.dark_mode_var.get())
+        self.dark_intensity_scale.config(state='normal' if self.dark_mode_var.get() else 'disabled')
         self._apply_theme()
         self._save_config()
+
+    def _on_dark_intensity_change(self, _value=None):
+        """Darkness slider's live command. Updates the %-label immediately
+        (cheap), but DEBOUNCES the actual re-theme: _apply_theme() walks
+        every widget in the entire app (see its own docstring), and a
+        mouse drag fires this on essentially every pixel of movement -
+        running the full walk on each one was too slow to keep up, so in
+        practice only the very first and very last tick of a drag ever
+        actually got rendered, making a genuinely continuous slider look
+        and feel like a binary on/off toggle. Collapsing rapid-fire ticks
+        into a single apply ~40ms after the last one keeps every real
+        intermediate darkness level reachable while still feeling
+        responsive. Saving to disk happens separately, only on mouse
+        release (see the scale's own <ButtonRelease-1> binding in
+        _build_update_bar), so a drag doesn't hit the config file on
+        every intermediate tick either."""
+        self._update_dark_intensity_label()
+        if not self.dark_mode_var.get():
+            return
+        if self._dark_intensity_apply_after_id is not None:
+            self.after_cancel(self._dark_intensity_apply_after_id)
+        self._dark_intensity_apply_after_id = self.after(40, self._apply_dark_intensity_now)
+
+    def _apply_dark_intensity_now(self):
+        self._dark_intensity_apply_after_id = None
+        self._apply_theme()
+
+    def _update_dark_intensity_label(self):
+        self.dark_intensity_label.config(text=f"{round(self.dark_intensity_var.get())}%")
 
     def _apply_theme(self):
         """Switches the whole app between LIGHT_PALETTE and DARK_PALETTE
@@ -3969,10 +4093,15 @@ class App(tk.Tk):
         ~10 right-click menus is built fresh per click, well after this
         runs)."""
         dark = self.dark_mode_var.get()
-        p = DARK_PALETTE if dark else LIGHT_PALETTE
+        p = _dark_palette_for_intensity(self.dark_intensity_var.get()) if dark else LIGHT_PALETTE
 
         style = ttk.Style(self)
-        style.theme_use('clam')
+        # theme_use() re-initializes the whole theme even when it's
+        # already 'clam' - skipping the redundant call when dragging the
+        # Darkness slider (see _on_dark_intensity_change) noticeably cuts
+        # the cost of each re-theme.
+        if style.theme_use() != 'clam':
+            style.theme_use('clam')
         style.configure('.', background=p['bg'], foreground=p['fg'],
                         fieldbackground=p['entry_bg'])
         style.configure('TFrame', background=p['bg'])
@@ -6968,12 +7097,15 @@ class App(tk.Tk):
             ttk.Button(header_row, text="💾 Save",
                       command=lambda: self._save_damage_report_prompt(data)).pack(side='right')
 
-        # Two views of the same data: "Per-Mob Summary" (aggregated) and
-        # "Every Hit" (one row per hit) - the latter is for testing damage
-        # on a specific mob when other mobs inevitably get hit too during
-        # the same fight; sorting it by Mob (click the column header)
-        # groups every hit against that one mob together, so they're easy
-        # to pick out visually without needing to filter anything by hand.
+        # Three kinds of view on the same data: "Per-Mob Summary"
+        # (aggregated across every weapon/spell), "Every Hit" (one row per
+        # hit, for testing damage on a specific mob when other mobs
+        # inevitably get hit too during the same fight - sorting it by Mob
+        # groups every hit against that one mob together), and one tab per
+        # distinct weapon/spell actually used (see below) - each its own
+        # Mob/Damage/Hits/Avg breakdown scoped to just that weapon/spell,
+        # so "how much of my damage came from Weapon A vs. Spell B" doesn't
+        # require picking through Every Hit by hand.
         inner_nb = ttk.Notebook(frame, style='RealmMini.TNotebook')
         inner_nb.pack(fill='both', expand=True, pady=(10,0))
         summary_tab = ttk.Frame(inner_nb, padding=8)
@@ -7020,6 +7152,41 @@ class App(tk.Tk):
             hit_row_source[iid] = (h['file'], h.get('path', ''), h.get('line_num', 1))
 
         _attach_open_log_menu(hit_tv, hit_row_source, self)
+
+        # One tab per distinct weapon/spell actually used (see this
+        # method's own docstring/the comment above inner_nb) - most total
+        # damage first, since that's the more useful read ("what's my
+        # biggest damage source") than an arbitrary alphabetical order.
+        # A hit with no weapon/spell attributed at all (see
+        # _compute_damage_stats' own docstring on when that can happen)
+        # is grouped under "(unknown)" rather than silently dropped.
+        by_weapon = {}
+        for h in data.get('hits', []):
+            weapon = (h.get('weapon') or '').strip() or '(unknown)'
+            by_weapon.setdefault(weapon, []).append(h)
+        weapon_totals = sorted(by_weapon.items(), key=lambda kv: sum(x['damage'] for x in kv[1]), reverse=True)
+
+        for weapon, weapon_hits in weapon_totals:
+            weapon_tab = ttk.Frame(inner_nb, padding=8)
+            inner_nb.add(weapon_tab, text=weapon)
+
+            weapon_total = sum(h['damage'] for h in weapon_hits)
+            ttk.Label(weapon_tab, text=f"Total Damage Dealt: {weapon_total:,}",
+                     font=('Arial', 10, 'bold')).pack(anchor='w', pady=(0,6))
+
+            weapon_tv_frame = ttk.Frame(weapon_tab)
+            weapon_tv_frame.pack(fill='both', expand=True)
+            weapon_tv = ttk.Treeview(weapon_tv_frame, columns=cols, show='headings', height=12)
+            for c, w, anchor in zip(cols, (300, 110, 90, 100), ('w', 'center', 'center', 'center')):
+                weapon_tv.heading(c, text=c, command=lambda c=c, tv=weapon_tv: _sort_treeview_column(tv, c, False))
+                weapon_tv.column(c, width=w, anchor=anchor)
+            weapon_vsb = ttk.Scrollbar(weapon_tv_frame, command=weapon_tv.yview)
+            weapon_tv.configure(yscrollcommand=weapon_vsb.set)
+            weapon_tv.pack(side='left', fill='both', expand=True)
+            weapon_vsb.pack(side='right', fill='y')
+
+            for m in _aggregate_hits_by_mob(weapon_hits):
+                weapon_tv.insert('', 'end', values=(m['mob'], f"{m['damage']:,}", m['hits'], f"{m['avg']:,.1f}"))
 
         return frame
 
@@ -8145,6 +8312,11 @@ class App(tk.Tk):
             menu.tk_popup(event.x_root, event.y_root)
 
         tv.bind('<Button-3>', on_right_click)
+        # Double-click opens the Results tab's own Item Details chart for
+        # this row (see _on_item_chart_double_click) - every current use
+        # of this table has an 'Item' column, so this "just works"; a
+        # future use without one would safely no-op instead of erroring.
+        tv.bind('<Double-1>', self._on_item_chart_double_click)
         return tv
 
     def _item_mini_tab_close_click(self, event):
@@ -10502,6 +10674,7 @@ class App(tk.Tk):
             self.bank_saved_tv.column(col, width=saved_col_widths[col], stretch=False,
                                       anchor=('w' if col == 'Item' else 'center'))
         self.bank_saved_tv.bind('<Button-1>', self._on_saved_tv_click)
+        self.bank_saved_tv.bind('<Double-1>', self._on_item_chart_double_click)
 
         bank_saved_vsb = ttk.Scrollbar(bank_saved_frame, orient='vertical', command=self.bank_saved_tv.yview)
         bank_saved_hsb = ttk.Scrollbar(bank_saved_frame, orient='horizontal', command=self.bank_saved_tv.xview)
@@ -11133,6 +11306,11 @@ class App(tk.Tk):
         # different body pieces) - this is a flat, user-curated list, not a
         # slot-keyed build.
         self.manual_results_tv.bind('<Button-3>', self._on_manual_results_right_click)
+        # Double-click opens the Results tab's own Item Details chart for
+        # this row (see _on_item_chart_double_click) - a "None found"
+        # placeholder row (see _refresh_manual_lookup_results) has no
+        # real Item value, so it safely no-ops.
+        self.manual_results_tv.bind('<Double-1>', self._on_item_chart_double_click)
         self.manual_added_items = []
         # Items added via the Manual tab while Best Per Slot/All Matches was
         # showing (see _add_manual_item_to_results) - unlike manual_added_
@@ -11289,6 +11467,7 @@ class App(tk.Tk):
         trade_search_hsb = ttk.Scrollbar(trade_search_tree_frame, orient='horizontal',
                                          command=self.trade_search_tv.xview)
         self.trade_search_tv.configure(yscrollcommand=trade_search_vsb.set, xscrollcommand=trade_search_hsb.set)
+        self.trade_search_tv.bind('<Double-1>', self._on_item_chart_double_click)
         self.trade_search_tv.grid(row=0, column=0, sticky='nsew')
         trade_search_vsb.grid(row=0, column=1, sticky='ns')
         trade_search_hsb.grid(row=1, column=0, sticky='ew')
@@ -11316,6 +11495,7 @@ class App(tk.Tk):
         trade_vsb = ttk.Scrollbar(trade_tree_frame, orient='vertical', command=self.trade_tv.yview)
         trade_hsb = ttk.Scrollbar(trade_tree_frame, orient='horizontal', command=self.trade_tv.xview)
         self.trade_tv.configure(yscrollcommand=trade_vsb.set, xscrollcommand=trade_hsb.set)
+        self.trade_tv.bind('<Double-1>', self._on_item_chart_double_click)
         self.trade_tv.grid(row=0, column=0, sticky='nsew')
         trade_vsb.grid(row=0, column=1, sticky='ns')
         trade_hsb.grid(row=1, column=0, sticky='ew')
@@ -11473,8 +11653,8 @@ class App(tk.Tk):
         # _remove_item_from_build, and the two Rebuild buttons above.
         self.search_results_tv.bind('<Button-3>', self._on_results_right_click)
         # Double-click any row (either display mode) to open the full-detail
-        # chart below - see _on_results_double_click.
-        self.search_results_tv.bind('<Double-1>', self._on_results_double_click)
+        # chart below - see _on_item_chart_double_click.
+        self.search_results_tv.bind('<Double-1>', self._on_item_chart_double_click)
 
         # Filter controls at bottom
         filter_frame = ttk.Frame(t)
@@ -11490,7 +11670,8 @@ class App(tk.Tk):
                  font=('Arial', 8, 'italic'), foreground='#666').pack(side='left', padx=4)
 
         # Item Details - the full raw master_data record for whichever row
-        # was last double-clicked (see _on_results_double_click), every
+        # was last double-clicked, anywhere in the app (see
+        # _on_item_chart_double_click), every
         # column the loaded master database itself has for that item, not
         # just the subset of columns the compact table above shows. Not
         # packed here - starts hidden, and stays hidden until something is
@@ -11829,6 +12010,7 @@ class App(tk.Tk):
             vsb2 = ttk.Scrollbar(tree_frame, orient='vertical', command=tv.yview)
             hsb2 = ttk.Scrollbar(tree_frame, orient='horizontal', command=tv.xview)
             tv.configure(yscrollcommand=vsb2.set, xscrollcommand=hsb2.set)
+            tv.bind('<Double-1>', self._on_item_chart_double_click)
             tv.grid(row=0, column=0, sticky='nsew')
             vsb2.grid(row=0, column=1, sticky='ns')
             hsb2.grid(row=1, column=0, sticky='ew')
@@ -12479,9 +12661,16 @@ class App(tk.Tk):
         tree_frame = ttk.Frame(split_frame)
         tree_frame.pack(side='left', fill='both', expand=True)
 
-        cols = ('Realm', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Sigil', 'Level', 'Castable?')
+        # Weight/Fumble/Damage/Timer/Accuracy - same weapon-only columns
+        # Manual's own results table adds while Weapons is checked (see
+        # _set_manual_results_columns) - blank for every non-weapon row,
+        # since this chart mixes every slot type for one area at once
+        # rather than filtering to just weapons the way Manual can.
+        cols = ('Realm', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Sigil', 'Level', 'Castable?',
+                'Weight', 'Fumble', 'Damage', 'Timer', 'Accuracy')
         col_widths = {'Realm': 70, 'Mob': 160, 'Item': 220, 'Slot': 55, 'Type': 110,
-                     'Spell': 110, 'Sigil': 60, 'Level': 45, 'Castable?': 70}
+                     'Spell': 110, 'Sigil': 60, 'Level': 45, 'Castable?': 70,
+                     'Weight': 55, 'Fumble': 70, 'Damage': 70, 'Timer': 55, 'Accuracy': 70}
         self.area_items_tv = ttk.Treeview(tree_frame, columns=cols, show='headings', height=20)
         for col in cols:
             self.area_items_tv.heading(col, text=col, anchor='center',
@@ -12491,6 +12680,13 @@ class App(tk.Tk):
         vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=self.area_items_tv.yview)
         hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=self.area_items_tv.xview)
         self.area_items_tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        # Double-click opens the Results tab's own Item Details chart for
+        # this row (see _on_item_chart_double_click) - this chart has no
+        # 'Area' column of its own (every row already shares the one
+        # picked area), so disambiguation there falls back to Slot/Level
+        # alone, same graceful degradation _find_master_data_record
+        # already documents for any chart missing one of those fields.
+        self.area_items_tv.bind('<Double-1>', self._on_item_chart_double_click)
 
         self.area_items_tv.grid(row=0, column=0, sticky='nsew')
         vsb.grid(row=0, column=1, sticky='ns')
@@ -12813,6 +13009,8 @@ class App(tk.Tk):
                 item.get('Realm', ''), item.get('Mob', ''), item.get('Item', ''),
                 item.get('Slot', ''), item.get('Type', ''), item.get('Spell', ''),
                 item.get('Sigil', ''), item.get('Level', ''), _item_castable_display(item),
+                item.get('Weight', ''), item.get('Fumble', ''), item.get('Damage', ''),
+                item.get('Timer', ''), item.get('Accuracy', ''),
             ))
         self.area_items_status.config(text=f"{len(matches)} item(s)")
 
@@ -15825,6 +16023,7 @@ class App(tk.Tk):
                       command=lambda c=col, t=tv: _sort_treeview_column(t, c, False))
             tv.column(col, width=saved_col_widths[col], stretch=False, anchor=('w' if col == 'Item' else 'center'))
         tv.bind('<Button-1>', self._on_saved_tv_click)
+        tv.bind('<Double-1>', self._on_item_chart_double_click)
         # _on_saved_tv_click/_toggle_shared_item need to know which
         # character this particular treeview belongs to - Main's own tree
         # has no single owning character (it's every character's items
@@ -16141,31 +16340,48 @@ class App(tk.Tk):
         finally:
             menu.grab_release()
 
-    def _on_results_double_click(self, event):
-        """Double-click any row on the Results tab (Best Per Slot or All
-        Matches - both share this same treeview) to open the Item Details
-        chart at the bottom of the tab, showing every column the loaded
-        master database has for that item (see _find_master_data_record/
-        _show_result_detail) - not just the subset of columns the compact
-        table above already shows. An empty-slot placeholder row ("No
-        suitable item found"/"No available item") or a header/blank-space
-        double-click does nothing. The chart stays hidden until the first
-        double-click ever happens on this tab - see _build_results_tab's
-        own comment for why it isn't packed there."""
+    def _on_item_chart_double_click(self, event):
+        """Generic double-click handler shared by EVERY item chart in the
+        app (Results, Manual, Area Items, Bank Build's Character/Locker/
+        Trade tabs, Saved Builds, Item Counter's drop-rate charts, etc.) -
+        not just the Results tab's own search results. Resolves the
+        clicked row to its full master_data record (see
+        _find_master_data_record, using whichever of Slot/Level/Area that
+        particular chart's own columns happen to have - gracefully
+        degrading to name-only matching for a chart with none of those,
+        like Item Counter's Zone/Mob/Item/Drops/Kills table) and shows it
+        in the Results tab's own Item Details chart (see
+        _show_result_detail) - the exact same panel/compare-multiple-
+        items feature, just reachable from every other item chart too,
+        not a separate one. Switches to the Results tab so the chart is
+        actually visible regardless of which tab the double-click
+        happened on (a no-op if already there). Does nothing for a
+        header/blank-space double-click, an empty-slot placeholder row,
+        or any row whose Item name doesn't resolve to a real master_data
+        record (e.g. a crafting material that isn't in the equipment
+        database at all) - _find_master_data_record already returns None
+        for both of those, so no separate placeholder-text check is
+        needed here."""
         tv = event.widget
         if tv.identify_region(event.x, event.y) != 'cell':
             return
         row_id = tv.identify_row(event.y)
         if not row_id:
             return
-        item_name = tv.set(row_id, 'Item').strip()
-        if not item_name or item_name in ('No suitable item found', 'No available item'):
+        cols = tv['columns']
+        if 'Item' not in cols:
             return
-        record = self._find_master_data_record(
-            item_name, tv.set(row_id, 'Slot'), tv.set(row_id, 'Level'), tv.set(row_id, 'Area'))
+        item_name = tv.set(row_id, 'Item').strip()
+        if not item_name:
+            return
+        slot = tv.set(row_id, 'Slot') if 'Slot' in cols else ''
+        level = tv.set(row_id, 'Level') if 'Level' in cols else ''
+        area = tv.set(row_id, 'Area') if 'Area' in cols else ''
+        record = self._find_master_data_record(item_name, slot, level, area)
         if record is None:
             return
         self._show_result_detail(record)
+        self.notebook.select(self.tab_results)
 
     def _find_master_data_record(self, item_name, slot, level, area):
         """The full master_data dict for `item_name` - every column the
