@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.5.0"
+VERSION = "7.5.1"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -2650,6 +2650,169 @@ CRAFTING_ENCHANTS = [
     {'item': 'shard of potential', 'realm': 'Kaid', 'area': 'Kaid Religious Quarters', 'mob': 'priest of Ahrimal', 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Shock Sigil v', 'level': 60, 'note': 'From Kaid'},
     {'item': 'small vial of magma', 'realm': 'Kaid', 'area': 'Peaks of Ahrimal', 'mob': 'Ahrimal zealot', 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Fire Sigil v', 'level': 60, 'note': 'From Kaid'},
     {'item': 'translucent rock', 'realm': 'Kaid', 'area': 'Green Valley', 'mob': 'green valley ranger', 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Earth Sigil v', 'level': 60, 'note': 'From Kaid'},
+]
+
+# Enchant scrolls - Master File.xlsx's own "Scribe List" sheet. Unlike
+# CRAFTING_ENCHANTS above (which answers "where does this raw material
+# drop"), a scroll is crafted FROM materials rather than being one
+# itself, so each entry here is a recipe: item (the scroll's own name),
+# realm ('All' for Weapon/Armor - any realm can scribe those; a
+# specific realm for Sigil, same 2-elements-per-realm split as Direct,
+# with no separate Kaid tier since every element already reaches tier
+# vi within its own realm here), level, category/tier/use_display (the
+# exact same shape CRAFTING_ENCHANTS uses - e.g. "Embed Shock Sigil ii"
+# starts with "Embed " as a Weapon Sigil, "Shock Protect Sigil ii"
+# doesn't as an Armor Sigil - so _enchant_sigil_kind/_enchant_sigil_
+# element apply unchanged to this data too), and mat1/mat1_value/mat2/
+# mat2_value (two shop-bought materials and their gold cost), mat3 (a
+# dropped material - see CRAFTING_MATERIAL_SOURCES/CRAFTING_ENCHANTS
+# for where it comes from), and mat4 (a rarer, only-sometimes-needed
+# extra ingredient - None where the sheet leaves it blank).
+CRAFTING_SCROLL_ENCHANTS = [
+    {'item': 'scroll of Enchant.Armor.I', 'realm': 'All', 'level': 6, 'category': 'Armor', 'tier': 'i', 'use_display': 'Enchant Armor i',
+     'mat1': 'scrap of parchment', 'mat1_value': 200, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'turtle shell', 'mat4': None},
+    {'item': 'scroll of Enchant.Weapon.I', 'realm': 'All', 'level': 7, 'category': 'Weapon', 'tier': 'i', 'use_display': 'Enchant Weapon i',
+     'mat1': 'scrap of parchment', 'mat1_value': 200, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'silver nugget', 'mat4': None},
+    {'item': 'scroll of Embed.Earth.Sigil.I', 'realm': 'Chaos', 'level': 8, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Earth Sigil i',
+     'mat1': 'scrap of parchment', 'mat1_value': 200, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'gray rock', 'mat4': None},
+    {'item': 'scroll of Embed.Fire.Sigil.I', 'realm': 'Evil', 'level': 8, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Fire Sigil i',
+     'mat1': 'scrap of parchment', 'mat1_value': 200, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'fire snake scale', 'mat4': None},
+    {'item': 'scroll of Embed.Water.Sigil.I', 'realm': 'Good', 'level': 8, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Water Sigil i',
+     'mat1': 'scrap of parchment', 'mat1_value': 200, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'frog tongue', 'mat4': None},
+    {'item': 'scroll of Embed.Shock.Sigil.I', 'realm': 'Chaos', 'level': 9, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Shock Sigil i',
+     'mat1': 'scrap of parchment', 'mat1_value': 200, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'vial of fireflies', 'mat4': None},
+    {'item': 'scroll of Embed.Cold.Sigil.I', 'realm': 'Evil', 'level': 9, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Cold Sigil i',
+     'mat1': 'scrap of parchment', 'mat1_value': 200, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'ice crystal', 'mat4': None},
+    {'item': 'scroll of Embed.Lightning.Sigil.I', 'realm': 'Good', 'level': 9, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Embed Lightning Sigil i',
+     'mat1': 'scrap of parchment', 'mat1_value': 200, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'lightning rod', 'mat4': None},
+    {'item': 'scroll of Earth.Protect.Sigil.I', 'realm': 'Chaos', 'level': 15, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Earth Protect Sigil i',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'sharp thorn', 'mat4': None},
+    {'item': 'scroll of Fire.Protect.Sigil.I', 'realm': 'Evil', 'level': 15, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Fire Protect Sigil i',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'small piece of ember', 'mat4': None},
+    {'item': 'scroll of Water.Protect.Sigil.I', 'realm': 'Good', 'level': 15, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Water Protect Sigil i',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'mist willow leaf', 'mat4': None},
+    {'item': 'scroll of Enchant.Armor.II', 'realm': 'All', 'level': 16, 'category': 'Armor', 'tier': 'ii', 'use_display': 'Enchant Armor ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'some wyvern scales', 'mat4': None},
+    {'item': 'scroll of Enchant.Weapon.II', 'realm': 'All', 'level': 18, 'category': 'Weapon', 'tier': 'ii', 'use_display': 'Enchant Weapon ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'rhinoceros horn', 'mat4': None},
+    {'item': 'scroll of Embed.Earth.Sigil.II', 'realm': 'Chaos', 'level': 20, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Earth Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'silver rock', 'mat4': None},
+    {'item': 'scroll of Embed.Fire.Sigil.II', 'realm': 'Evil', 'level': 20, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Fire Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'lava rock', 'mat4': None},
+    {'item': 'scroll of Embed.Water.Sigil.II', 'realm': 'Good', 'level': 20, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Water Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'small water beetle', 'mat4': None},
+    {'item': 'scroll of Shock.Protect.Sigil.I', 'realm': 'Chaos', 'level': 20, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Shock Protect Sigil i',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'static charge', 'mat4': None},
+    {'item': 'scroll of Cold.Protect.Sigil.I', 'realm': 'Evil', 'level': 20, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Cold Protect Sigil i',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'snow elk hide', 'mat4': None},
+    {'item': 'scroll of Lightning.Protect.Sigil.I', 'realm': 'Good', 'level': 20, 'category': 'Sigil', 'tier': 'i', 'use_display': 'Lightning Protect Sigil i',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'shimmering crystal', 'mat4': None},
+    {'item': 'scroll of Embed.Shock.Sigil.II', 'realm': 'Chaos', 'level': 22, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Shock Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'eel eye', 'mat4': None},
+    {'item': 'scroll of Embed.Cold.Sigil.II', 'realm': 'Evil', 'level': 22, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Cold Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'ice shard', 'mat4': None},
+    {'item': 'scroll of Embed.Lightning.Sigil.II', 'realm': 'Good', 'level': 22, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Embed Lightning Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'porcupine quill', 'mat2_value': 200, 'mat3': 'silver wire', 'mat4': None},
+    {'item': 'scroll of Earth.Protect.Sigil.II', 'realm': 'Chaos', 'level': 30, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Earth Protect Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'delicate leaf', 'mat4': None},
+    {'item': 'scroll of Fire.Protect.Sigil.II', 'realm': 'Evil', 'level': 30, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Fire Protect Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'glowing lump of coal', 'mat4': None},
+    {'item': 'scroll of Water.Protect.Sigil.II', 'realm': 'Good', 'level': 30, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Water Protect Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'wave talisman', 'mat4': None},
+    {'item': 'scroll of Enchant.Armor.III', 'realm': 'All', 'level': 32, 'category': 'Armor', 'tier': 'iii', 'use_display': 'Enchant Armor iii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'snow worm larva', 'mat4': None},
+    {'item': 'scroll of Enchant.Weapon.III', 'realm': 'All', 'level': 34, 'category': 'Weapon', 'tier': 'iii', 'use_display': 'Enchant Weapon iii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'crocodile tear', 'mat4': None},
+    {'item': 'scroll of Shock.Protect.Sigil.II', 'realm': 'Chaos', 'level': 35, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Shock Protect Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'pulsating sphere of energy', 'mat4': None},
+    {'item': 'scroll of Cold.Protect.Sigil.II', 'realm': 'Evil', 'level': 35, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Cold Protect Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': "yeti's paw", 'mat4': None},
+    {'item': 'scroll of Lightning.Protect.Sigil.II', 'realm': 'Good', 'level': 35, 'category': 'Sigil', 'tier': 'ii', 'use_display': 'Lightning Protect Sigil ii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'sparkling gem', 'mat4': None},
+    {'item': 'scroll of Embed.Earth.Sigil.III', 'realm': 'Chaos', 'level': 36, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Earth Sigil iii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'black rock', 'mat4': None},
+    {'item': 'scroll of Embed.Fire.Sigil.III', 'realm': 'Evil', 'level': 36, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Fire Sigil iii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'fiery ruby', 'mat4': None},
+    {'item': 'scroll of Embed.Water.Sigil.III', 'realm': 'Good', 'level': 36, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Water Sigil iii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'blue beak', 'mat4': None},
+    {'item': 'scroll of Embed.Shock.Sigil.III', 'realm': 'Chaos', 'level': 38, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Shock Sigil iii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'spectral spark', 'mat4': None},
+    {'item': 'scroll of Embed.Cold.Sigil.III', 'realm': 'Evil', 'level': 38, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Cold Sigil iii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'ice gem', 'mat4': None},
+    {'item': 'scroll of Embed.Lightning.Sigil.III', 'realm': 'Good', 'level': 38, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Embed Lightning Sigil iii',
+     'mat1': 'fine sheet of parchment', 'mat1_value': 5000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'pulsing rock', 'mat4': None},
+    {'item': 'scroll of Earth.Protect.Sigil.III', 'realm': 'Chaos', 'level': 45, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Earth Protect Sigil iii',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'lump of clay', 'mat4': None},
+    {'item': 'scroll of Fire.Protect.Sigil.III', 'realm': 'Evil', 'level': 45, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Fire Protect Sigil iii',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'hunk of black rock', 'mat4': None},
+    {'item': 'scroll of Water.Protect.Sigil.III', 'realm': 'Good', 'level': 45, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Water Protect Sigil iii',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'shimmering fragment of calcite', 'mat4': None},
+    {'item': 'scroll of Enchant.Armor.IV', 'realm': 'All', 'level': 46, 'category': 'Armor', 'tier': 'iv', 'use_display': 'Enchant Armor iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'skeletal dragon bone', 'mat4': None},
+    {'item': 'scroll of Enchant.Weapon.IV', 'realm': 'All', 'level': 48, 'category': 'Weapon', 'tier': 'iv', 'use_display': 'Enchant Weapon iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'blue icicle', 'mat4': None},
+    {'item': 'scroll of Embed.Earth.Sigil.IV', 'realm': 'Chaos', 'level': 50, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Earth Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'golden rock', 'mat4': None},
+    {'item': 'scroll of Embed.Fire.Sigil.IV', 'realm': 'Evil', 'level': 50, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Fire Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'fire dragon tongue', 'mat4': None},
+    {'item': 'scroll of Embed.Water.Sigil.IV', 'realm': 'Good', 'level': 50, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Water Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'drop of pure spring water', 'mat4': None},
+    {'item': 'scroll of Shock.Protect.Sigil.III', 'realm': 'Chaos', 'level': 50, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Shock Protect Sigil iii',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'shard of power', 'mat4': None},
+    {'item': 'scroll of Cold.Protect.Sigil.III', 'realm': 'Evil', 'level': 50, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Cold Protect Sigil iii',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'crystal hydra eye', 'mat4': None},
+    {'item': 'scroll of Lightning.Protect.Sigil.III', 'realm': 'Good', 'level': 50, 'category': 'Sigil', 'tier': 'iii', 'use_display': 'Lightning Protect Sigil iii',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'glowing diamond', 'mat4': None},
+    {'item': 'scroll of Embed.Shock.Sigil.IV', 'realm': 'Chaos', 'level': 52, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Shock Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'charged crystal', 'mat4': None},
+    {'item': 'scroll of Embed.Cold.Sigil.IV', 'realm': 'Evil', 'level': 52, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Cold Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'blue diamond', 'mat4': None},
+    {'item': 'scroll of Embed.Lightning.Sigil.IV', 'realm': 'Good', 'level': 52, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Embed Lightning Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'aarkroa feather quill', 'mat2_value': 15000, 'mat3': 'bolt of lightning', 'mat4': None},
+    {'item': 'scroll of Enchant.Armor.V', 'realm': 'All', 'level': 56, 'category': 'Armor', 'tier': 'v', 'use_display': 'Enchant Armor v',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'fire root', 'mat4': 'fragment of boundless potential'},
+    {'item': 'scroll of Enchant.Weapon.V', 'realm': 'All', 'level': 58, 'category': 'Weapon', 'tier': 'v', 'use_display': 'Enchant Weapon v',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'pulsing orb', 'mat4': 'fragment of boundless potential'},
+    {'item': 'scroll of Embed.Earth.Sigil.V', 'realm': 'Chaos', 'level': 60, 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Earth Sigil v',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'translucent rock', 'mat4': 'fragment of boundless potential'},
+    {'item': 'scroll of Embed.Fire.Sigil.V', 'realm': 'Evil', 'level': 60, 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Fire Sigil v',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'small vial of magma', 'mat4': 'fragment of boundless potential'},
+    {'item': 'scroll of Embed.Water.Sigil.V', 'realm': 'Good', 'level': 60, 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Water Sigil v',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': "mermaid's tear", 'mat4': 'fragment of boundless potential'},
+    {'item': 'scroll of Earth.Protect.Sigil.IV', 'realm': 'Chaos', 'level': 60, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Earth Protect Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': "nature's heart", 'mat4': None},
+    {'item': 'scroll of Fire.Protect.Sigil.IV', 'realm': 'Evil', 'level': 60, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Fire Protect Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'smoldering piece of brimstone', 'mat4': None},
+    {'item': 'scroll of Water.Protect.Sigil.IV', 'realm': 'Good', 'level': 60, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Water Protect Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'liquid heart', 'mat4': None},
+    {'item': 'scroll of Embed.Shock.Sigil.V', 'realm': 'Chaos', 'level': 62, 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Shock Sigil v',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'shard of potential', 'mat4': 'fragment of boundless potential'},
+    {'item': 'scroll of Cold.Protect.Sigil.IV', 'realm': 'Evil', 'level': 62, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Cold Protect Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'frozen core', 'mat4': 'fragment of boundless potential'},
+    {'item': 'scroll of Embed.Lightning.Sigil.V', 'realm': 'Good', 'level': 62, 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Lightning Sigil v',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'shard of energy', 'mat4': 'fragment of boundless potential'},
+    {'item': 'scroll of Shock.Protect.Sigil.IV', 'realm': 'Chaos', 'level': 65, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Shock Protect Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': "storm's eye", 'mat4': None},
+    {'item': 'scroll of Embed.Cold.Sigil.V', 'realm': 'Evil', 'level': 65, 'category': 'Sigil', 'tier': 'v', 'use_display': 'Embed Cold Sigil v',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': "winter's glare", 'mat4': None},
+    {'item': 'scroll of Lightning.Protect.Sigil.IV', 'realm': 'Good', 'level': 65, 'category': 'Sigil', 'tier': 'iv', 'use_display': 'Lightning Protect Sigil iv',
+     'mat1': 'roll of imbued parchment', 'mat1_value': 25000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'charged crystal ball', 'mat4': None},
+    {'item': 'scroll of Enchant.Armor.VI', 'realm': 'All', 'level': 66, 'category': 'Armor', 'tier': 'vi', 'use_display': 'Enchant Armor vi',
+     'mat1': "grandmaster's glyphed parchment", 'mat1_value': 100000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'fragment of utter darkness', 'mat4': None},
+    {'item': 'scroll of Enchant.Weapon.VI', 'realm': 'All', 'level': 70, 'category': 'Weapon', 'tier': 'vi', 'use_display': 'Enchant Weapon vi',
+     'mat1': "grandmaster's glyphed parchment", 'mat1_value': 100000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'sphere of chaotic force', 'mat4': None},
+    {'item': 'scroll of Embed.Earth.Sigil.VI', 'realm': 'Chaos', 'level': 70, 'category': 'Sigil', 'tier': 'vi', 'use_display': 'Embed Earth Sigil vi',
+     'mat1': "grandmaster's glyphed parchment", 'mat1_value': 100000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'prismatic sphere of pure energy', 'mat4': None},
+    {'item': 'scroll of Embed.Fire.Sigil.VI', 'realm': 'Evil', 'level': 70, 'category': 'Sigil', 'tier': 'vi', 'use_display': 'Embed Fire Sigil vi',
+     'mat1': "grandmaster's glyphed parchment", 'mat1_value': 100000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'prismatic sphere of pure energy', 'mat4': None},
+    {'item': 'scroll of Embed.Water.Sigil.VI', 'realm': 'Good', 'level': 70, 'category': 'Sigil', 'tier': 'vi', 'use_display': 'Embed Water Sigil vi',
+     'mat1': "grandmaster's glyphed parchment", 'mat1_value': 100000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'prismatic sphere of pure energy', 'mat4': None},
+    {'item': 'scroll of Embed.Shock.Sigil.VI', 'realm': 'Chaos', 'level': 72, 'category': 'Sigil', 'tier': 'vi', 'use_display': 'Embed Shock Sigil vi',
+     'mat1': "grandmaster's glyphed parchment", 'mat1_value': 100000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'prismatic sphere of pure energy', 'mat4': None},
+    {'item': 'scroll of Embed.Cold.Sigil.VI', 'realm': 'Evil', 'level': 72, 'category': 'Sigil', 'tier': 'vi', 'use_display': 'Embed Cold Sigil vi',
+     'mat1': "grandmaster's glyphed parchment", 'mat1_value': 100000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'prismatic sphere of pure energy', 'mat4': None},
+    {'item': 'scroll of Embed.Lightning.Sigil.VI', 'realm': 'Good', 'level': 72, 'category': 'Sigil', 'tier': 'vi', 'use_display': 'Embed Lightning Sigil vi',
+     'mat1': "grandmaster's glyphed parchment", 'mat1_value': 100000, 'mat2': 'divine hippogriff feather quill', 'mat2_value': 75000, 'mat3': 'prismatic sphere of pure energy', 'mat4': None},
 ]
 
 
@@ -12492,10 +12655,24 @@ class App(tk.Tk):
         # grouped by Realm then category. A different schema from a
         # crafting recipe (this is "where does this drop", not "what
         # does this item need"), so it gets its own tree builder rather
-        # than reusing _build_crafting_recipe_tree.
+        # than reusing _build_crafting_recipe_tree. Split into two
+        # mini-tabs: Direct (enchanting straight onto an item - the
+        # original single tree, unchanged) and Scroll (the "Scribe
+        # List" sheet's own enchant scrolls - crafted ahead of time
+        # from their own materials, then used later - see
+        # CRAFTING_SCROLL_ENCHANTS/_build_crafting_scroll_tree).
         enchants_frame = ttk.Frame(inner_nb, padding=10)
         inner_nb.add(enchants_frame, text='Enchants')
-        self._build_crafting_enchants_tree(enchants_frame, CRAFTING_ENCHANTS)
+        enchants_nb = ttk.Notebook(enchants_frame, style='RealmMini.TNotebook')
+        enchants_nb.pack(fill='both', expand=True)
+
+        direct_frame = ttk.Frame(enchants_nb, padding=8)
+        enchants_nb.add(direct_frame, text='Direct')
+        self._build_crafting_enchants_tree(direct_frame, CRAFTING_ENCHANTS)
+
+        scroll_frame = ttk.Frame(enchants_nb, padding=8)
+        enchants_nb.add(scroll_frame, text='Scroll')
+        self._build_crafting_scroll_tree(scroll_frame, CRAFTING_SCROLL_ENCHANTS)
 
     @staticmethod
     def _enchant_sigil_element(use_display):
@@ -12570,6 +12747,66 @@ class App(tk.Tk):
                 for e in sorted(items, key=lambda e: (e['level'], e['item'])):
                     tv.insert(cat_iid, 'end', text=e['item'], values=(
                         e['use_display'], e['level'], e['mob'] or '', e['area'] or '', e['note']))
+
+        return tv
+
+    def _build_crafting_scroll_tree(self, parent, entries):
+        """Enchants sub-tab's Scroll mini-tab - CRAFTING_SCROLL_ENCHANTS'
+        own scrolls, grouped Realm -> Category (Weapon/Armor/Weapon
+        Sigil/Armor Sigil) the exact same way
+        _build_crafting_enchants_tree groups Direct enchants (same
+        use_display shape, so _enchant_sigil_kind/_enchant_sigil_element
+        apply unchanged - see CRAFTING_SCROLL_ENCHANTS's own module
+        comment), sorted by tier/level within each. 'All' realm (a
+        Weapon/Armor scroll works regardless of realm) gets its own
+        top-level branch rather than being folded into Evil/Good/Chaos/
+        Kaid, since it isn't really any of those. Columns show what the
+        scroll itself needs to craft rather than Direct's Mob/Area/Note
+        (a scroll's own materials, not a drop location) - Material 1/2
+        include their shop gold cost inline; Material 3/4 are blank
+        where the recipe doesn't need one."""
+        cols = ('Use', 'Level', 'Material 1', 'Material 2', 'Material 3', 'Material 4')
+        tv_frame = ttk.Frame(parent)
+        tv_frame.pack(fill='both', expand=True)
+        tv = ttk.Treeview(tv_frame, columns=cols, show='tree headings', height=20)
+        tv.heading('#0', text='Item')
+        tv.column('#0', width=240, anchor='w')
+        for c, w in zip(cols, (170, 50, 190, 190, 150, 150)):
+            tv.heading(c, text=c, command=lambda c=c: _sort_treeview_column_recursive(tv, c, False))
+            tv.column(c, width=w, anchor='w' if c.startswith('Material') else 'center')
+        vsb = ttk.Scrollbar(tv_frame, command=tv.yview)
+        tv.configure(yscrollcommand=vsb.set)
+        tv.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+
+        element_home_realm = {}
+        for e in entries:
+            if e['category'] == 'Sigil' and e['realm'] not in ('Kaid', 'All'):
+                element_home_realm.setdefault(self._enchant_sigil_element(e['use_display']), e['realm'])
+
+        by_realm = {}
+        for e in entries:
+            group_realm = e['realm']
+            if e['category'] == 'Sigil' and e['realm'] == 'Kaid':
+                group_realm = element_home_realm.get(self._enchant_sigil_element(e['use_display']), 'Kaid')
+            group_category = self._enchant_sigil_kind(e['use_display']) if e['category'] == 'Sigil' else e['category']
+            by_realm.setdefault(group_realm, {}).setdefault(group_category, []).append(e)
+
+        # All first (not realm-specific), then the same Evil/Good/Chaos/
+        # Kaid order Direct uses.
+        realm_order = ['All', 'Evil', 'Good', 'Chaos', 'Kaid']
+        for realm in sorted(by_realm, key=lambda r: realm_order.index(r) if r in realm_order else 99):
+            realm_iid = tv.insert('', 'end', text=realm, open=False)
+            for category in ('Weapon', 'Armor', 'Weapon Sigil', 'Armor Sigil'):
+                items = by_realm[realm].get(category)
+                if not items:
+                    continue
+                cat_iid = tv.insert(realm_iid, 'end', text=category, open=False)
+                for e in sorted(items, key=lambda e: (e['level'], e['item'])):
+                    mat1 = f"{e['mat1']} ({e['mat1_value']:,}g)" if e['mat1_value'] else e['mat1']
+                    mat2 = f"{e['mat2']} ({e['mat2_value']:,}g)" if e['mat2_value'] else e['mat2']
+                    tv.insert(cat_iid, 'end', text=e['item'], values=(
+                        e['use_display'], e['level'], mat1, mat2, e['mat3'] or '', e['mat4'] or ''))
 
         return tv
 

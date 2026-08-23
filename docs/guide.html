@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v7.5.0</p>
+    <p class="tagline">Full usage guide - v7.5.1</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -398,7 +398,12 @@
         </ul>
       </li>
       <li><b>Siegecraft</b> - Siegecraft and Fortifications recipes together, grouped under those two headers.</li>
-      <li><b>Enchants</b> - where to find Weapon/Armor/Sigil enchant materials, grouped by realm, then by Weapon/Armor/<b>Weapon Sigil</b>/<b>Armor Sigil</b> (a Sigil used to "Embed" an element into a weapon vs. one used to "Protect" armor against an element - split into their own branches rather than lumped into one Sigil node). Evil/Good/Chaos each specialize in exactly 2 of the 6 elements (Chaos: Earth/Shock, Evil: Cold/Fire, Good: Lightning/Water) - a Kaid Sigil entry is grouped under whichever of those three realms specializes in its own element (Kaid alone covers all 6, continuing each element past that realm's own top tier) rather than under its own "Kaid" branch, with a <b>From Kaid</b> note in that row so it's still clear where it actually drops. Kaid's Weapon/Armor entries (no element to regroup by) stay under Kaid as normal.</li>
+      <li><b>Enchants</b> - split into two mini-tabs:
+        <ul>
+          <li><b>Direct</b> - where to find Weapon/Armor/Sigil enchant materials, grouped by realm, then by Weapon/Armor/<b>Weapon Sigil</b>/<b>Armor Sigil</b> (a Sigil used to "Embed" an element into a weapon vs. one used to "Protect" armor against an element - split into their own branches rather than lumped into one Sigil node). Evil/Good/Chaos each specialize in exactly 2 of the 6 elements (Chaos: Earth/Shock, Evil: Cold/Fire, Good: Lightning/Water) - a Kaid Sigil entry is grouped under whichever of those three realms specializes in its own element (Kaid alone covers all 6, continuing each element past that realm's own top tier) rather than under its own "Kaid" branch, with a <b>From Kaid</b> note in that row so it's still clear where it actually drops. Kaid's Weapon/Armor entries (no element to regroup by) stay under Kaid as normal.</li>
+          <li><b>Scroll</b> - the same Weapon/Armor/Weapon Sigil/Armor Sigil grouping as Direct, but for enchant scrolls instead - crafted ahead of time from their own materials, then used later, rather than enchanting straight onto an item. A <b>Weapon</b>/<b>Armor</b> scroll works regardless of realm, so those sit under their own <b>All</b> branch rather than a specific realm; Sigil scrolls follow the same Evil/Good/Chaos element specialization as Direct. Each row shows the level, the scroll's own <b>Use</b>, and every material it takes to craft - the two shop-bought materials with their gold cost right alongside the name, plus any dropped/special materials needed on top of those.</li>
+        </ul>
+      </li>
     </ul>
     <p>Every recipe row also gets a nested branch for any material that's an actual mob drop (as opposed to a plain by-weight base material like cloth/leather/metal/wood) - expand it to see exactly where that material can be found (Realm/Area/Mob), cross-referenced against the same source data as the Enchants tab.</p>
     <p>Recipe Slot/Spell values are cross-referenced against the bundled master equipment list wherever a matching item exists there, rather than guessed from the item's own name - this is what makes an "evasion" item correctly show as the <code>evade.enhance</code> spell (this app's real name for it elsewhere) and surfaces the real hidden spell on flavor-named Magical Weapons (e.g. "of frost") that don't literally name their spell.</p>

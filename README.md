@@ -140,7 +140,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.5.0 (Current)
+### v7.5.1 (Current)
+- **Crafting > Enchants** now splits into two mini-tabs: **Direct** (enchanting straight onto an item - the original tree, unchanged) and **Scroll** (new - Master File.xlsx's own "Scribe List" sheet: all 72 enchant scrolls, grouped Realm &rarr; Weapon/Armor/Weapon Sigil/Armor Sigil the exact same way Direct is, each showing its own crafting materials and their shop gold cost).
+
+### v7.5.0
 - **Item Details, everywhere**: double-clicking an item to open its full stat sheet (see v7.4.0 below) is no longer just a Results tab feature - it now works on every chart in the app that shows real items: Manual, Area Items, Bank Build's Character/Locker/Trade tabs, Saved Builds panels, and the Item Counter's Zone/Monster/Item Comparison mini-tables. Every one of them opens the exact same Item Details chart on the Results tab (switching there automatically if you're elsewhere), so items can still be compared side by side no matter which chart you found them in.
 - **Damage Counter - per-weapon/spell breakdown**: Parse > Counters > Damage Counter now adds one tab per distinct weapon/spell actually used, each its own Mob/Damage/Hits/Avg breakdown scoped to just that weapon/spell - sorted by total damage descending, so "what's my biggest damage source" doesn't require picking through Every Hit by hand.
 - **Area Items**: weapons now show their Weight/Fumble/Damage/Timer/Accuracy directly in the chart (blank for non-weapon rows), same columns Manual's own results table adds while Weapons is checked.
