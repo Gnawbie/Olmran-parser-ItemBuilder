@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.5.1"
+VERSION = "7.6.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -945,6 +945,65 @@ class LootParser:
 
         return deduplicated
 
+    @staticmethod
+    def find_drop_only_records(filepath: str, query: str) -> list:
+        """Every drop of `query` in this file, attributed to its own
+        nearest-preceding Area (same "closest area marker before this
+        drop" technique parse_file's own third pass uses) - EVEN WHEN NO
+        DELVE of that item exists anywhere in the file. parse_file itself
+        only ever builds a row for an item that was BOTH delved AND
+        dropped (see its own `if item_clean in delved_items` gate), so a
+        real drop with no accompanying delve produces nothing there at
+        all. This is the fallback Search Logs' "Add" checkbox uses in
+        that case (see _search_and_add_item) - Mob/Area/Realm still get
+        captured from the drop event itself, just with Slot/Type/Spell/
+        etc. left blank (there's no delve text to read them from) and a
+        note flagging the record as partial, so a later search that DOES
+        find a delve can still upgrade it in place (see
+        _add_master_data_item) instead of being treated as a duplicate."""
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            raw_text = f.read()
+        blocks = re.split(r'\n(?=<\d{2}:\d{2}:\d{2}>)', raw_text)
+        needle = query.lower()
+
+        area_markers = []   # (line_index, area_name)
+        drop_events = []    # (line_index, item_clean, mob_name)
+        line_index = 0
+        for block in blocks:
+            lines = [l.rstrip('\r') for l in block.split('\n')]
+            for line in lines:
+                stripped = line.strip()
+                loc_m = LootParser.LOC_RE.match(stripped)
+                if loc_m:
+                    area_markers.append((line_index, loc_m.group(1)))
+
+                m = LootParser.DROP_RE.match(stripped)
+                if m:
+                    item_raw = m.group(3).strip()
+                    if re.match(r'(a|an|the)\s', item_raw, re.I) and \
+                            not re.match(r'a bag of (silver|coins?|gold)', item_raw, re.I):
+                        item_clean = LootParser.clean_item_name(item_raw)
+                        if needle in item_clean.lower():
+                            mob_name = ((m.group(1) or '') + m.group(2)).strip()
+                            mob_name = re.sub(r'^(A|An|The)\s+', '', mob_name, flags=re.IGNORECASE).strip()
+                            drop_events.append((line_index, item_clean, mob_name))
+                line_index += 1
+
+        records = []
+        for drop_line_idx, item_clean, mob_name in drop_events:
+            closest_area = ''
+            for area_idx, area_name in area_markers:
+                if area_idx < drop_line_idx:
+                    closest_area = area_name
+                else:
+                    break
+            realm = AREA_TO_REALM.get(closest_area, '') if closest_area else ''
+            entry = {field: '' for field in _MASTER_ITEM_FIELDS}
+            entry.update({'Realm': realm, 'Area': closest_area, 'Mob': mob_name, 'Item': item_clean,
+                         'Notes': _PARTIAL_ITEM_NOTE})
+            records.append(entry)
+        return records
+
 
 # ─────────────────────────────────────────────────────────────
 #  EXCEL EXPORT
@@ -1262,6 +1321,23 @@ DEFAULT_FIELDS = {
     ],
 }
 
+# self.master_data's own canonical schema (matches DEFAULT_FIELDS['loot']'s
+# source_keys) - used by _add_master_data_item/_merge_added_master_items to
+# strip a LootParser.parse_file row (which carries extra bookkeeping keys -
+# Timestamp/Location/Source/Quantity/Silver/Event/Full/File - see
+# LOOT_SOURCES below) down to just the fields an equipment-database record
+# itself should have, before adding it to self.master_data.
+_MASTER_ITEM_FIELDS = ('Realm', 'Area', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Level',
+                       'Damage', 'Timer', 'Fumble', 'Accuracy', 'Defense', 'Sigil',
+                       'SigilLvl', 'Weight', 'Notes')
+
+# Marks a master_data record added via LootParser.find_drop_only_records -
+# a drop with no accompanying delve, so only Realm/Area/Mob/Item are
+# actually known. _add_master_data_item checks for this exact prefix to
+# let a LATER search that DOES find a real delve upgrade the record in
+# place, rather than treating it as an unrelated duplicate.
+_PARTIAL_ITEM_NOTE = 'Added from a drop only (no delve found) - Slot/Type/Spell/etc. unknown'
+
 CHAT_SOURCES   = ['Timestamp','Channel','Speaker','Target','Message','File']
 COMBAT_SOURCES = ['Timestamp','Location','Attacker','Target','Action','Damage','Spell','Event','Full','File']
 LOOT_SOURCES   = ['Realm','Area','Mob','Item','Slot','Type','Spell','Level','Damage','Timer','Fumble','Accuracy','Defense','Sigil','SigilLvl','Weight','Notes','Timestamp','Location','Source','Quantity','Silver','Event','Full','File']
@@ -1475,6 +1551,21 @@ def _aggregate_hits_by_mob(hits):
         m['avg'] = m['damage'] / m['hits'] if m['hits'] else 0
     mobs.sort(key=lambda m: m['damage'], reverse=True)
     return mobs
+
+
+# Exact "Item" cell text used by this app's own empty-slot/no-match
+# placeholder rows (Results tab's "No suitable item found"/"No available
+# item" - see _build_dict_to_rows) plus a pattern for Manual's own
+# dynamically-worded "No <Slot> matches found" rows (see
+# _refresh_manual_lookup_results) - none of these are ever a real item
+# name, so _on_item_chart_double_click's "Item Not Found" popup should
+# stay silent for them exactly like it always has, rather than popping
+# up over what's actually just a status message.
+_PLACEHOLDER_ITEM_TEXTS = ('No suitable item found', 'No available item')
+_PLACEHOLDER_ITEM_RE = re.compile(r'^No .+ matches found$')
+
+def _is_placeholder_item_text(text):
+    return text in _PLACEHOLDER_ITEM_TEXTS or bool(_PLACEHOLDER_ITEM_RE.match(text))
 
 
 def _item_castable_display(item):
@@ -3687,6 +3778,13 @@ class App(tk.Tk):
         # Load saved directories or use home as default
         self._load_config()
 
+        # Every item ever added via Search Logs' "Add" checkbox (see
+        # _search_and_add_item) - persisted independently of the community
+        # database itself, so it survives that database being reloaded or
+        # replaced (see _merge_added_master_items, called at the end of
+        # every _load_master_for_search).
+        self.added_master_items = list(getattr(self, '_persisted_added_master_items', []))
+
         # Suppressed until startup is fully done building/restoring every
         # tab's own live state from the _persisted_* values _load_config
         # just set - some tabs built early (e.g. the Item Counter's
@@ -3804,6 +3902,7 @@ class App(tk.Tk):
                     self.weapon_combo_defaults = config.get('weapon_combo_defaults', {})
                     self._persisted_dark_mode = config.get('dark_mode', False)
                     self._persisted_dark_intensity = config.get('dark_intensity', 0)
+                    self._persisted_added_master_items = config.get('added_master_items', [])
                     # Raw data only (no tk.StringVar yet - the Saved Builds tab
                     # isn't built until later in __init__) - _build_saved_builds_tab
                     # turns this into self.saved_builds.
@@ -3958,6 +4057,7 @@ class App(tk.Tk):
                 'weapon_combo_defaults': getattr(self, 'weapon_combo_defaults', {}),
                 'dark_mode': bool(getattr(self, 'dark_mode_var', None) and self.dark_mode_var.get()),
                 'dark_intensity': (self.dark_intensity_var.get() if getattr(self, 'dark_intensity_var', None) else 0),
+                'added_master_items': getattr(self, 'added_master_items', []),
                 'saved_builds': [
                     {'name': save['name'].get(), 'headers': list(save['headers']),
                      'rows': [list(row) for row in save['rows']]}
@@ -5306,17 +5406,33 @@ class App(tk.Tk):
         ttk.Button(search_row, text="🔍 Search",
                   command=self._search_logs).pack(side='left', padx=4)
         self.search_case_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(search_row, text="Case sensitive",
-                       variable=self.search_case_var).pack(side='left', padx=8)
+        self.search_case_checkbutton = ttk.Checkbutton(search_row, text="Case sensitive",
+                       variable=self.search_case_var)
+        self.search_case_checkbutton.pack(side='left', padx=8)
         self.search_drops_only_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(search_row, text="Drops only (with snapshot)",
-                       variable=self.search_drops_only_var).pack(side='left', padx=8)
+        self.search_drops_only_checkbutton = ttk.Checkbutton(search_row, text="Drops only (with snapshot)",
+                       variable=self.search_drops_only_var)
+        self.search_drops_only_checkbutton.pack(side='left', padx=8)
+        # Add - see _on_search_add_toggle/_search_and_add_item. Forces (and
+        # greys out) Drops only, since Add's own matching is built on that
+        # same delve+drop correlation regardless of this checkbox's state;
+        # Case sensitive is greyed out too since Add always matches the
+        # query the same way LootParser's own item-name cleanup already
+        # does, case-insensitively.
+        self.search_add_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(search_row, text="➕ Add", variable=self.search_add_var,
+                       command=self._on_search_add_toggle).pack(side='left', padx=8)
 
         ttk.Label(search_frame,
                  text="💡 \"Drops only\" catches every instance the item actually dropped (ignoring quality/material "
                       "prefixes like \"bright\" or \"glowing\", same as the Loot parser), and for each one shows a "
                       "snapshot of everything from the last timestamp through the drop line. Uncheck it to just "
-                      "search every loaded file's raw text for any mention of the term.",
+                      "search every loaded file's raw text for any mention of the term. \"Add\" additionally looks "
+                      "for a delve (\"You examine ... closely\") of the searched item in the same file as one of its "
+                      "drops - if found, adds that item with its full delved stats and the area/realm it dropped in; "
+                      "if no delve exists but a drop does, still adds it with just the mob/area/realm known (a later "
+                      "search that finds a real delve fills in the rest) - either way, it shows up in every other "
+                      "search/chart from then on.",
                  font=('Arial', 8, 'italic'), foreground='#666', wraplength=900,
                  justify='left').pack(anchor='w', pady=(4,0))
 
@@ -6334,11 +6450,158 @@ class App(tk.Tk):
     def _show_credits(self):
         CreditsDialog(self)
 
+    def _on_search_add_toggle(self):
+        """"Add" checkbox - greys out Case sensitive/Drops only while it's
+        active (see their own creation comment in the Search Logs UI) and
+        forces Drops only on, since Add's own matching always needs that
+        same drop-event correlation regardless of whatever that checkbox
+        last showed. Re-enables both, unchanged otherwise, once Add is
+        unchecked again."""
+        if self.search_add_var.get():
+            self.search_drops_only_var.set(True)
+            self.search_case_checkbutton.config(state='disabled')
+            self.search_drops_only_checkbutton.config(state='disabled')
+        else:
+            self.search_case_checkbutton.config(state='normal')
+            self.search_drops_only_checkbutton.config(state='normal')
+
+    def _search_and_add_item(self, query):
+        """"Add" checkbox's own behavior, run before the normal search
+        below (which still happens exactly as it otherwise would). For
+        each loaded file, reuses LootParser.parse_file's own delve+drop+
+        area correlation (the exact pipeline Run Parse's Loot output
+        already relies on) to see whether a delve ("You examine ...
+        closely") of `query` was found in the SAME file as one of its own
+        drops - a delve in one file paired with a drop from a different
+        file doesn't count, matching how parse_file already only pairs
+        the two within one file's own blocks, never across files. A file
+        with no such match falls back to LootParser.find_drop_only_
+        records - a drop with no delve in the log still tells you Mob/
+        Area/Realm even though Slot/Type/Spell/etc. stay unknown, which
+        beats adding nothing at all. Adds any match not already in
+        self.master_data (deduped the same Realm/Area/Mob/Item way
+        _append_to_master/LootParser.parse_file already do - see
+        _add_master_data_item, which also upgrades an existing partial
+        drop-only record in place if a real delve now supplies the rest)
+        to the live database AND to self.added_master_items (persisted -
+        see _save_config/_merge_added_master_items), so it's remembered
+        across restarts and survives the community database itself being
+        reloaded or replaced later, without ever touching that community
+        file."""
+        needle = query.lower()
+        added_full, added_partial, already_known = [], [], []
+        for f in self.files:
+            try:
+                rows = LootParser.parse_file(f['path'])
+            except Exception:
+                continue
+            matched_rows = [r for r in rows if needle in (r.get('Item') or '').lower()]
+            for row in matched_rows:
+                if self._add_master_data_item(row):
+                    added_full.append(row['Item'])
+                else:
+                    already_known.append(row['Item'])
+            if matched_rows:
+                continue
+
+            try:
+                partial_rows = LootParser.find_drop_only_records(f['path'], query)
+            except Exception:
+                continue
+            for row in partial_rows:
+                if self._add_master_data_item(row):
+                    added_partial.append(row['Item'])
+                else:
+                    already_known.append(row['Item'])
+
+        if added_full or added_partial:
+            self._save_config()
+            self._refresh_manual_lookup_results()
+            if hasattr(self, 'bank_saved_tv'):
+                self._refresh_bank_saved_tab()
+            parts = []
+            if added_full:
+                parts.append("From a delve (full stats): " + ', '.join(sorted(set(added_full))))
+            if added_partial:
+                parts.append("From a drop only, no delve found (Mob/Area/Realm only - "
+                             "Slot/Type/Spell/etc. unknown): " + ', '.join(sorted(set(added_partial))))
+            messagebox.showinfo("Added to Database", "\n\n".join(parts))
+        elif already_known:
+            messagebox.showinfo("Already in Database",
+                f"'{query}' was found, but it's already in the database.")
+        else:
+            messagebox.showinfo("No Matches Found",
+                f"No drop of '{query}' was found in the loaded log(s), so nothing was added.")
+
+    def _add_master_data_item(self, row):
+        """Adds one master-item-shaped row (either a full LootParser.
+        parse_file row, or a partial LootParser.find_drop_only_records
+        row - see _search_and_add_item) to self.master_data and to the
+        persisted self.added_master_items list (see
+        _merge_added_master_items), keyed the same (Realm, Area, Mob,
+        Item) way _append_to_master/LootParser.parse_file already dedupe
+        on. If that exact key already exists as a PARTIAL record (see
+        _PARTIAL_ITEM_NOTE) and `row` is a full one, upgrades it in place
+        instead of skipping it, so a later search that finds a real
+        delve can fill in Slot/Type/Spell/etc. for an item this method
+        previously had to add with only Mob/Area/Realm known. Returns
+        True if anything was actually added or upgraded, False if that
+        exact item/drop combination was already fully known (nothing
+        changed)."""
+        def key_of(d):
+            return (d.get('Realm', ''), d.get('Area', ''), d.get('Mob', ''), d.get('Item', ''))
+        key = key_of(row)
+        entry = {field: row.get(field, '') for field in _MASTER_ITEM_FIELDS}
+        is_partial = entry.get('Notes') == _PARTIAL_ITEM_NOTE
+
+        for existing in self.master_data:
+            if key_of(existing) != key:
+                continue
+            if existing.get('Notes') == _PARTIAL_ITEM_NOTE and not is_partial:
+                existing.clear()
+                existing.update(entry)
+                for added_existing in self.added_master_items:
+                    if key_of(added_existing) == key:
+                        added_existing.clear()
+                        added_existing.update(entry)
+                        break
+                return True
+            return False
+
+        self.master_data.append(entry)
+        if key not in {key_of(it) for it in self.added_master_items}:
+            self.added_master_items.append(entry)
+        return True
+
+    def _merge_added_master_items(self):
+        """Re-merges every item ever added via the Search Logs "Add"
+        checkbox (self.added_master_items, persisted - see _save_config)
+        back into self.master_data wherever it's currently missing -
+        called right after every master database (re)load (see
+        _load_master_for_search), so a previously-added item survives
+        the community database being swapped out for an updated copy
+        later in the same or a future session, without ever touching
+        that community file itself - it only ever adds, never overwrites
+        or removes anything already there. Same (Realm, Area, Mob, Item)
+        dedup key as _add_master_data_item."""
+        if not self.added_master_items:
+            return
+        def key_of(d):
+            return (d.get('Realm', ''), d.get('Area', ''), d.get('Mob', ''), d.get('Item', ''))
+        existing_keys = {key_of(it) for it in self.master_data}
+        for item in self.added_master_items:
+            key = key_of(item)
+            if key not in existing_keys:
+                self.master_data.append(dict(item))
+                existing_keys.add(key)
+
     def _search_logs(self):
         """Search every loaded file for a term, e.g. an item name. In "Drops
         only" mode (default), finds every actual drop event of that item and
         shows a snapshot from the last timestamp through the drop; otherwise
-        falls back to a plain raw-text search of every line."""
+        falls back to a plain raw-text search of every line. If "Add" is
+        checked, also runs _search_and_add_item first - this normal search
+        still happens exactly as it otherwise would either way."""
         query = self.search_query_var.get().strip()
         if not query:
             messagebox.showwarning("No Search Term", "Enter something to search for.")
@@ -6346,6 +6609,9 @@ class App(tk.Tk):
         if not self.files:
             messagebox.showwarning("No Files", "Load some log files first.")
             return
+
+        if self.search_add_var.get():
+            self._search_and_add_item(query)
 
         if self.search_drops_only_var.get():
             drops, errors = self._find_item_drops(query)
@@ -14806,6 +15072,14 @@ class App(tk.Tk):
 
             wb.close()
 
+            # Re-merge anything previously found via Search Logs' "Add"
+            # checkbox that this freshly (re)loaded database doesn't
+            # already have (see _search_and_add_item) - keeps those items
+            # around even if the community database gets swapped out for
+            # an updated copy that hasn't caught up yet, without ever
+            # touching that file itself.
+            self._merge_added_master_items()
+
             status_text = f"✓ Loaded {len(self.master_data)} items from {os.path.basename(path)}"
             if skipped_struck:
                 status_text += f" ({skipped_struck} struck-through skipped)"
@@ -16595,10 +16869,13 @@ class App(tk.Tk):
         happened on (a no-op if already there). Does nothing for a
         header/blank-space double-click, an empty-slot placeholder row,
         or any row whose Item name doesn't resolve to a real master_data
-        record (e.g. a crafting material that isn't in the equipment
-        database at all) - _find_master_data_record already returns None
-        for both of those, so no separate placeholder-text check is
-        needed here."""
+        record - the latter pops up "Item Not Found" instead of doing
+        nothing, UNLESS the clicked text is itself one of this app's own
+        placeholder messages ("No suitable item found", a Manual "None
+        found" row's "No Weapon matches found" etc. - see
+        _PLACEHOLDER_ITEM_TEXTS/_is_placeholder_item_text), which
+        correctly stay silent no-ops since they were never a real item
+        name to begin with."""
         tv = event.widget
         if tv.identify_region(event.x, event.y) != 'cell':
             return
@@ -16616,6 +16893,10 @@ class App(tk.Tk):
         area = tv.set(row_id, 'Area') if 'Area' in cols else ''
         record = self._find_master_data_record(item_name, slot, level, area)
         if record is None:
+            if not _is_placeholder_item_text(item_name):
+                messagebox.showinfo("Item Not Found",
+                    f'"{item_name}" isn\'t in the currently loaded master database, '
+                    f'so there\'s no Item Details record to show for it.')
             return
         self._show_result_detail(record)
         self.notebook.select(self.tab_results)

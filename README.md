@@ -140,7 +140,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.5.1 (Current)
+### v7.6.0 (Current)
+- **Grow your own database**: Parse tab's Files & Search > Search Logs gains an **Add** checkbox (checking it greys out Case sensitive/Drops only, since Add's own matching always needs that same drop-event correlation regardless of them). Searching with it checked reuses the Loot parser's own delve+drop+area correlation to see whether a delve ("You examine ... closely") of the searched item was found alongside one of its own drops in the same log - if so, adds that item (full stats, plus the Area/Realm it dropped in) straight into the loaded database. If no delve exists but a drop still does (e.g. an item picked up and sold without ever being examined), it's still added with just Mob/Area/Realm known rather than nothing at all - and a later search that DOES find a real delve upgrades that record in place. Everything added this way is remembered across restarts and survives the community database itself being reloaded or replaced later, without ever touching that file.
+- **"Item Not Found" popup**: double-clicking an item on any chart in the app that isn't in the currently loaded database now shows a popup saying so, instead of silently doing nothing (which previously looked like the double-click feature itself was broken).
+
+### v7.5.1
 - **Crafting > Enchants** now splits into two mini-tabs: **Direct** (enchanting straight onto an item - the original tree, unchanged) and **Scroll** (new - Master File.xlsx's own "Scribe List" sheet: all 72 enchant scrolls, grouped Realm &rarr; Weapon/Armor/Weapon Sigil/Armor Sigil the exact same way Direct is, each showing its own crafting materials and their shop gold cost).
 
 ### v7.5.0
