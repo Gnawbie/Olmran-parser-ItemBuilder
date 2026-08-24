@@ -140,7 +140,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.6.0 (Current)
+### v7.6.1 (Current)
+- **Area Items now includes crafting/enchant materials** that drop in the picked area, not just equipment - drawn from the same CRAFTING_MATERIAL_SOURCES/CRAFTING_ENCHANTS data the Crafting tab's own material trees use, sorted after equipment with `Slot: material` and a CRAFTING_ENCHANTS material's own "Use" (e.g. "Enchant Weapon i") shown in the Type column where known.
+- **Area Items columns now auto-fit** to whichever value is currently longest per column, fixing longer text (like a material's enchant "Use") getting visually cut off by a fixed width sized for shorter values.
+
+### v7.6.0
 - **Grow your own database**: Parse tab's Files & Search > Search Logs gains an **Add** checkbox (checking it greys out Case sensitive/Drops only, since Add's own matching always needs that same drop-event correlation regardless of them). Searching with it checked reuses the Loot parser's own delve+drop+area correlation to see whether a delve ("You examine ... closely") of the searched item was found alongside one of its own drops in the same log - if so, adds that item (full stats, plus the Area/Realm it dropped in) straight into the loaded database. If no delve exists but a drop still does (e.g. an item picked up and sold without ever being examined), it's still added with just Mob/Area/Realm known rather than nothing at all - and a later search that DOES find a real delve upgrades that record in place. Everything added this way is remembered across restarts and survives the community database itself being reloaded or replaced later, without ever touching that file.
 - **"Item Not Found" popup**: double-clicking an item on any chart in the app that isn't in the currently loaded database now shows a popup saying so, instead of silently doing nothing (which previously looked like the double-click feature itself was broken).
 

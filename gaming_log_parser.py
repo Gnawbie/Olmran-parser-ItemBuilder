@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.6.0"
+VERSION = "7.6.1"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -13478,11 +13478,18 @@ class App(tk.Tk):
 
     def _refresh_area_items_results(self):
         """Fill the Area Items table with every master-database item whose
-        Area matches the one currently picked in the dropdown. Also syncs
-        the left-side navigation tree's own selection to match, so typing
-        an area directly (or picking one from the autocomplete popup)
-        highlights the same node clicking it in the tree would have -
-        see _area_nav_area_to_iid/_refresh_area_nav_tree."""
+        Area matches the one currently picked in the dropdown, PLUS every
+        crafting/enchant material that drops there (CRAFTING_MATERIAL_
+        SOURCES/CRAFTING_ENCHANTS - the same two lists the Crafting tab's
+        own material trees and CRAFTING_MATERIAL_LOOKUP already draw
+        from), synthesized into the same row shape (Slot='material', Type
+        holds a CRAFTING_ENCHANTS material's own "Use" - e.g. "Enchant
+        Weapon i" - blank for a generic CRAFTING_MATERIAL_SOURCES
+        ingredient with no single specific use). Also syncs the left-side
+        navigation tree's own selection to match, so typing an area
+        directly (or picking one from the autocomplete popup) highlights
+        the same node clicking it in the tree would have - see
+        _area_nav_area_to_iid/_refresh_area_nav_tree."""
         self.area_items_tv.delete(*self.area_items_tv.get_children())
         area = self.area_items_var.get().strip()
         if not area:
@@ -13495,11 +13502,22 @@ class App(tk.Tk):
             self.area_nav_tv.see(nav_iid)
 
         matches = [item for item in self.master_data if (item.get('Area') or '').strip() == area]
+        for e in CRAFTING_MATERIAL_SOURCES:
+            if (e.get('area') or '').strip() == area:
+                matches.append({'Realm': e.get('realm', ''), 'Mob': e.get('mob', ''),
+                                'Item': e.get('item', ''), 'Slot': 'material', 'Type': '',
+                                'Level': e.get('level', '')})
+        for e in CRAFTING_ENCHANTS:
+            if (e.get('area') or '').strip() == area:
+                matches.append({'Realm': e.get('realm', ''), 'Mob': e.get('mob', ''),
+                                'Item': e.get('item', ''), 'Slot': 'material',
+                                'Type': e.get('use_display', ''), 'Level': e.get('level', '')})
         # Armor slots first (grouped together, not just one), then jewels,
-        # then shields, then weapons. Within the armor group, Plate first,
-        # then Studded, then Leather, then Cloth - then slot and Item name
-        # so it doesn't read as randomly shuffled within any of those.
-        slot_group = {'jewel': 1, 'shield': 2, 'weapon': 3}
+        # then shields, then weapons, then materials last. Within the
+        # armor group, Plate first, then Studded, then Leather, then
+        # Cloth - then slot and Item name so it doesn't read as randomly
+        # shuffled within any of those.
+        slot_group = {'jewel': 1, 'shield': 2, 'weapon': 3, 'material': 4}
         armor_type_order = {'plate': 0, 'studded': 1, 'leather': 2, 'cloth': 3}
         matches.sort(key=lambda item: (
             slot_group.get((item.get('Slot') or '').strip().lower(), 0),
@@ -13515,6 +13533,11 @@ class App(tk.Tk):
                 item.get('Weight', ''), item.get('Fumble', ''), item.get('Damage', ''),
                 item.get('Timer', ''), item.get('Accuracy', ''),
             ))
+        # Auto-fit every column to its own longest currently-shown value -
+        # a fixed width sized for a plain armor material ("cloth") cuts off
+        # a much longer one like a material's own enchant "Use" ("Water
+        # Protect Sigil i") in the Type column.
+        self._autosize_treeview_columns(self.area_items_tv)
         self.area_items_status.config(text=f"{len(matches)} item(s)")
 
     def _remove_items_by_area(self):
@@ -15243,30 +15266,45 @@ class App(tk.Tk):
 
         self._autosize_results_columns()
 
-    def _autosize_results_columns(self):
-        """Shrink/grow each results column to the minimum width that fits its
-        header and currently displayed cell values - no wasted or cramped space."""
-        tv = self.search_results_tv
+    def _autosize_treeview_columns(self, tv, skip_cols=(), row_filter=None):
+        """Shrink/grow each of tv's own columns to the minimum width that
+        fits its header and every currently displayed cell value - no
+        wasted or cramped space, and nothing gets visually cut off no
+        matter how long a particular cell's own text turns out to be
+        (e.g. Area Items' Type column showing a long enchant material's
+        own "Use" like "Water Protect Sigil i"). skip_cols are left at
+        whatever width they're already set to (a fixed-width visual
+        spacer/icon column, not content-driven). row_filter, if given,
+        excludes non-content rows (e.g. Results' own divider rows
+        between stacked build variants) from the measurement."""
         cols = tv['columns']
         font = tkfont.Font(font=ttk.Style().lookup('Treeview', 'font') or 'TkDefaultFont')
         padding = 24  # cell borders/inset allowance
+        rows = [tv.item(iid)['values'] for iid in tv.get_children()]
+        if row_filter:
+            rows = [v for v in rows if row_filter(v)]
 
+        for idx, col in enumerate(cols):
+            if col in skip_cols:
+                continue
+            max_width = font.measure(tv.heading(col)['text'])
+            for values in rows:
+                if idx < len(values):
+                    w = font.measure(str(values[idx]))
+                    if w > max_width:
+                        max_width = w
+            tv.column(col, width=max_width + padding)
+
+    def _autosize_results_columns(self):
+        """Shrink/grow each results column to the minimum width that fits its
+        header and currently displayed cell values - no wasted or cramped space."""
         # Divider rows (between stacked build variants) fill every cell with a
         # long block-character string so it reads as a solid line - that's not
         # real content, and would otherwise force every column to the same
-        # oversized width to fit it. Skip those rows when measuring.
-        real_rows = [tv.item(iid)['values'] for iid in tv.get_children()
-                    if not str(tv.item(iid)['values'][0]).startswith('█')]
-
-        for idx, col in enumerate(cols):
-            if col in ('Div', 'Bank'):
-                continue  # fixed-width visual spacer/icon column, not content-driven
-            max_width = font.measure(tv.heading(col)['text'])
-            for values in real_rows:
-                w = font.measure(str(values[idx]))
-                if w > max_width:
-                    max_width = w
-            tv.column(col, width=max_width + padding)
+        # oversized width to fit it. Excluded from measurement via row_filter.
+        self._autosize_treeview_columns(
+            self.search_results_tv, skip_cols=('Div', 'Bank'),
+            row_filter=lambda values: not str(values[0]).startswith('█'))
 
     def _build_dict_to_rows(self, build_dict, slots_filter=None, with_slot_keys=False):
         """Turn a {slot: item} build mapping into result-table rows. Alt
