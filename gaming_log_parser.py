@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.7.0"
+VERSION = "7.7.1"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -4039,6 +4039,10 @@ class App(tk.Tk):
                     # popup, shown once ever); True/False once the player has
                     # actually answered it.
                     self._persisted_community_data_opt_in = config.get('community_data_opt_in', None)
+                    # Run Parse's "Auto-Capture Delves" checkbox (see
+                    # _build_parse_tab) - checked by default so a fresh
+                    # config preserves the original always-on behavior.
+                    self._persisted_auto_capture_delves = config.get('auto_capture_delves', True)
                     # Raw data only (no tk.StringVar yet - the Saved Builds tab
                     # isn't built until later in __init__) - _build_saved_builds_tab
                     # turns this into self.saved_builds.
@@ -4196,6 +4200,8 @@ class App(tk.Tk):
                 'added_master_items': getattr(self, 'added_master_items', []),
                 'activity_log': getattr(self, 'activity_log', []),
                 'community_data_opt_in': getattr(self, 'community_data_opt_in', None),
+                'auto_capture_delves': bool(getattr(self, 'auto_capture_delves_var', None)
+                                            and self.auto_capture_delves_var.get()),
                 'saved_builds': [
                     {'name': save['name'].get(), 'headers': list(save['headers']),
                      'rows': [list(row) for row in save['rows']]}
@@ -5699,7 +5705,20 @@ class App(tk.Tk):
         
         self.loot_cb = ttk.Checkbutton(opts_frame, text="💎 Loot",
                                        variable=self.do_loot)
-        self.loot_cb.pack(side='left')
+        self.loot_cb.pack(side='left', padx=(0,20))
+
+        # Checked by default (preserves the original always-on behavior) -
+        # unchecking this alone (Loot can stay checked) turns off Run
+        # Parse's automatic delve capture (see _run_parse/LootParser.
+        # find_all_delves) without affecting the real Loot parse output
+        # itself (self.parsed['loot'], Export, etc.). Persisted across
+        # restarts (see _load_config/_save_config), unlike do_chat/
+        # do_combat/do_loot themselves, which always reset to unchecked.
+        self.auto_capture_delves_var = tk.BooleanVar(value=getattr(self, '_persisted_auto_capture_delves', True))
+        self.auto_capture_delves_var.trace_add('write', lambda *a: self._save_config())
+        self.auto_capture_delves_cb = ttk.Checkbutton(opts_frame, text="📥 Auto-Capture Delves",
+                                       variable=self.auto_capture_delves_var)
+        self.auto_capture_delves_cb.pack(side='left')
 
         ttk.Label(parse_frame, text="Counters (Run Parse also exports these if checked):",
                  font=('Arial', 9)).pack(anchor='w', pady=(8,4))
@@ -6576,9 +6595,12 @@ class App(tk.Tk):
         # into self.master_data/self.added_master_items the same way Add
         # does (see _add_master_data_item), one save/refresh at the end
         # rather than per-item, since a single Run Parse can cover many
-        # files at once.
+        # files at once. Gated by its own "Auto-Capture Delves" checkbox
+        # (checked by default) independently of Loot itself - unchecking
+        # just this one stops the auto-capture without touching the real
+        # Loot parse output above.
         delve_added = 0
-        if self.do_loot.get():
+        if self.do_loot.get() and self.auto_capture_delves_var.get():
             for f in self.files:
                 if f['type'] != 'loot':
                     continue

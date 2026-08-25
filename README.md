@@ -142,7 +142,10 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.7.0 (Current)
+### v7.7.1 (Current)
+- **Auto-Capture Delves checkbox**: v7.7.0's automatic delve-capture-on-parse is now a checkbox (📥 Auto-Capture Delves, next to Loot in Parse tab's Files & Search) instead of always-on - checked by default so nothing changes unless you turn it off, and unchecking it stops the auto-capture without affecting the real Loot parse output. Its state persists across restarts.
+
+### v7.7.0
 - **Castable? column, everywhere**: shows whether an item can be held/used while casting a spell - definitive for weapons (derived from Type), and for shields, based on a "holdable while casting" delve marker when it's known. Previously Area Items-only; now also shown on the Manual tab results, Search Results/Saved Builds, Bank Build/Saved Items, and the Item Details popup (added automatically whenever a shown item is a weapon or shield).
 - **Grow the database automatically**: Run Parse now captures every delve found in a parsed log into the local database on its own, not just ones matching a specific Search Logs query the way the Add checkbox already worked - a delve with no matching drop nearby still gets added (full stats, Mob left unknown), and gets upgraded in place later if a real drop match turns up.
 - **Update button** (Build > Basic Constraints > Master Database File): downloads the latest community database straight from GitHub and merges it into your local copy - adds genuinely new items, updates existing ones only where a value actually differs, never replaces the file wholesale.

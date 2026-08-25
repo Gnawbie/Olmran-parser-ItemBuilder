@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v7.7.0</p>
+    <p class="tagline">Full usage guide - v7.7.1</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -190,7 +190,7 @@
         </ul>
       </li>
       <li>Parse options (Chat / Combat / Loot) automatically enable or disable based on which file types are loaded. A second row of checkboxes - <b>XP Counter</b>, <b>Damage Counter</b>, <b>PvP Dealt</b>, <b>PvP Taken</b> - sits below it, independent of that auto-enable logic; check any of these and click Run Parse to compute that Counter's data (the same engine as the Counters sub-tab's own buttons) and make it available to Export.</li>
-      <li>With <b>Loot</b> checked, Run Parse also automatically grows the local database from <i>every</i> delve found in a parsed log - not just ones matching a specific Search Logs query. A lone delve with no matching drop nearby still gets added (full stats, Mob left unknown until a real drop match turns up later), the same idea as Search Logs' Add checkbox above, just automatic on every parse instead of needing a search term.</li>
+      <li>With <b>Loot</b> checked, an <b>📥 Auto-Capture Delves</b> checkbox (checked by default, next to Loot) has Run Parse also grow the local database from <i>every</i> delve found in a parsed log - not just ones matching a specific Search Logs query. A lone delve with no matching drop nearby still gets added (full stats, Mob left unknown until a real drop match turns up later), the same idea as Search Logs' Add checkbox above, just automatic on every parse instead of needing a search term. Unchecking it turns off just this auto-capture, without affecting the real Loot parse output itself; its state persists across restarts.</li>
       <li>Use the Snapshot buttons to preview parsed data before exporting - a second row covers the four Counters (XP/Damage/PvP Dealt/PvP Taken).</li>
       <li>Export everything to a formatted spreadsheet or plain-text file - see Settings' own Export sub-tab below for the full set of formats and options.</li>
       <li><b>Credits</b> - far right of the Parse Results row. Opens a popup listing everyone who contributed to the project.</li>
