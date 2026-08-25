@@ -7,7 +7,7 @@ Parses Chat, Combat, and Loot from action and chat .log files
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from tkinter import font as tkfont
-import re, os, sys, json, difflib, threading, tempfile, subprocess, webbrowser, urllib.request, urllib.error, zipfile, shutil, traceback, ctypes
+import re, os, sys, json, io, difflib, threading, tempfile, subprocess, webbrowser, urllib.request, urllib.error, urllib.parse, zipfile, shutil, traceback, ctypes
 from pathlib import Path
 from datetime import datetime
 import csv
@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.6.1"
+VERSION = "7.7.0"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -1004,6 +1004,103 @@ class LootParser:
             records.append(entry)
         return records
 
+    @staticmethod
+    def find_all_delves(filepath: str) -> list:
+        """Every delve ('You examine ... closely') found anywhere in this
+        file, on its own - unlike parse_file, which only ever produces a
+        row for an item that was BOTH delved AND dropped in the same file
+        (see parse_file's own `if item_clean in delved_items` gate), this
+        captures EVERY delve whether or not a matching drop ever showed up
+        nearby. Full Slot/Type/Spell/Level/etc. always come straight from
+        the delve text itself (see parse_delve_stats) - the one thing a
+        lone delve can't tell you is who dropped it, so Mob is always
+        blank here and Notes is flagged with _DELVE_ONLY_NOTE (see
+        _add_master_data_item, which upgrades a delve-only record in
+        place if a real drop/mob match for the same item later turns up,
+        same idea as find_drop_only_records' own partial-record upgrade
+        path). Area/Realm are still resolved from the nearest-preceding
+        [Area] marker before the delve block's own position, same
+        technique parse_file/find_drop_only_records use for a drop.
+        Used by _run_parse to passively grow the local database from
+        every log ever parsed - see _auto_capture_all_delves."""
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            raw_text = f.read()
+        blocks = re.split(r'\n(?=<\d{2}:\d{2}:\d{2}>)', raw_text)
+
+        area_markers = []  # (line_index, area_name)
+        delve_events = []  # (line_index, item_clean, stats)
+        line_index = 0
+        for block in blocks:
+            lines = [l.rstrip('\r') for l in block.split('\n')]
+
+            delve_item_name = None
+            for line in lines:
+                m = re.search(r'You examine (?:a |an |the )?(.+?) closely', line, re.I)
+                if m:
+                    delve_item_name = LootParser.clean_item_name(m.group(1).strip())
+                    break
+            stats = LootParser.parse_delve_stats(lines) if delve_item_name else None
+
+            for line in lines:
+                loc_m = LootParser.LOC_RE.match(line.strip())
+                if loc_m:
+                    area_markers.append((line_index, loc_m.group(1)))
+                line_index += 1
+
+            if delve_item_name:
+                delve_events.append((line_index - 1, delve_item_name, stats))
+
+        records = []
+        seen = set()
+        for delve_line_idx, item_clean, stats in delve_events:
+            closest_area = ''
+            for area_idx, area_name in area_markers:
+                if area_idx < delve_line_idx:
+                    closest_area = area_name
+                else:
+                    break
+            realm = AREA_TO_REALM.get(closest_area, '') if closest_area else ''
+
+            has_only_weight = (
+                stats.get('Weight') and not stats.get('Slot') and not stats.get('Type')
+                and not stats.get('Spell') and not stats.get('Level')
+                and not stats.get('Damage') and not stats.get('Defense')
+            )
+            if has_only_weight:
+                if stats.get('Holdable'):
+                    stats['Slot'] = 'possible'
+                    stats['Type'] = 'crafting'
+                    stats['Spell'] = 'item'
+                else:
+                    stats['Slot'] = 'fodder'
+                    stats['Type'] = 'fodder'
+
+            notes_parts = []
+            if stats.get('Worth'):
+                notes_parts.append(f"sells for {stats['Worth']}")
+            if stats.get('Slot') == 'shield' and stats.get('HoldableWhileCasting'):
+                notes_parts.append('holdable while casting')
+            notes_parts.append(_DELVE_ONLY_NOTE)
+            notes = '; '.join(notes_parts)
+
+            key = (realm, closest_area, '', item_clean)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            entry = {field: '' for field in _MASTER_ITEM_FIELDS}
+            entry.update({
+                'Realm': realm, 'Area': closest_area, 'Mob': '', 'Item': item_clean,
+                'Slot': stats.get('Slot', ''), 'Type': stats.get('Type', ''),
+                'Spell': stats.get('Spell', ''), 'Level': stats.get('Level', ''),
+                'Damage': stats.get('Damage', ''), 'Fumble': stats.get('Fumble', ''),
+                'Accuracy': stats.get('Accuracy', ''), 'Defense': stats.get('Defense', ''),
+                'Sigil': stats.get('Sigil', ''), 'SigilLvl': stats.get('SigilLvl', ''),
+                'Weight': stats.get('Weight', ''), 'Notes': notes,
+            })
+            records.append(entry)
+        return records
+
 
 # ─────────────────────────────────────────────────────────────
 #  EXCEL EXPORT
@@ -1337,6 +1434,16 @@ _MASTER_ITEM_FIELDS = ('Realm', 'Area', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 
 # let a LATER search that DOES find a real delve upgrade the record in
 # place, rather than treating it as an unrelated duplicate.
 _PARTIAL_ITEM_NOTE = 'Added from a drop only (no delve found) - Slot/Type/Spell/etc. unknown'
+
+# Marks a master_data record added via LootParser.find_all_delves - a
+# delve with no accompanying drop match, so Mob is unknown even though
+# every other field (Slot/Type/Spell/etc.) came straight from the delve
+# text itself. _add_master_data_item checks for this (alongside
+# _PARTIAL_ITEM_NOTE) to let a later match that DOES find the real Mob
+# upgrade the record in place instead of treating it as an unrelated
+# duplicate.
+_DELVE_ONLY_NOTE = 'Added from a delve only (no drop found) - Mob unknown'
+_PARTIAL_ITEM_NOTES = (_PARTIAL_ITEM_NOTE, _DELVE_ONLY_NOTE)
 
 CHAT_SOURCES   = ['Timestamp','Channel','Speaker','Target','Message','File']
 COMBAT_SOURCES = ['Timestamp','Location','Attacker','Target','Action','Damage','Spell','Event','Full','File']
@@ -3785,6 +3892,18 @@ class App(tk.Tk):
         # every _load_master_for_search).
         self.added_master_items = list(getattr(self, '_persisted_added_master_items', []))
 
+        # Every significant action this installation has ever taken (see
+        # _log_activity) - a purely local diagnostic trail, never bundled/
+        # shared/pushed anywhere, just something to point back to later
+        # if something isn't behaving as expected.
+        self.activity_log = list(getattr(self, '_persisted_activity_log', []))
+
+        # None = never answered the one-time opt-in popup yet (see
+        # _maybe_show_community_opt_in_popup); True/False once the player
+        # has actually made a choice - either way, that popup never shows
+        # again after this session.
+        self.community_data_opt_in = getattr(self, '_persisted_community_data_opt_in', None)
+
         # Suppressed until startup is fully done building/restoring every
         # tab's own live state from the _persisted_* values _load_config
         # just set - some tabs built early (e.g. the Item Counter's
@@ -3809,6 +3928,18 @@ class App(tk.Tk):
         if self.dark_mode_var.get():
             self._apply_theme()
         self._suppress_config_saves = False
+
+        # One-time (ever) opt-in prompt for helping crowdsource missing
+        # database info (e.g. the Castable? column's real gap: shields
+        # almost never carry the "holdable while casting" delve line, so
+        # that field sits blank for nearly every shield in the community
+        # database today). Scheduled via after() rather than shown inline
+        # here so the main window finishes drawing first - a regression
+        # script never pumps the event loop this callback needs, and
+        # real/TEST users never set OLMRAN_HEADLESS_TEST, so this has zero
+        # effect on either.
+        if not os.environ.get('OLMRAN_HEADLESS_TEST'):
+            self.after(400, self._maybe_show_community_opt_in_popup)
 
         # Save config on close
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -3903,6 +4034,11 @@ class App(tk.Tk):
                     self._persisted_dark_mode = config.get('dark_mode', False)
                     self._persisted_dark_intensity = config.get('dark_intensity', 0)
                     self._persisted_added_master_items = config.get('added_master_items', [])
+                    self._persisted_activity_log = config.get('activity_log', config.get('search_history', []))
+                    # None = never asked yet (see _maybe_show_community_opt_in_
+                    # popup, shown once ever); True/False once the player has
+                    # actually answered it.
+                    self._persisted_community_data_opt_in = config.get('community_data_opt_in', None)
                     # Raw data only (no tk.StringVar yet - the Saved Builds tab
                     # isn't built until later in __init__) - _build_saved_builds_tab
                     # turns this into self.saved_builds.
@@ -4058,6 +4194,8 @@ class App(tk.Tk):
                 'dark_mode': bool(getattr(self, 'dark_mode_var', None) and self.dark_mode_var.get()),
                 'dark_intensity': (self.dark_intensity_var.get() if getattr(self, 'dark_intensity_var', None) else 0),
                 'added_master_items': getattr(self, 'added_master_items', []),
+                'activity_log': getattr(self, 'activity_log', []),
+                'community_data_opt_in': getattr(self, 'community_data_opt_in', None),
                 'saved_builds': [
                     {'name': save['name'].get(), 'headers': list(save['headers']),
                      'rows': [list(row) for row in save['rows']]}
@@ -4181,6 +4319,39 @@ class App(tk.Tk):
         """Handle window closing"""
         self._save_config()
         self.destroy()
+
+    def _maybe_show_community_opt_in_popup(self):
+        """One-time (ever) startup popup asking whether the player wants
+        to opt into helping crowdsource missing database info - e.g. the
+        Castable? column's real gap: shields almost never carry the
+        "holdable while casting" delve line real weapons do, so that
+        field sits blank for nearly every shield in the community
+        database today. Opting in immediately reveals the "Submit to
+        Community Database" button (Build > Basic Constraints > Master
+        Database File - see _submit_to_community_database/
+        _update_submit_community_button_visibility), which sends nothing
+        anywhere on its own - it only opens a pre-filled GitHub issue for
+        the player to review and post themselves. Opting out is just as
+        final: the choice is remembered and this popup never shows again
+        either way, once answered."""
+        if self.community_data_opt_in is not None:
+            return
+        opt_in = messagebox.askyesno(
+            "Help Improve the Item Database",
+            "Would you like to opt in to helping update information in the shared item "
+            "database (e.g. whether a shield can be held while casting)?\n\n"
+            "Click Yes to opt in, or No to opt out. Either way, you won't be asked again.",
+            parent=self)
+        self.community_data_opt_in = opt_in
+        self._save_config()
+        self._update_submit_community_button_visibility()
+        if opt_in:
+            messagebox.showinfo("Opted In",
+                "Thanks! Look for the \"Submit to Community Database\" button in Build > "
+                "Basic Constraints > Master Database File.", parent=self)
+        else:
+            messagebox.showinfo("Opted Out",
+                "Opted out of this optional update. The program will never ask again.", parent=self)
 
     # ── UPDATE CHECK / SELF-UPDATE ─────────────────────────────
     # Entirely manual - never runs on startup or on any timer, only when
@@ -6395,6 +6566,34 @@ class App(tk.Tk):
             except Exception as e:
                 errors.append(f"{f['name']}: {e}")
 
+        # Passively grow the local database from EVERY delve in every
+        # loot-type file just parsed - not just ones matching a specific
+        # search the way Search Logs' "Add" checkbox works (see
+        # _search_and_add_item). Unlike parse_file's own self.parsed['loot']
+        # output above (which only counts an item that was BOTH delved AND
+        # dropped), a lone delve with no matching drop still gets added
+        # here - see LootParser.find_all_delves/_DELVE_ONLY_NOTE. Folded
+        # into self.master_data/self.added_master_items the same way Add
+        # does (see _add_master_data_item), one save/refresh at the end
+        # rather than per-item, since a single Run Parse can cover many
+        # files at once.
+        delve_added = 0
+        if self.do_loot.get():
+            for f in self.files:
+                if f['type'] != 'loot':
+                    continue
+                try:
+                    for row in LootParser.find_all_delves(f['path']):
+                        if self._add_master_data_item(row):
+                            delve_added += 1
+                except Exception:
+                    pass  # a malformed/unreadable file here shouldn't block the rest of Run Parse
+        if delve_added:
+            self._save_config()
+            self._refresh_manual_lookup_results()
+            if hasattr(self, 'bank_saved_tv'):
+                self._refresh_bank_saved_tab()
+
         # The four Counters each scan every loaded file at once (not
         # gated by a per-file type the way Chat/Combat/Loot are above) -
         # same underlying methods as the Counters sub-tab's own buttons.
@@ -6437,6 +6636,14 @@ class App(tk.Tk):
         # Keep the Export tab's "Sheets to Export" checklist in sync with
         # whatever was actually just (re)computed.
         self._refresh_export_sheet_list()
+
+        self._log_activity('parse', 'run_parse', {
+            'file_count': len(self.files), 'errors': errors,
+            'chat_rows': len(self.parsed['chat']), 'combat_rows': len(self.parsed['combat']),
+            'loot_rows': len(self.parsed['loot']), 'xp_rows': len(self.parsed['xp']),
+            'damage_rows': len(self.parsed['damage']), 'pvp_dealt_rows': len(self.parsed['pvp_dealt']),
+            'pvp_taken_rows': len(self.parsed['pvp_taken']), 'delve_added_to_database': delve_added,
+        })
 
     def _show_snapshot(self, mode: str):
         title = {'pvp_dealt': 'PvP Dealt', 'pvp_taken': 'PvP Taken'}.get(mode, mode.title())
@@ -6526,12 +6733,21 @@ class App(tk.Tk):
                 parts.append("From a drop only, no delve found (Mob/Area/Realm only - "
                              "Slot/Type/Spell/etc. unknown): " + ', '.join(sorted(set(added_partial))))
             messagebox.showinfo("Added to Database", "\n\n".join(parts))
+            outcome = 'added_full' if added_full else 'added_partial'
         elif already_known:
             messagebox.showinfo("Already in Database",
                 f"'{query}' was found, but it's already in the database.")
+            outcome = 'already_known'
         else:
             messagebox.showinfo("No Matches Found",
                 f"No drop of '{query}' was found in the loaded log(s), so nothing was added.")
+            outcome = 'none'
+        # Returned so _search_logs' own search-history logging (see
+        # _log_search_history, purely a local diagnostic trail - never
+        # bundled/shared/pushed anywhere) can record what Add actually did,
+        # not just that it was checked.
+        return {'outcome': outcome, 'added_full': sorted(set(added_full)),
+                'added_partial': sorted(set(added_partial))}
 
     def _add_master_data_item(self, row):
         """Adds one master-item-shaped row (either a full LootParser.
@@ -6552,12 +6768,12 @@ class App(tk.Tk):
             return (d.get('Realm', ''), d.get('Area', ''), d.get('Mob', ''), d.get('Item', ''))
         key = key_of(row)
         entry = {field: row.get(field, '') for field in _MASTER_ITEM_FIELDS}
-        is_partial = entry.get('Notes') == _PARTIAL_ITEM_NOTE
+        is_partial = entry.get('Notes') in _PARTIAL_ITEM_NOTES
 
         for existing in self.master_data:
             if key_of(existing) != key:
                 continue
-            if existing.get('Notes') == _PARTIAL_ITEM_NOTE and not is_partial:
+            if existing.get('Notes') in _PARTIAL_ITEM_NOTES and not is_partial:
                 existing.clear()
                 existing.update(entry)
                 for added_existing in self.added_master_items:
@@ -6595,13 +6811,43 @@ class App(tk.Tk):
                 self.master_data.append(dict(item))
                 existing_keys.add(key)
 
+    _ACTIVITY_LOG_MAX = 1000
+
+    def _log_activity(self, category, action, details=None):
+        """Records one significant program action to self.activity_log
+        (persisted - see _save_config/_load_config), purely a local
+        diagnostic trail for this one installation - never bundled,
+        shared, or pushed anywhere, just something to point back to
+        later if something isn't behaving as expected ("did a search
+        for X actually run Y, and what did it find"). category groups
+        related actions (e.g. 'search_logs', 'build_search',
+        'bank_build', 'saved_build', 'item_action'); action is a short
+        label (e.g. 'find_optimal_build', 'find_best_combos'); details
+        is whatever's useful to reconstruct what happened - active
+        constraints, result counts, etc. Capped at _ACTIVITY_LOG_MAX
+        entries (oldest dropped first) so this can't grow unbounded
+        over long-term use. Saves immediately so an entry survives even
+        if the app closes unexpectedly right after."""
+        entry = {
+            'timestamp': datetime.now().isoformat(timespec='seconds'),
+            'category': category,
+            'action': action,
+            'details': details or {},
+        }
+        self.activity_log.append(entry)
+        if len(self.activity_log) > self._ACTIVITY_LOG_MAX:
+            self.activity_log = self.activity_log[-self._ACTIVITY_LOG_MAX:]
+        self._save_config()
+
     def _search_logs(self):
         """Search every loaded file for a term, e.g. an item name. In "Drops
         only" mode (default), finds every actual drop event of that item and
         shows a snapshot from the last timestamp through the drop; otherwise
         falls back to a plain raw-text search of every line. If "Add" is
         checked, also runs _search_and_add_item first - this normal search
-        still happens exactly as it otherwise would either way."""
+        still happens exactly as it otherwise would either way. Every run
+        (however it turns out) gets logged to self.activity_log - see
+        _log_activity."""
         query = self.search_query_var.get().strip()
         if not query:
             messagebox.showwarning("No Search Term", "Enter something to search for.")
@@ -6610,8 +6856,15 @@ class App(tk.Tk):
             messagebox.showwarning("No Files", "Load some log files first.")
             return
 
-        if self.search_add_var.get():
-            self._search_and_add_item(query)
+        add_result = self._search_and_add_item(query) if self.search_add_var.get() else None
+        mode = 'drops_only' if self.search_drops_only_var.get() else 'raw'
+
+        def log(result_count):
+            self._log_activity('search_logs', 'search', {
+                'query': query, 'mode': mode, 'case_sensitive': self.search_case_var.get(),
+                'file_count': len(self.files), 'files': [f['name'] for f in self.files],
+                'result_count': result_count, 'add_result': add_result,
+            })
 
         if self.search_drops_only_var.get():
             drops, errors = self._find_item_drops(query)
@@ -6620,8 +6873,10 @@ class App(tk.Tk):
                 if errors:
                     msg += f"\n\n{len(errors)} file(s) could not be read: " + "; ".join(errors)
                 messagebox.showinfo("No Matches", msg)
+                log(0)
                 return
             DropSnapshotViewer(self, query, drops)
+            result_count = len(drops)
         else:
             results, errors = self._find_raw_lines(query)
             if not results:
@@ -6629,8 +6884,12 @@ class App(tk.Tk):
                 if errors:
                     msg += f"\n\n{len(errors)} file(s) could not be read: " + "; ".join(errors)
                 messagebox.showinfo("No Matches", msg)
+                log(0)
                 return
             LogSearchViewer(self, query, results)
+            result_count = len(results)
+
+        log(result_count)
 
         if errors:
             messagebox.showwarning("Some Files Skipped",
@@ -6651,6 +6910,9 @@ class App(tk.Tk):
         self.pvp_kills_rp_var.set(str(total_rp) if results else '')
         self.pvp_kills_count_var.set(str(len(results)) if results else '')
         self._update_pvp_kd_ratio()
+        self._log_activity('parse', 'search_pvp_kills', {
+            'file_count': len(self.files), 'result_count': len(results), 'total_rp': total_rp,
+        })
         if not results:
             msg = f"No PvP kills were found in {len(self.files)} file(s)."
             if errors:
@@ -6726,6 +6988,9 @@ class App(tk.Tk):
         results, errors, total_rp = self._find_pvp_participated()
         self.pvp_participated_rp_var.set(str(total_rp) if results else '')
         self.pvp_participated_count_var.set(str(len(results)) if results else '')
+        self._log_activity('parse', 'search_pvp_participated', {
+            'file_count': len(self.files), 'result_count': len(results), 'total_rp': total_rp,
+        })
         if not results:
             msg = f"No PvP participation realm points were found in {len(self.files)} file(s)."
             if errors:
@@ -6807,6 +7072,9 @@ class App(tk.Tk):
         results, errors = self._find_pvp_deaths()
         self.pvp_deaths_count_var.set(str(len(results)) if results else '')
         self._update_pvp_kd_ratio()
+        self._log_activity('parse', 'search_pvp_deaths', {
+            'file_count': len(self.files), 'result_count': len(results),
+        })
         if not results:
             msg = f"No PvP deaths were found in {len(self.files)} file(s)."
             if errors:
@@ -10134,11 +10402,22 @@ class App(tk.Tk):
                   command=self._browse_search_master).pack(side='left', padx=2)
         ttk.Button(file_frame, text="Create New", 
                   command=self._create_new_search_master).pack(side='left', padx=2)
-        ttk.Button(file_frame, text="Use Community List", 
+        ttk.Button(file_frame, text="Use Community List",
                   command=self._use_community_list).pack(side='left', padx=2)
-        ttk.Button(file_frame, text="Load", 
+        ttk.Button(file_frame, text="Load",
                   command=self._load_master_for_search).pack(side='left', padx=2)
-        
+        self.update_community_db_button = ttk.Button(file_frame, text="Update",
+                  command=self._update_community_database)
+        self.update_community_db_button.pack(side='left', padx=2)
+        # Only shown for a player who opted in to the one-time startup
+        # popup (see _maybe_show_community_opt_in_popup/community_data_
+        # opt_in) - _update_submit_community_button_visibility keeps this
+        # in sync both at startup and immediately if they answer that
+        # popup during this same session.
+        self.submit_community_db_button = ttk.Button(file_frame, text="📤 Submit to Community Database",
+                  command=self._submit_to_community_database)
+        self._update_submit_community_button_visibility()
+
         # Build constraints
         constraints_frame = ttk.LabelFrame(t, text="Build Constraints", padding=10)
         constraints_frame.pack(fill='x', pady=(0,12))
@@ -11091,9 +11370,9 @@ class App(tk.Tk):
         bank_saved_frame = ttk.Frame(bank_saved_main_tab)
         bank_saved_frame.pack(fill='both', expand=True)
 
-        saved_cols = ('Bank', 'Slot', 'Drop', 'Enchant', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
+        saved_cols = ('Bank', 'Slot', 'Drop', 'Enchant', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Castable?', 'Area', 'Tag')
         saved_col_widths = {'Bank': 28, 'Slot': 55, 'Drop': 60, 'Enchant': 90, 'Item': 220, 'Type': 60, 'Spell': 100,
-                           'Sigil': 60, 'Level': 45, 'Area': 140, 'Tag': 110}
+                           'Sigil': 60, 'Level': 45, 'Castable?': 70, 'Area': 140, 'Tag': 110}
         saved_col_headings = {'Tag': 'Gear Tag', 'Bank': '📦'}
         self.bank_saved_tv = ttk.Treeview(bank_saved_frame, columns=saved_cols, show='headings', height=14)
         for col in saved_cols:
@@ -11697,14 +11976,14 @@ class App(tk.Tk):
         # tab (see _bank_and_locker_cells) - a plain "you already own this"
         # indicator here too, purely informational since Manual has no
         # build/scoring concept of its own to prioritize owned items within.
-        manual_cols = ('Bank', 'Locker', 'Realm', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Sigil', 'Level', 'Area')
+        manual_cols = ('Bank', 'Locker', 'Realm', 'Mob', 'Item', 'Slot', 'Type', 'Spell', 'Sigil', 'Level', 'Castable?', 'Area')
         # Weight/Fumble/Damage/Timer/Accuracy only get appended while
         # Weapons is checked (see _set_manual_results_columns) - they're
         # meaningless for armor/jewel rows and would just sit blank.
         self._manual_base_cols = manual_cols
         self._manual_weapon_extra_cols = ('Weight', 'Fumble', 'Damage', 'Timer', 'Accuracy')
         self._manual_col_widths = {'Bank': 28, 'Locker': 55, 'Realm': 70, 'Mob': 140, 'Item': 220, 'Slot': 55, 'Type': 110,
-                             'Spell': 110, 'Sigil': 60, 'Level': 45, 'Area': 120,
+                             'Spell': 110, 'Sigil': 60, 'Level': 45, 'Castable?': 70, 'Area': 120,
                              'Weight': 55, 'Fumble': 70, 'Damage': 70, 'Timer': 55, 'Accuracy': 70}
         self.manual_results_tv = ttk.Treeview(manual_tree_frame, columns=manual_cols,
                                               show='headings', height=14)
@@ -12037,9 +12316,9 @@ class App(tk.Tk):
         results_frame = ttk.LabelFrame(t, text="Suggested Build", padding=10)
         results_frame.pack(fill='both', expand=True)
         
-        cols = ('Bank', 'Locker', 'Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Mob', 'Area', 'Div', 'Alt Options')
+        cols = ('Bank', 'Locker', 'Slot', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Mob', 'Area', 'Castable?', 'Div', 'Alt Options')
         col_widths = {'Slot': 55, 'Item': 200, 'Type': 60, 'Spell': 100, 'Sigil': 60, 'Level': 45,
-                     'Mob': 120, 'Area': 120, 'Alt Options': 280, 'Locker': 55}
+                     'Mob': 120, 'Area': 120, 'Castable?': 70, 'Alt Options': 280, 'Locker': 55}
         self.search_results_tv = ttk.Treeview(results_frame, columns=cols,
                                              show='headings', height=20)
         for col in cols:
@@ -12213,12 +12492,17 @@ class App(tk.Tk):
         # Saved Builds tab - it's always the last one right after a render.
         self.saved_builds_notebook.select(self.saved_builds_notebook.tabs()[-1])
         self._save_config()
+        self._log_activity('saved_build', 'save_current_results', {
+            'name': f"Save {counter}", 'row_count': len(rows),
+        })
 
     def _remove_saved_build(self, index):
         if 0 <= index < len(self.saved_builds):
+            name = self.saved_builds[index]['name'].get()
             del self.saved_builds[index]
             self._render_saved_builds()
             self._save_config()
+            self._log_activity('saved_build', 'remove_saved_build', {'name': name})
 
     _SAVED_ROW_DISPLAY_TO_LOOKUP_SLOT = {
         'Head': 'head', 'Cloak': 'cloak', 'Body': 'body', 'Hands': 'hands',
@@ -12283,12 +12567,18 @@ class App(tk.Tk):
         attempted = set()
         manual_items = []
 
+        # Padded to the CURRENT live column count (not a fixed literal) so an
+        # older Saved Build persisted before a column was added (e.g.
+        # Castable?) still pads out correctly - alt_options is read via
+        # row[-1] for the same reason: it's always the last column in
+        # either the old or new format, never a fixed index.
+        num_cols = len(self.search_results_tv['columns'])
         for row in rows:
-            row = tuple(row) + ('',) * max(0, 12 - len(row))
+            row = tuple(row) + ('',) * max(0, num_cols - len(row))
             if str(row[0]).startswith('█'):
                 continue
             display_slot, item_name, item_type, spell, sigil, level, mob, area, alt_options = (
-                str(row[2]), row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[11]
+                str(row[2]), row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[-1]
             )
             lookup_key = (str(item_name).strip(), str(item_type).strip(),
                          str(spell).strip(), str(level).strip())
@@ -12372,6 +12662,9 @@ class App(tk.Tk):
             self.search_results_tv.insert('', 'end', values=row)
         self._autosize_results_columns()
         self.notebook.select(self.tab_results)
+        self._log_activity('saved_build', 'load_saved_build_to_results', {
+            'name': save['name'].get(), 'slot_count': len(build),
+        })
 
     def _update_saved_build_tab_label(self, index):
         """Keep a saved build's own Notebook tab label in sync with its
@@ -13850,6 +14143,7 @@ class App(tk.Tk):
             self.manual_lookup_spells.append(combined)
             self._render_manual_chips()
             self._refresh_manual_lookup_results()
+            self._log_activity('manual', 'add_lookup_spell', {'spell': combined, 'category': category})
 
     def _remove_manual_lookup_spell(self, spell_value):
         """Remove one Manual tab lookup chip (called by a chip's own ✕ button)"""
@@ -13928,6 +14222,8 @@ class App(tk.Tk):
             var.set(False)
 
         self.manual_jewel_sigil_var.set('Any')
+
+        self._log_activity('manual', 'clear_all_manual_filters')
 
         self._clear_manual_lookup_spells()
 
@@ -14309,7 +14605,8 @@ class App(tk.Tk):
             row = [bank_cell, locker_cell,
                    item.get('Realm', ''), item.get('Mob', ''), item.get('Item', ''),
                    item.get('Slot', ''), item.get('Type', ''), item.get('Spell', ''),
-                   item.get('Sigil', ''), item.get('Level', ''), item.get('Area', '')]
+                   item.get('Sigil', ''), item.get('Level', ''), _item_castable_display(item),
+                   item.get('Area', '')]
             if weapons_checked:
                 row += [item.get('Weight', ''), item.get('Fumble', ''), item.get('Damage', ''),
                        item.get('Timer', ''), item.get('Accuracy', '')]
@@ -14347,7 +14644,7 @@ class App(tk.Tk):
                 none_found_slots.append(slot.title())
 
         for k, label in enumerate(none_found_slots):
-            row = ['', '', '', '', f'No {label} matches found', label, '', '', '', '', '']
+            row = ['', '', '', '', f'No {label} matches found', label, '', '', '', '', '', '']
             if weapons_checked:
                 row += ['', '', '', '', '']
             self.manual_results_tv.insert('', 'end', iid=f'none_{k}', values=row)
@@ -14423,6 +14720,10 @@ class App(tk.Tk):
             self.results_display_mode.set('manual')
             self._render_manual_added_results()
 
+        self._log_activity('item_action', 'add_manual_item_to_results', {
+            'mode': mode, 'item': item.get('Item', ''), 'slot': item.get('Slot', ''),
+        })
+
     _RESULTS_SLOT_ORDER = ['head', 'jewel', 'cloak', 'body', 'hands', 'legs', 'feet',
                           'weapon', 'off-hand', 'shield', 'claw', 'stomach']
 
@@ -14447,7 +14748,8 @@ class App(tk.Tk):
             row = (
                 '', '', display_slot, item.get('Item', ''), item.get('Type', ''),
                 item.get('Spell', ''), item.get('Sigil', ''), item.get('Level', ''),
-                item.get('Mob', ''), item.get('Area', ''), '████████', 'Manual Input'
+                item.get('Mob', ''), item.get('Area', ''), _item_castable_display(item),
+                '████████', 'Manual Input'
             )
             search_end = len(result)
             for i, r in enumerate(result):
@@ -14511,7 +14813,7 @@ class App(tk.Tk):
                 '', '', (item.get('Slot') or '').strip().title(), item.get('Item', ''),
                 item.get('Type', ''), item.get('Spell', ''), item.get('Sigil', ''),
                 item.get('Level', ''), item.get('Mob', ''), item.get('Area', ''),
-                '████████', 'Manual Input'))
+                _item_castable_display(item), '████████', 'Manual Input'))
         self._autosize_results_columns()
 
     def _add_wanted_sigil(self):
@@ -14964,6 +15266,223 @@ class App(tk.Tk):
         self.search_master_path.set(community_file)
         self._load_master_for_search()
 
+    @staticmethod
+    def _read_xlsx_equipment_rows(wb):
+        """Shared reader for both the local community file and a freshly
+        downloaded copy of it (see _update_community_database_worker) -
+        same 'Loot'/'Equipment' sheet detection and struck-through-Item-
+        means-removed convention _load_master_for_search's own read path
+        already uses, factored out here so Update compares like-for-like
+        rather than reimplementing that logic separately. Returns (rows,
+        headers) - rows is a list of {header: value} dicts (struck-through
+        rows excluded entirely, same as a real load), headers is the
+        sheet's own header row in order."""
+        sheet_name = 'Loot' if 'Loot' in wb.sheetnames else 'Equipment' if 'Equipment' in wb.sheetnames else None
+        if sheet_name is None:
+            return [], []
+        ws = wb[sheet_name]
+        headers = [cell.value for cell in ws[1]]
+        item_col_idx = headers.index('Item') if 'Item' in headers else None
+        rows = []
+        for row in ws.iter_rows(min_row=2, values_only=False):
+            if item_col_idx is not None:
+                item_cell = row[item_col_idx]
+                if item_cell.font and item_cell.font.strike:
+                    continue
+            item_dict = {}
+            for idx, header in enumerate(headers):
+                if header and idx < len(row):
+                    item_dict[header] = row[idx].value or ''
+            if not item_dict.get('Item'):
+                continue
+            rows.append(item_dict)
+        return rows, headers
+
+    @staticmethod
+    def _equipment_row_key(row):
+        return (
+            str(row.get('Realm') or '').strip(), str(row.get('Area') or '').strip(),
+            str(row.get('Mob') or '').strip(), str(row.get('Item') or '').strip(),
+        )
+
+    def _update_community_database(self):
+        """"Update" button (Build > Basic Constraints > Master Database
+        File) - downloads the latest Olmran_Community_Eq_and_Stats_List.xlsx
+        straight from the GitHub repo (the same file "Use Community List"
+        loads locally) and merges it INTO the local copy on disk: adds any
+        genuinely new (Realm, Area, Mob, Item) entry, updates an existing
+        entry's fields wherever the downloaded value actually differs, and
+        leaves everything else untouched - never a wholesale overwrite, so
+        nothing local is ever lost. Runs off the main thread (network I/O),
+        same pattern as Check for Update."""
+        self.update_community_db_button.config(state='disabled', text="Updating...")
+        threading.Thread(target=self._update_community_database_worker, daemon=True).start()
+
+    def _update_community_database_worker(self):
+        try:
+            url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/Olmran_Community_Eq_and_Stats_List.xlsx"
+            req = urllib.request.Request(url, headers={'User-Agent': 'OlmranItemBuilder-UpdateCheck'})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                downloaded = resp.read()
+
+            downloaded_wb = openpyxl.load_workbook(io.BytesIO(downloaded), read_only=True)
+            downloaded_rows, _ = self._read_xlsx_equipment_rows(downloaded_wb)
+            downloaded_wb.close()
+
+            local_path = self._find_community_list_path()
+            added = updated = unchanged = 0
+
+            if local_path is None:
+                # Nothing local to merge into yet - the downloaded copy
+                # simply becomes the new local file, saved right next to
+                # the running program (same location _find_community_list_
+                # path itself checks first).
+                local_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])),
+                                          'Olmran_Community_Eq_and_Stats_List.xlsx')
+                with open(local_path, 'wb') as f:
+                    f.write(downloaded)
+                added = len(downloaded_rows)
+            else:
+                local_wb = openpyxl.load_workbook(local_path)
+                sheet_name = ('Loot' if 'Loot' in local_wb.sheetnames
+                             else 'Equipment' if 'Equipment' in local_wb.sheetnames else None)
+                if sheet_name is None:
+                    raise ValueError("Local community file has no 'Loot' or 'Equipment' sheet")
+                ws = local_wb[sheet_name]
+                headers = [cell.value for cell in ws[1]]
+
+                local_rows, _ = self._read_xlsx_equipment_rows(local_wb)
+                # Maps a key to its real sheet row number, found by
+                # re-scanning for the matching Item text (the read helper
+                # above doesn't track row numbers) - cheap enough at this
+                # file's size, and keeps the reader shared/simple.
+                key_to_row_num = {}
+                item_col_idx = headers.index('Item') if 'Item' in headers else None
+                for row_num, row in enumerate(ws.iter_rows(min_row=2, values_only=False), start=2):
+                    if item_col_idx is not None and row[item_col_idx].font and row[item_col_idx].font.strike:
+                        continue
+                    row_dict = {headers[i]: (row[i].value or '') for i in range(len(headers)) if i < len(row)}
+                    if not row_dict.get('Item'):
+                        continue
+                    key_to_row_num[self._equipment_row_key(row_dict)] = row_num
+
+                for d_row in downloaded_rows:
+                    key = self._equipment_row_key(d_row)
+                    if key in key_to_row_num:
+                        row_num = key_to_row_num[key]
+                        changed = False
+                        for header, new_val in d_row.items():
+                            if header not in headers:
+                                headers.append(header)
+                                ws.cell(row=1, column=len(headers), value=header)
+                            col_idx = headers.index(header) + 1
+                            old_val = ws.cell(row=row_num, column=col_idx).value or ''
+                            if str(old_val).strip() != str(new_val).strip():
+                                ws.cell(row=row_num, column=col_idx, value=new_val)
+                                changed = True
+                        if changed:
+                            updated += 1
+                        else:
+                            unchanged += 1
+                    else:
+                        new_row_num = ws.max_row + 1
+                        for header, val in d_row.items():
+                            if header not in headers:
+                                headers.append(header)
+                                ws.cell(row=1, column=len(headers), value=header)
+                            col_idx = headers.index(header) + 1
+                            ws.cell(row=new_row_num, column=col_idx, value=val)
+                        key_to_row_num[key] = new_row_num
+                        added += 1
+
+                local_wb.save(local_path)
+                local_wb.close()
+
+            self.after(0, lambda: self._on_community_database_update_done(
+                added, updated, unchanged, local_path, None))
+        except Exception as e:
+            self.after(0, lambda: self._on_community_database_update_done(0, 0, 0, None, e))
+
+    def _on_community_database_update_done(self, added, updated, unchanged, local_path, error):
+        self.update_community_db_button.config(state='normal', text="Update")
+        if error is not None:
+            messagebox.showerror("Update Failed",
+                f"Could not update the community database:\n{error}")
+            return
+
+        # If the community file is what's actually loaded right now (or
+        # nothing is loaded at all), reload it immediately so the update
+        # is visible without an extra manual Load click.
+        current_path = self.search_master_path.get()
+        if not current_path or os.path.abspath(current_path) == os.path.abspath(local_path):
+            self.search_master_path.set(local_path)
+            self._load_master_for_search(silent=True)
+
+        messagebox.showinfo("Community Database Updated",
+            f"Added {added} new item(s), updated {updated} existing item(s), "
+            f"{unchanged} already up to date.")
+
+    _SUBMIT_MAX_ITEMS = 100
+
+    def _update_submit_community_button_visibility(self):
+        """Shows/hides the Submit button based on self.community_data_
+        opt_in - called once at startup (_build_build_tab) and again the
+        instant a player answers the opt-in popup, so opting in during
+        this same session doesn't require a restart to see it."""
+        if self.community_data_opt_in:
+            self.submit_community_db_button.pack(side='left', padx=2)
+        else:
+            self.submit_community_db_button.pack_forget()
+
+    def _submit_to_community_database(self):
+        """"Submit to Community Database" button - only ever visible to a
+        player who opted in (see _update_submit_community_button_
+        visibility). Takes everything this installation has ever found
+        locally via Search Logs' "Add" checkbox or Run Parse's automatic
+        delve capture (self.added_master_items - see _add_master_data_item/
+        _auto_capture_all_delves) and opens the player's browser to a
+        pre-filled GitHub "New Issue" form with that data formatted as a
+        CSV block, ready for me to review and merge into the real
+        community file myself - no credentials of any kind live in this
+        program, and nothing is ever sent anywhere without the player
+        actually clicking Submit on GitHub's own page themselves. Capped
+        at _SUBMIT_MAX_ITEMS per submission (a GitHub "New Issue" URL has
+        a practical length limit) - if there's more, submitting again
+        later covers the rest (not tracked as "already submitted", so
+        avoid clicking twice in a row for the exact same items)."""
+        if not self.community_data_opt_in:
+            return
+        if not self.added_master_items:
+            messagebox.showinfo("Nothing to Submit",
+                "Nothing found yet - use Search Logs' Add checkbox or Run Parse first, "
+                "then come back and Submit.")
+            return
+
+        items = self.added_master_items[:self._SUBMIT_MAX_ITEMS]
+        truncated = len(self.added_master_items) > self._SUBMIT_MAX_ITEMS
+
+        lines = [','.join(_MASTER_ITEM_FIELDS)]
+        for item in items:
+            lines.append(','.join(
+                str(item.get(field, '')).replace(',', ';') for field in _MASTER_ITEM_FIELDS))
+        csv_block = '\n'.join(lines)
+
+        body = (
+            f"Submitted from the app's \"Submit to Community Database\" button "
+            f"(v{VERSION}) - {len(items)} item(s)"
+            + (f" (showing the first {self._SUBMIT_MAX_ITEMS} of {len(self.added_master_items)} "
+               "found locally - submit again later for the rest)" if truncated else "")
+            + ".\n\n```csv\n" + csv_block + "\n```\n"
+        )
+        title = f"Community database submission ({len(items)} item(s))"
+        url = (f"https://github.com/{GITHUB_REPO}/issues/new?"
+              f"title={urllib.parse.quote(title)}&body={urllib.parse.quote(body)}")
+        webbrowser.open(url)
+
+        self._log_activity('community_submission', 'submit_to_community_database', {
+            'item_count': len(items), 'truncated': truncated,
+        })
+
     def _auto_load_community_list(self):
         """Silently load the bundled community list at startup if present, so
         the Build tab is ready to search without an extra click. Unlike the
@@ -15352,7 +15871,7 @@ class App(tk.Tk):
                         no_item_text = no_item_override or 'No suitable item found'
                     rows.append((
                         '', '', display_slot.title(), no_item_text,
-                        '', '', '', '', '', '', '████████', '(none)'
+                        '', '', '', '', '', '', '', '████████', '(none)'
                     ))
                     row_slots.append(slot)
                 continue
@@ -15409,6 +15928,7 @@ class App(tk.Tk):
                 item.get('Level', ''),
                 item.get('Mob', ''),
                 item.get('Area', ''),
+                _item_castable_display(item),
                 '████████',
                 alt_text
             ))
@@ -16549,9 +17069,9 @@ class App(tk.Tk):
 
         tree_frame = ttk.Frame(tab)
         tree_frame.pack(fill='both', expand=True)
-        saved_cols = ('Bank', 'Slot', 'Drop', 'Enchant', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Area', 'Tag')
+        saved_cols = ('Bank', 'Slot', 'Drop', 'Enchant', 'Item', 'Type', 'Spell', 'Sigil', 'Level', 'Castable?', 'Area', 'Tag')
         saved_col_widths = {'Bank': 28, 'Slot': 55, 'Drop': 60, 'Enchant': 90, 'Item': 220, 'Type': 60,
-                           'Spell': 100, 'Sigil': 60, 'Level': 45, 'Area': 140, 'Tag': 110, 'Share': 55, 'Trade': 55}
+                           'Spell': 100, 'Sigil': 60, 'Level': 45, 'Castable?': 70, 'Area': 140, 'Tag': 110, 'Share': 55, 'Trade': 55}
         saved_col_headings = {'Tag': 'Gear Tag', 'Bank': '📦'}
         # A Locker already folds its ENTIRE list into every other
         # character's search unconditionally (is_locker) - the Share
@@ -16987,6 +17507,15 @@ class App(tk.Tk):
                 if f not in seen:
                     seen.add(f)
                     fields.append(f)
+        # Castable? (see _item_castable_display) isn't a real master_data
+        # field - it's derived at display time from Slot/Type/Notes - so it
+        # never shows up via the union-of-real-keys loop above. Added
+        # explicitly, right after Level, whenever any shown item is a
+        # weapon or shield (the only slots it means anything for).
+        if 'Castable?' not in seen and any(
+                (it.get('Slot') or '').strip().lower() in ('weapon', 'shield') for it in self._detail_items):
+            insert_at = fields.index('Level') + 1 if 'Level' in fields else len(fields)
+            fields.insert(insert_at, 'Castable?')
         tv = self.result_detail_tv
         tv.delete(*tv.get_children())
         tv['columns'] = fields
@@ -16998,7 +17527,8 @@ class App(tk.Tk):
             # point to scroll from, not an attempt to fit everything.
             tv.column(field, width=max(70, len(field) * 9 + 24), stretch=False, anchor='w')
         for it in self._detail_items:
-            tv.insert('', 'end', values=[it.get(f, '') for f in fields])
+            tv.insert('', 'end', values=[
+                _item_castable_display(it) if f == 'Castable?' else it.get(f, '') for f in fields])
         if len(self._detail_items) == 1:
             self.result_detail_title.config(text=item.get('Item') or '(unnamed item)')
         else:
@@ -17033,7 +17563,7 @@ class App(tk.Tk):
                 '', '', (item.get('Slot') or '').strip().title(), item.get('Item', ''),
                 item.get('Type', ''), item.get('Spell', ''), item.get('Sigil', ''),
                 item.get('Level', ''), item.get('Mob', ''), item.get('Area', ''),
-                '████████', 'Manual Input'
+                _item_castable_display(item), '████████', 'Manual Input'
             )
             if candidate_row == clicked_row:
                 del manual_items[i]
@@ -17043,6 +17573,9 @@ class App(tk.Tk):
         for r in target_list:
             self.search_results_tv.insert('', 'end', values=r)
         self._autosize_results_columns()
+        self._log_activity('item_action', 'remove_manual_row_from_results', {
+            'mode': mode, 'item': clicked_row[3] if len(clicked_row) > 3 else '',
+        })
 
     def _fill_empty_slot_from_full_database(self, slot):
         """Right-click menu action for an empty slot ("Search Full
@@ -17128,6 +17661,9 @@ class App(tk.Tk):
             self.search_results_tv.insert('', 'end', values=row)
         self._autosize_results_columns()
         self._update_rebuild_buttons_visibility()
+        self._log_activity('item_action', 'fill_empty_slot_from_full_database', {
+            'slot': slot, 'item': item.get('Item', ''),
+        })
 
     def _remove_item_from_build(self, slot):
         """Drop the item currently in `slot` (Build 1 only) from the build
@@ -17158,6 +17694,9 @@ class App(tk.Tk):
             self.search_results_tv.insert('', 'end', values=row)
         self._autosize_results_columns()
         self._update_rebuild_buttons_visibility()
+        self._log_activity('item_action', 'remove_item_from_build', {
+            'slot': slot, 'item': item.get('Item', ''),
+        })
 
     def _on_manual_mode_results_right_click(self, event):
         """Right-click handler for the Results tab while it's showing a
@@ -17189,8 +17728,10 @@ class App(tk.Tk):
         """Drops one row (by position) from self.manual_added_items and
         redraws - see _on_manual_mode_results_right_click."""
         if 0 <= index < len(self.manual_added_items):
+            item = self.manual_added_items[index]
             del self.manual_added_items[index]
             self._render_manual_added_results()
+            self._log_activity('item_action', 'remove_manual_added_item', {'item': item.get('Item', '')})
 
     def _rebuild_full_database(self):
         """Results tab "Rebuild (Full Database)" button - re-runs a normal,
@@ -17201,6 +17742,9 @@ class App(tk.Tk):
         _reset_hard_search_state - that would wipe the very exclusions this
         button exists to apply, and a removed item needs to stay excluded
         across as many Remove/Rebuild cycles as the user wants."""
+        self._log_activity('build_search', 'rebuild_full_database', {
+            'excluded_count': len(self.excluded_item_keys),
+        })
         self._find_optimal_build()
 
     def _rebuild_full_database_prefer_owned(self):
@@ -17267,6 +17811,9 @@ class App(tk.Tk):
 
         owned_keys = {(name, None, None) for name in effective_names}
         self._bank_owned_keys = owned_keys
+        self._log_activity('build_search', 'rebuild_full_database_prefer_owned', {
+            'owned_item_count': len(owned_keys), 'last_bank_char': last_char,
+        })
         try:
             self._generate_capped_unowned_variants()
         finally:
@@ -17687,6 +18234,10 @@ class App(tk.Tk):
             status += f" Wanted Sigil requirement(s) unmet: {', '.join(unmet_sigils)}."
         self.search_status.config(text=status)
 
+        self._log_activity('build_search', 'rebuild_saved_items_first', {
+            'slot_count': len(base_build), 'still_missing': sorted(still_missing),
+        })
+
     def _on_find_optimal_build_clicked(self):
         """Thin wrapper for the Basic Constraints "Find Optimal Build"
         button - resets Saved Items Hard Search state (see
@@ -17883,6 +18434,11 @@ class App(tk.Tk):
             text=f"{len(effective_names)} saved item(s) considered, {len(matched_items)} recognized in the "
                  f"master database - {mode_text}.")
 
+        self._log_activity('bank_build', 'find_character_saved_items_build', {
+            'character': char_name, 'mode': mode_text,
+            'effective_name_count': len(effective_names), 'matched_item_count': len(matched_items),
+        })
+
     def _find_best_item_for_slot(self, slot, chips, hold_tier):
         """Look up the single best candidate for exactly `slot` (a slot key
         like 'head'/'jewel_1'/'weapon') that provides one of the wanted
@@ -18051,7 +18607,7 @@ class App(tk.Tk):
                 display_slot = ('jewel' if slot.startswith('jewel') else 'claw' if slot.startswith('claw')
                                 else 'off-hand' if slot == 'weapon_off' else slot)
                 text = "No available item" if slot in declined_slots else "No Items found after re-search"
-                row = ('', '', display_slot.title(), text, '', '', '', '', '', '', '████████', '(none)')
+                row = ('', '', display_slot.title(), text, '', '', '', '', '', '', '', '████████', '(none)')
                 final_rows.append(row)
                 rows_by_slot[slot] = row
 
@@ -18084,6 +18640,11 @@ class App(tk.Tk):
         else:
             status = "Re-searched missing slot(s) - all filled."
         self.search_status.config(text=status)
+
+        self._log_activity('bank_build', 'search_missing_slots', {
+            'newly_filled': sorted(newly_filled_rows.keys()),
+            'still_missing': sorted(still_missing), 'declined_slots': sorted(declined_slots),
+        })
 
     def _on_saved_tv_click(self, event):
         """Click handler shared by every Saved Items treeview (Main and
@@ -18498,7 +19059,8 @@ class App(tk.Tk):
             row = (bank_icon,) + (
                 slot_display, 'No Drop' if is_kaid else 'Drop',
                 (enchants or {}).get(name, ''), display_name,
-                m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''), m.get('Level', ''), m.get('Area', ''),
+                m.get('Type', ''), m.get('Spell', ''), m.get('Sigil', ''), m.get('Level', ''),
+                _item_castable_display(m), m.get('Area', ''),
                 self.bank_gear_tags.get(name, default_tag),
             )
             if shared_items is not None:
@@ -20439,6 +21001,11 @@ class App(tk.Tk):
             status += f" - showing {len(variants)} so far, more may exist (click Load More Combos)"
         self.search_status.config(text=status)
 
+        self._log_activity('build_search', 'combo_search', {
+            'wanted_spell_count': total_wanted, 'covered_count': covered_count,
+            'variant_count': len(variants), 'more_available': more_available,
+        })
+
     def _clear_results(self):
         """"Clear" button on the Results tab - wipes everything the last
         search (Find Optimal Build/Show All Matches/Find Best Combos/Find
@@ -22111,6 +22678,11 @@ class App(tk.Tk):
             messagebox.showwarning("No Acceptable Gear At Priority Tier",
                 "\n".join(unmatched_priority_tiers))
 
+        self._log_activity('build_search', 'find_optimal_build', {
+            'wanted_spell_count': len(wanted_spells), 'covered_count': len(covered_bases),
+            'uncovered': uncovered, 'variant_count': len(self.build_variants),
+        })
+
     def _show_all_matches(self):
         """Show ALL items matching criteria (not optimized for spell coverage)"""
         # Same reasoning as the matching line in _find_optimal_build - set
@@ -22510,6 +23082,7 @@ class App(tk.Tk):
                 item.get('Level', ''),
                 item.get('Mob', ''),
                 item.get('Area', ''),
+                _item_castable_display(item),
                 '████████',
                 ''
             )
@@ -22525,6 +23098,11 @@ class App(tk.Tk):
         total = len(wanted_spells)
         self.search_status.config(
             text=f"All matches show {coverage}/{total} wanted spells | Spells covered: {', '.join(sorted(covered_spells))}")
+
+        self._log_activity('build_search', 'show_all_matches', {
+            'wanted_spell_count': total, 'covered_count': coverage,
+            'row_count': len(self.last_all_results),
+        })
 
 
 

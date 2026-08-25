@@ -41,6 +41,8 @@ This is where you search a master database for the best equipment for a characte
 - **Create New** — start a blank one
 - **Use Community List** — instantly loads the bundled `Olmran_Community_Eq_and_Stats_List.xlsx`
 - **Load** — reads the selected file into memory for searching
+- **Update** — downloads the latest community database from GitHub and merges it into your local copy (adds new items, updates changed ones, never replaces the file wholesale)
+- **📤 Submit to Community Database** (only shown if you opted in to the one-time startup popup) — sends everything found locally via Search Logs' Add checkbox or Run Parse's automatic delve capture to a pre-filled GitHub issue for review, so it can be folded into the shared database
 
 **Desired Spells**
 Instead of typing spell names, pick them from category dropdowns, each paired with a tier dropdown (`(any)`, `i`, `ii`, `iii`):
@@ -140,7 +142,14 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.6.1 (Current)
+### v7.7.0 (Current)
+- **Castable? column, everywhere**: shows whether an item can be held/used while casting a spell - definitive for weapons (derived from Type), and for shields, based on a "holdable while casting" delve marker when it's known. Previously Area Items-only; now also shown on the Manual tab results, Search Results/Saved Builds, Bank Build/Saved Items, and the Item Details popup (added automatically whenever a shown item is a weapon or shield).
+- **Grow the database automatically**: Run Parse now captures every delve found in a parsed log into the local database on its own, not just ones matching a specific Search Logs query the way the Add checkbox already worked - a delve with no matching drop nearby still gets added (full stats, Mob left unknown), and gets upgraded in place later if a real drop match turns up.
+- **Update button** (Build > Basic Constraints > Master Database File): downloads the latest community database straight from GitHub and merges it into your local copy - adds genuinely new items, updates existing ones only where a value actually differs, never replaces the file wholesale.
+- **Help improve the database (opt-in)**: a one-time startup popup asks whether you'd like to help crowdsource missing info (like the shield Castable? gap above). Opting in reveals a new **Submit to Community Database** button (same location as Update) that takes everything found locally and opens a pre-filled GitHub issue for review - nothing is ever sent anywhere without you clicking Submit yourself on GitHub's own page.
+- **Diagnostic activity log**: the program now keeps a local-only running log of significant actions (searches, builds, item add/remove, saved builds, etc.) purely so problems can be diagnosed after the fact - never bundled, shared, or pushed anywhere.
+
+### v7.6.1
 - **Area Items now includes crafting/enchant materials** that drop in the picked area, not just equipment - drawn from the same CRAFTING_MATERIAL_SOURCES/CRAFTING_ENCHANTS data the Crafting tab's own material trees use, sorted after equipment with `Slot: material` and a CRAFTING_ENCHANTS material's own "Use" (e.g. "Enchant Weapon i") shown in the Type column where known.
 - **Area Items columns now auto-fit** to whichever value is currently longest per column, fixing longer text (like a material's enchant "Use") getting visually cut off by a fixed width sized for shorter values.
 

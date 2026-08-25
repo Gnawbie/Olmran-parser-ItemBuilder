@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v7.6.1</p>
+    <p class="tagline">Full usage guide - v7.7.0</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -190,6 +190,7 @@
         </ul>
       </li>
       <li>Parse options (Chat / Combat / Loot) automatically enable or disable based on which file types are loaded. A second row of checkboxes - <b>XP Counter</b>, <b>Damage Counter</b>, <b>PvP Dealt</b>, <b>PvP Taken</b> - sits below it, independent of that auto-enable logic; check any of these and click Run Parse to compute that Counter's data (the same engine as the Counters sub-tab's own buttons) and make it available to Export.</li>
+      <li>With <b>Loot</b> checked, Run Parse also automatically grows the local database from <i>every</i> delve found in a parsed log - not just ones matching a specific Search Logs query. A lone delve with no matching drop nearby still gets added (full stats, Mob left unknown until a real drop match turns up later), the same idea as Search Logs' Add checkbox above, just automatic on every parse instead of needing a search term.</li>
       <li>Use the Snapshot buttons to preview parsed data before exporting - a second row covers the four Counters (XP/Damage/PvP Dealt/PvP Taken).</li>
       <li>Export everything to a formatted spreadsheet or plain-text file - see Settings' own Export sub-tab below for the full set of formats and options.</li>
       <li><b>Credits</b> - far right of the Parse Results row. Opens a popup listing everyone who contributed to the project.</li>
@@ -224,8 +225,12 @@
       <li><b>Create New</b> - start a blank one.</li>
       <li><b>Use Community List</b> - instantly loads the bundled community equipment list.</li>
       <li><b>Load</b> - reads the selected file into memory for searching.</li>
+      <li><b>Update</b> - downloads the latest community database from GitHub and merges it into your local copy: adds genuinely new items, updates an existing item's fields only where a downloaded value actually differs (matched by Realm+Area+Mob+Item), and never replaces the file wholesale.</li>
+      <li><b>📤 Submit to Community Database</b> - only visible once you've opted in to the one-time startup popup (see below). Takes everything found locally via Search Logs' Add checkbox or Run Parse's automatic delve capture and opens a pre-filled GitHub issue for review - nothing is ever sent anywhere until you click Submit yourself on GitHub's own page.</li>
     </ul>
     <p>Items whose Area is "Class" are excluded from every search entirely at load time (they're role-specific class-quest rewards, not found in the open world) - see the Class Items dropdown below for the one way to still use one deliberately.</p>
+    <p><b>Help improve the database</b> - the very first time you launch the program, a one-time popup asks whether you'd like to opt in to helping crowdsource missing database info (like whether a shield can be held while casting - see the Castable? column below). Opting in reveals the Submit button above; opting out (or ignoring it) just means that button stays hidden. Either way you're only ever asked once.</p>
+    <p><b>Castable? column</b> - shown wherever an item chart displays a weapon or shield (Area Items, Manual, Search Results/Saved Builds, Bank Build/Saved Items, Item Details): "Yes"/"No" for weapons (derived from Type), and "Yes" or blank for shields depending on whether a "holdable while casting" delve marker is known for that specific shield - most shields don't have this captured yet, which is exactly the kind of gap the opt-in/Submit feature above exists to help close over time.</p>
 
     <h3>3.2 Basic Constraints</h3>
     <p>The "Build Constraints" box near the top of this sub-tab is itself a small mini-notebook with 4 tabs - <b>Basic</b> (everything below, through Save Constraints), <b>Armor Constraints</b> (3.4), <b>Weapon Constraints</b> (3.5), and <b>Edibles</b> (3.3). Switching between them doesn't reset or duplicate anything - it's the exact same underlying settings either way, just organized into tabs instead of separate top-level sub-tabs.</p>
