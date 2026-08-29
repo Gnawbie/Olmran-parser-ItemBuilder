@@ -142,7 +142,12 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.7.1 (Current)
+### v7.7.2 (Current)
+- **Show All Matches - Remove fix**: right-clicking a real (non-manual) row in Show All Matches results now offers "Remove '<item>' from list" - previously did nothing at all, a pre-existing gap where only manually-added rows had a Remove option in that view.
+- **Silent startup update check**: the program now checks for a new version automatically ~600ms after launch, no click needed. If one's available, an "Update available: vX.X.X" message (blue) appears below the top-bar buttons and the Check for Update button itself switches to Download & Update; if you're already current or the check fails, nothing shows at all - no noise on a normal launch.
+- **Build > Manual - Name Search**: a new text box below Level # to # bypasses every other Manual filter (Wanted Spells, Armor/Weapons/Jewel, Level, Only Found In, every mini-tab) and lists items by name across the whole database - doesn't need to be the full name or spelled correctly (a plain substring always counts, plus a spelling-tolerant fuzzy fallback for typos). Clearing the box restores normal constrained results; Clear All resets it too.
+
+### v7.7.1
 - **Auto-Capture Delves checkbox**: v7.7.0's automatic delve-capture-on-parse is now a checkbox (📥 Auto-Capture Delves, next to Loot in Parse tab's Files & Search) instead of always-on - checked by default so nothing changes unless you turn it off, and unchecking it stops the auto-capture without affecting the real Loot parse output. Its state persists across restarts.
 
 ### v7.7.0

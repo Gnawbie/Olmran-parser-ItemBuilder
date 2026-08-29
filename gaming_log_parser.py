@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.7.1"
+VERSION = "7.7.2"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -3941,6 +3941,17 @@ class App(tk.Tk):
         if not os.environ.get('OLMRAN_HEADLESS_TEST'):
             self.after(400, self._maybe_show_community_opt_in_popup)
 
+        # Silently checks for a program update on every launch (see
+        # _check_for_update_worker) - unlike clicking "Check for Update"
+        # itself, this never touches the button's own text/state, so a
+        # launch with no update available (or no internet) looks exactly
+        # like it always has. Only surfaces anything when an update
+        # actually IS available - see _on_update_check_done's own
+        # "Update available" status text.
+        if not os.environ.get('OLMRAN_HEADLESS_TEST'):
+            self.after(600, lambda: threading.Thread(
+                target=self._check_for_update_worker, kwargs={'silent': True}, daemon=True).start())
+
         # Save config on close
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
@@ -4666,7 +4677,7 @@ class App(tk.Tk):
         self._set_update_status("")
         threading.Thread(target=self._check_for_update_worker, daemon=True).start()
 
-    def _check_for_update_worker(self):
+    def _check_for_update_worker(self, silent=False):
         """Runs off the main thread - only ever touches Tkinter widgets via
         self.after(0, ...), since Tkinter itself isn't thread-safe. Looks
         for a .zip asset (the Folder build) or a .exe asset (the onefile
@@ -4674,8 +4685,12 @@ class App(tk.Tk):
         _is_folder_build) - a release missing the matching asset (e.g. an
         older release cut before the Folder build existed) is reported the
         same as no update being available yet, via download_url being
-        None."""
-        _debug_log(f'Update check: starting (current version={VERSION}, folder_build={_is_folder_build()})')
+        None. silent=True (the automatic launch-time check - see __init__)
+        suppresses every status message except "Update available" itself
+        (see _on_update_check_done) - a failed check or "already current"
+        would otherwise show something on literally every single launch,
+        which nobody asked for; only the one actionable outcome does."""
+        _debug_log(f'Update check: starting (current version={VERSION}, folder_build={_is_folder_build()}, silent={silent})')
         try:
             req = urllib.request.Request(
                 f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
@@ -4692,16 +4707,17 @@ class App(tk.Tk):
             expected_size = update_asset.get('size') if update_asset else None
             _debug_log(f'Update check: latest tag={latest_version!r}, wanted asset suffix={wanted_suffix!r}, '
                        f'matching asset={(update_asset or {}).get("name")!r}, size={expected_size!r}')
-            self.after(0, lambda: self._on_update_check_done(latest_version, download_url, expected_size, None))
+            self.after(0, lambda: self._on_update_check_done(latest_version, download_url, expected_size, None, silent))
         except Exception as e:
             _debug_log(f'Update check FAILED: {e!r}\n{traceback.format_exc()}')
-            self.after(0, lambda: self._on_update_check_done(None, None, None, e))
+            self.after(0, lambda: self._on_update_check_done(None, None, None, e, silent))
 
-    def _on_update_check_done(self, latest_version, download_url, expected_size, error):
+    def _on_update_check_done(self, latest_version, download_url, expected_size, error, silent=False):
         if error is not None or not latest_version:
             _debug_log(f'Update check done: check failed (error={error!r})')
             self.update_check_button.config(state='normal', text="Check for Update")
-            self._set_update_status("Check failed - no internet?", foreground='#a33')
+            if not silent:
+                self._set_update_status("Check failed - no internet?", foreground='#a33')
             return
 
         if self._version_tuple(latest_version) > self._version_tuple(VERSION):
@@ -4710,9 +4726,10 @@ class App(tk.Tk):
                 # (release still being prepared) - nothing to offer yet.
                 _debug_log(f'Update check done: v{latest_version} exists but no matching asset attached yet')
                 self.update_check_button.config(state='normal', text="Check for Update")
-                self._set_update_status(
-                    f"v{latest_version.lstrip('vV')} is out, but no download is attached yet",
-                    foreground='#a33')
+                if not silent:
+                    self._set_update_status(
+                        f"v{latest_version.lstrip('vV')} is out, but no download is attached yet",
+                        foreground='#a33')
                 return
             self._pending_update_url = download_url
             self._pending_update_size = expected_size
@@ -4722,11 +4739,12 @@ class App(tk.Tk):
             self.update_check_button.config(
                 state='normal', text=f"⬇ Download & Update to v{self._pending_update_version}",
                 command=self._start_self_update)
-            self._set_update_status("")
+            self._set_update_status(f"Update available: v{self._pending_update_version}", foreground='#1a73e8')
         else:
             _debug_log(f'Update check done: already on latest version ({VERSION})')
             self.update_check_button.config(state='normal', text="Check for Update")
-            self._set_update_status("You're on the latest version", foreground='#2a2')
+            if not silent:
+                self._set_update_status("You're on the latest version", foreground='#2a2')
 
     def _start_self_update(self):
         """"Download & Update" button (only shown once a newer version was
@@ -11614,6 +11632,29 @@ class App(tk.Tk):
         self.manual_min_level_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
         self.manual_max_level_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
 
+        # Name Search - a plain text box that, whenever it isn't empty,
+        # completely bypasses every other Manual filter above (Wanted
+        # Spells, Armor/Weapons/Jewel, Level, Only Found In, Armor Type/
+        # Weapon/Melee-Shield/Jewel mini-tabs - all of it) and instead just
+        # lists every item in the ENTIRE loaded database whose name
+        # matches, ignoring every constraint entirely (see
+        # _manual_name_search_matches). Doesn't need to be the item's full
+        # name, or even spelled correctly - a plain substring match always
+        # counts, and a spelling-tolerant fuzzy pass (same idea as
+        # Required Items' "Did you mean?" lookup, just returning every
+        # close candidate instead of asking to confirm one) catches typos
+        # that aren't a literal substring at all. Clearing the box back to
+        # empty returns to the normal constraint-based results above.
+        manual_name_search_row = ttk.Frame(manual_spell_block)
+        manual_name_search_row.pack(fill='x', pady=(6,0))
+        ttk.Label(manual_name_search_row, text="Name Search:").pack(side='left', padx=(0,4))
+        self.manual_name_search_var = tk.StringVar(value='')
+        ttk.Entry(manual_name_search_row, textvariable=self.manual_name_search_var,
+                 width=30).pack(side='left')
+        ttk.Label(manual_name_search_row, text="  (ignores every other filter above)",
+                 foreground='#666').pack(side='left')
+        self.manual_name_search_var.trace_add('write', lambda *a: self._refresh_manual_lookup_results())
+
         # Only Found In - its own fully independent set of vars (self.
         # manual_realm_filters/manual_exclude_kaid_var/manual_exclude_event_var/
         # manual_realm_filter_all_var/manual_event_area_vars), separate from
@@ -14177,8 +14218,9 @@ class App(tk.Tk):
     def _clear_all_manual_filters(self):
         """Manual tab's "Clear All" button - resets every constraint on
         every one of Manual's own mini-tabs (Armor Type, Weapon,
-        Melee/Shield, Jewel) and the Only Found In/Events realm filters,
-        plus the Looking Up chips, back to their defaults. Previously
+        Melee/Shield, Jewel), the Only Found In/Events realm filters, the
+        Name Search box, and the Looking Up chips, back to their defaults.
+        Previously
         this button only cleared the Looking Up chips, which left
         Melee Weapon Constraints (Damage/Timer/Fumble/Accuracy/Sigil -
         these apply to weapon items only, never shields) and every
@@ -14192,6 +14234,7 @@ class App(tk.Tk):
         self.manual_jewel_only_var.set(False)
         self.manual_min_level_var.set('')
         self.manual_max_level_var.set('')
+        self.manual_name_search_var.set('')
 
         self.manual_realm_filter_all_var.set(False)
         for var in self.manual_realm_filters.values():
@@ -14288,6 +14331,26 @@ class App(tk.Tk):
                                            command=lambda c=col: _sort_treeview_column(self.manual_results_tv, c, False))
             self.manual_results_tv.column(col, width=self._manual_col_widths[col], stretch=False)
 
+    def _manual_name_search_matches(self, query):
+        """Fuzzy, substring-tolerant name search across the ENTIRE loaded
+        master database - the Name Search box's own matching logic (see
+        its creation comment), used only while that box isn't empty. The
+        query doesn't need to be the item's full name (a plain substring
+        match always counts) or even spelled correctly (difflib.
+        get_close_matches also catches near-miss typos that aren't a
+        literal substring at all, same tolerance Required Items' own
+        "Did you mean?" lookup uses, just returning every close candidate
+        here instead of asking to confirm just one)."""
+        needle = query.lower()
+        substring_names = {
+            (it.get('Item') or '').strip() for it in self.master_data
+            if needle in (it.get('Item') or '').lower()
+        }
+        all_names = {(it.get('Item') or '').strip() for it in self.master_data if it.get('Item')}
+        fuzzy_names = set(difflib.get_close_matches(query, all_names, n=50, cutoff=0.6))
+        wanted_names = substring_names | fuzzy_names
+        return [it for it in self.master_data if (it.get('Item') or '').strip() in wanted_names]
+
     def _refresh_manual_lookup_results(self):
         """Repopulates the Manual tab's results list - every item in the
         currently loaded master database matching all of Manual's currently
@@ -14301,7 +14364,10 @@ class App(tk.Tk):
         search). Every filter here is Manual's own independent copy
         (manual_*-prefixed vars, built in the Manual tab itself) - never
         shared with the real Basic/Armor/Weapon Constraints tabs, only ever
-        affecting this tab's own results."""
+        affecting this tab's own results. EXCEPT while the Name Search box
+        has text in it - that bypasses every filter below entirely and
+        just does a name match across the whole database instead (see
+        _manual_name_search_matches)."""
         self.manual_results_tv.delete(*self.manual_results_tv.get_children())
         self._manual_lookup_matches = []
 
@@ -14310,6 +14376,32 @@ class App(tk.Tk):
 
         if not self.master_data:
             self.manual_results_status.config(text="Load a master database first")
+            return
+
+        # Name Search bypass - see the box's own creation comment. Active
+        # any time the box isn't empty; skips every filter below entirely
+        # (Wanted Spells, Armor/Weapons/Jewel, Level, Only Found In, every
+        # mini-tab) and just lists name matches across the WHOLE database.
+        name_query = self.manual_name_search_var.get().strip()
+        if name_query:
+            weapons_checked = True
+            self._set_manual_results_columns(weapons_checked)
+            matches = self._manual_name_search_matches(name_query)
+            matches.sort(key=lambda i: (
+                (i.get('Realm') or '').strip().lower(), (i.get('Item') or '').strip().lower()))
+            self._manual_lookup_matches = matches
+            for i, item in enumerate(matches):
+                bank_cell, locker_cell = self._bank_and_locker_cells(item)
+                row = [bank_cell, locker_cell,
+                       item.get('Realm', ''), item.get('Mob', ''), item.get('Item', ''),
+                       item.get('Slot', ''), item.get('Type', ''), item.get('Spell', ''),
+                       item.get('Sigil', ''), item.get('Level', ''), _item_castable_display(item),
+                       item.get('Area', ''), item.get('Weight', ''), item.get('Fumble', ''),
+                       item.get('Damage', ''), item.get('Timer', ''), item.get('Accuracy', '')]
+                self.manual_results_tv.insert('', 'end', iid=str(i), values=row)
+            self.manual_results_status.config(
+                text=f"{len(matches)} matching item{'s' if len(matches) != 1 else ''} found for "
+                     f"'{name_query}' (name search - every other filter ignored)")
             return
 
         queries = [(_spell_base(s), _spell_tier_rank(s)) for s in self.manual_lookup_spells]
@@ -17339,10 +17431,15 @@ class App(tk.Tk):
         in either Best Per Slot or All Matches view - handled first,
         before anything slot-related.
 
-        Otherwise only meaningful in Best Per Slot view, and only for
-        Build 1 (the top/first of any stacked "Generate multiple build
-        options" variants); a divider row or a row belonging to a
-        different stacked variant just does nothing. Resolves the clicked
+        A real (non-manual) row in All Matches view offers a plain "Remove
+        from list" (see _remove_all_matches_row) - just drops that one row
+        from the currently displayed flat list, since All Matches has no
+        single "build" to remove an item FROM the way Best Per Slot does.
+
+        Otherwise (Best Per Slot view) only meaningful for Build 1 (the
+        top/first of any stacked "Generate multiple build options"
+        variants); a divider row or a row belonging to a different
+        stacked variant just does nothing. Resolves the clicked
         row back to its slot key the same way _search_missing_slots does -
         by recomputing Build 1's own rows/slot-keys fresh (with_slot_keys)
         and matching by CONTENT (the exact row tuple), not position -
@@ -17404,8 +17501,26 @@ class App(tk.Tk):
                 menu.grab_release()
             return
 
+        if mode == 'all':
+            # A real (non-manual) All Matches row - just drops this one row
+            # from the currently displayed list (see _remove_all_matches_row).
+            # All Matches has no single "build" to remove an item FROM the
+            # way Best Per Slot does (it's a flat list of every match, often
+            # several rows per slot) - unlike Optimal's Remove, this doesn't
+            # exclude the item from ever showing up again, since a fresh
+            # Show All Matches click would just recompute the same flat list
+            # from scratch anyway.
+            menu = tk.Menu(self, tearoff=0)
+            menu.add_command(label=f"Remove '{clicked_row[3]}' from list",
+                             command=lambda: self._remove_all_matches_row(row_index))
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+            return
+
         if mode != 'optimal' or not self.build_variants:
-            return  # All Matches' real rows have no context menu, same as before
+            return
 
         build1 = self.build_variants[0]
         rows, slots = self._build_dict_to_rows(build1, with_slot_keys=True)
@@ -17597,6 +17712,27 @@ class App(tk.Tk):
         self._autosize_results_columns()
         self._log_activity('item_action', 'remove_manual_row_from_results', {
             'mode': mode, 'item': clicked_row[3] if len(clicked_row) > 3 else '',
+        })
+
+    def _remove_all_matches_row(self, row_index):
+        """Removes one REAL (non-manual) row from All Matches' flat results
+        list (self.last_all_results), by its exact position - see
+        _on_results_right_click. Unlike Optimal's Remove
+        (_remove_item_from_build), this doesn't exclude the item from ever
+        showing up again (self.excluded_item_keys) - All Matches has no
+        single build to exclude it FROM, and a fresh Show All Matches click
+        would just recompute the same flat list from scratch anyway, so
+        this is purely "hide this row for now", not a lasting exclusion."""
+        if not (0 <= row_index < len(self.last_all_results)):
+            return
+        clicked_row = self.last_all_results[row_index]
+        del self.last_all_results[row_index]
+        self.search_results_tv.delete(*self.search_results_tv.get_children())
+        for r in self.last_all_results:
+            self.search_results_tv.insert('', 'end', values=r)
+        self._autosize_results_columns()
+        self._log_activity('item_action', 'remove_all_matches_row', {
+            'item': clicked_row[3] if len(clicked_row) > 3 else '',
         })
 
     def _fill_empty_slot_from_full_database(self, slot):
