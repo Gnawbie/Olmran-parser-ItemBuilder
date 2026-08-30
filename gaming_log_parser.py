@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.7.2"
+VERSION = "7.7.3"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -13105,10 +13105,13 @@ class App(tk.Tk):
             # CRAFTING_RECIPES' own module comment on the master-
             # equipment-list cross-reference that found these), so the
             # useful first split for its own recipes is simply whether
-            # one's known, not slot (always Slot=weapon) or hands. Shield
-            # Crafting's own recipes are folded in here too (tagged
-            # '_category': 'Parry Staff' by _build_crafting_tab) as a
-            # third branch, slot-then-spell same as it used on its own.
+            # one's known, not slot (always Slot=weapon) or hands. Parry
+            # Staff recipes (tagged '_category': 'Parry Staff' by
+            # _build_crafting_tab - the Slot=weapon subset of Shield
+            # Crafting's own recipes, i.e. actual parry staves, NOT real
+            # shields, which get their own separate Weapon sub-tab) are
+            # folded in here too, as a third branch, slot-then-spell same
+            # as they used when Shield Crafting had its own sub-tab.
             parry_staff_recipes = [r for r in recipes if r.get('_category') == 'Parry Staff']
             magical_recipes = [r for r in recipes if r.get('_category') != 'Parry Staff']
 
@@ -13216,19 +13219,26 @@ class App(tk.Tk):
         # of them ever carry a spell, so that's the only useful axis.
         # Magical Weapon groups Has Spell/No Spell first instead (a
         # flavor-named item there can carry a real hidden spell or none
-        # at all), sub-grouped by spell within Has Spell - and folds in
-        # Shield Crafting's own recipes as a third "Parry Staff" branch
-        # (slot-then-spell, same as it used on its own) rather than
-        # Shield Crafting getting its own sub-tab, since Shield Crafting
-        # produces caster implements just as much as real shields.
+        # at all), sub-grouped by spell within Has Spell.
+        #
+        # Shield Crafting's own recipes are a mix of real shields
+        # (Slot=shield) and caster implements - walking stick/quarterstaff/
+        # battlestaff - that are actually equipped in the WEAPON slot per
+        # master_data (see test_crafting_tab.py's own reconciliation
+        # note). Only the real shields get pulled out into their own
+        # "Shield" sub-tab here; the Slot=weapon parry-staff recipes stay
+        # folded into Magical Weapon as its own "Parry Staff" branch,
+        # exactly as before - the user only asked to move the shields
+        # themselves out, not the parry staves too.
         weapon_nb = add_group_tab(equipment_nb, 'Weapon')
         for skill in ('Crushing Weapon', 'Slashing Weapon', 'Thrusting Weapon', 'Fired Weapon'):
             add_skill_tab(weapon_nb, skill, CRAFTING_RECIPES[skill], 'hands')
-        magical_with_parry_staff = (
-            CRAFTING_RECIPES['Magical Weapon']
-            + [dict(r, _category='Parry Staff') for r in CRAFTING_RECIPES['Shield Crafting']]
-        )
+        shield_recipes = [r for r in CRAFTING_RECIPES['Shield Crafting'] if r.get('slot') == 'shield']
+        parry_staff_recipes = [dict(r, _category='Parry Staff')
+                               for r in CRAFTING_RECIPES['Shield Crafting'] if r.get('slot') != 'shield']
+        magical_with_parry_staff = CRAFTING_RECIPES['Magical Weapon'] + parry_staff_recipes
         add_skill_tab(weapon_nb, 'Magical Weapon', magical_with_parry_staff, 'spell_split')
+        add_skill_tab(weapon_nb, 'Shield', shield_recipes, 'slot_spell')
 
         # Left alone as its own Equipment sub-tab, not folded into Armor/
         # Weapon - it mixes both (bows are weapons, cloaks are armor) and

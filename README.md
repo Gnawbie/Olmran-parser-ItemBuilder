@@ -121,7 +121,6 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Known Limitations
 - **Event** realm items work like any other realm filter, but there isn't yet dedicated Event-specific logic beyond the Realm column match
-- Some improved-tier (`iii`) **Protect** spells don't show up correctly in Find Optimal Build results yet — root cause not yet diagnosed
 - **Direct** weapon spells are generally not captured in the bundled equipment list (Parry Staff spells are captured correctly) — this is a gap in the source data, not the search logic
 - `OlmranItemBuilder.exe` isn't code-signed, so Windows SmartScreen shows an "Unrecognized app" warning on first run — click "More info" then "Run anyway" (see the [FAQ](https://github.com/Gnawbie/Olmran-parser-ItemBuilder/wiki/FAQ))
 - The .exe is a PyInstaller "onefile" build, so it unpacks itself to a temp folder on every launch — expect a few seconds of startup delay each time, not just the first
@@ -142,7 +141,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.7.2 (Current)
+### v7.7.3 (Current)
+- **Crafting > Equipment > Weapon gains a standalone "Shield" sub-tab**: real shields (Slot=shield) previously showed up folded into Magical Weapon's "Parry Staff" branch alongside actual parry staves - they now get their own dedicated sub-tab (slot-then-spell grouping), while the parry staves themselves stay right where they were, still folded into Magical Weapon's "Parry Staff" branch.
+- Removed a stale Known Limitation note about improved-tier (`iii`) Protect spells not showing up correctly in Find Optimal Build - confirmed working correctly.
+
+### v7.7.2
 - **Show All Matches - Remove fix**: right-clicking a real (non-manual) row in Show All Matches results now offers "Remove '<item>' from list" - previously did nothing at all, a pre-existing gap where only manually-added rows had a Remove option in that view.
 - **Silent startup update check**: the program now checks for a new version automatically ~600ms after launch, no click needed. If one's available, an "Update available: vX.X.X" message (blue) appears below the top-bar buttons and the Check for Update button itself switches to Download & Update; if you're already current or the check fails, nothing shows at all - no noise on a normal launch.
 - **Build > Manual - Name Search**: a new text box below Level # to # bypasses every other Manual filter (Wanted Spells, Armor/Weapons/Jewel, Level, Only Found In, every mini-tab) and lists items by name across the whole database - doesn't need to be the full name or spelled correctly (a plain substring always counts, plus a spelling-tolerant fuzzy fallback for typos). Clearing the box restores normal constrained results; Clear All resets it too.
