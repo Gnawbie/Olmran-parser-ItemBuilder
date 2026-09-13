@@ -141,7 +141,11 @@ Next to the spell dropdowns, check any combination of Evil, Chaos, Good, Glory B
 
 ## Version History
 
-### v7.7.3 (Current)
+### v7.7.4 (Current)
+- **Saved Builds - Recheck Ownership**: each Saved Build's 📦 Bank/Locker icon was a frozen snapshot from whenever it was saved - importing new gear later never updated it. A new "🔄 Recheck Ownership" button recomputes just those icon cells against your current Saved Items, leaving everything else in the build untouched.
+- **Load Log Files - right-click menu**: right-clicking a row in any "Load Log Files" table (Parse tab's Files & Search or Counters - both share the same table) now offers "Copy Log file name to clipboard" (the full filename, including extension) and "Remove Log" (drops just that one file - a quicker alternative to selecting it first and clicking the toolbar's Remove button, handy for undoing an accidental add).
+
+### v7.7.3
 - **Crafting > Equipment > Weapon gains a standalone "Shield" sub-tab**: real shields (Slot=shield) previously showed up folded into Magical Weapon's "Parry Staff" branch alongside actual parry staves - they now get their own dedicated sub-tab (slot-then-spell grouping), while the parry staves themselves stay right where they were, still folded into Magical Weapon's "Parry Staff" branch.
 - Removed a stale Known Limitation note about improved-tier (`iii`) Protect spells not showing up correctly in Find Optimal Build - confirmed working correctly.
 

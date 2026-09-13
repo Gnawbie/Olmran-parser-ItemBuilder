@@ -21,7 +21,7 @@ from odf.text import P as OdfP
 
 # Shown in the main window's title bar - bump this alongside the README
 # Version History entry whenever a new version is cut.
-VERSION = "7.7.3"
+VERSION = "7.7.4"
 
 # Check for Update button (see App._check_for_update) queries this repo's
 # GitHub Releases API - never contacted automatically, only when clicked.
@@ -5445,6 +5445,7 @@ class App(tk.Tk):
         file_tv.configure(yscrollcommand=vsb.set)
         file_tv.pack(side='left', fill='both', expand=True)
         vsb.pack(side='right', fill='y')
+        file_tv.bind('<Button-3>', self._on_file_list_right_click)
 
         if resizable:
             self.counters_file_tv = file_tv
@@ -6576,6 +6577,54 @@ class App(tk.Tk):
         count_text = f"{n} file{'s' if n != 1 else ''} loaded"
         for lbl in self.file_count_lbls:
             lbl.config(text=count_text)
+
+    def _on_file_list_right_click(self, event):
+        """Right-click on any "Load Log Files" table (Files & Search,
+        Counters - every copy built by _build_file_list_section shares
+        this same handler) - offers "Copy Log file name to clipboard"
+        (copying the exact full filename, including extension, straight
+        from self.files - row order always matches 1:1, see
+        _refresh_file_list - not whatever text Treeview happens to be
+        displaying, which could be visually truncated by column width)
+        and "Remove Log" (drops just this one file - see
+        _remove_file_by_index - an additional, more direct way to fix an
+        accidentally-added log without needing to select it first and
+        use the toolbar's own ❌ Remove button)."""
+        tv = event.widget
+        iid = tv.identify_row(event.y)
+        if not iid:
+            return
+        try:
+            row_index = tv.index(iid)
+        except tk.TclError:
+            return
+        if not (0 <= row_index < len(self.files)):
+            return
+        tv.selection_set(iid)
+        name = self.files[row_index]['name']
+
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Copy Log file name to clipboard",
+                         command=lambda: self._copy_text_to_clipboard(name))
+        menu.add_command(label="Remove Log",
+                         command=lambda: self._remove_file_by_index(row_index))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _copy_text_to_clipboard(self, text):
+        self.clipboard_clear()
+        self.clipboard_append(text)
+
+    def _remove_file_by_index(self, index):
+        """"Remove Log" right-click action - drops just self.files[index],
+        same effect as selecting that one row and clicking the toolbar's
+        ❌ Remove button, but without needing to select it first."""
+        if 0 <= index < len(self.files):
+            del self.files[index]
+            self._refresh_file_list()
+            self._update_parse_options()
 
     # ── PARSE HELPERS ─────────────────────────────────────────
     def _run_parse(self):
@@ -12567,6 +12616,54 @@ class App(tk.Tk):
             self._save_config()
             self._log_activity('saved_build', 'remove_saved_build', {'name': name})
 
+    def _recheck_saved_build_ownership(self, index):
+        """"🔄 Recheck Ownership" button - a Saved Build's own Bank/Locker
+        icon cells are a frozen snapshot from whenever it was saved (see
+        _render_saved_builds, which just replays save['rows'] verbatim)
+        and never update on their own afterward - importing new gear
+        later doesn't retroactively mark a previously-saved build's items
+        as now-owned. This recomputes just those two cells for every real
+        item row (see _bank_and_locker_cells, keyed only on Item name),
+        leaving every other column - and the underlying saved row data
+        itself, aside from Bank/Locker - completely untouched. A divider
+        row (marking the boundary between stacked build variants, if the
+        save has more than one) is skipped, not treated as an item row.
+
+        Real-world motivation: a player asked whether this updates
+        automatically on import; it doesn't, so this manual recheck
+        exists as the direct alternative."""
+        if not (0 <= index < len(self.saved_builds)):
+            return
+        save = self.saved_builds[index]
+        headers = list(save['headers'])
+        if 'Bank' not in headers or 'Item' not in headers:
+            return
+        bank_idx = headers.index('Bank')
+        item_idx = headers.index('Item')
+        locker_idx = headers.index('Locker') if 'Locker' in headers else None
+
+        updated_rows = []
+        changed = 0
+        for row in save['rows']:
+            row = list(row)
+            if not (str(row[0]).startswith('█') if row else False):
+                bank_cell, locker_cell = self._bank_and_locker_cells({'Item': row[item_idx]})
+                if row[bank_idx] != bank_cell or (locker_idx is not None and row[locker_idx] != locker_cell):
+                    changed += 1
+                row[bank_idx] = bank_cell
+                if locker_idx is not None:
+                    row[locker_idx] = locker_cell
+            updated_rows.append(tuple(row))
+        save['rows'] = updated_rows
+
+        self._render_saved_builds()
+        self._save_config()
+        self._log_activity('saved_build', 'recheck_saved_build_ownership', {
+            'name': save['name'].get(), 'changed_count': changed,
+        })
+        messagebox.showinfo("Ownership Rechecked",
+            f"{changed} row(s) updated." if changed else "No changes - everything was already up to date.")
+
     _SAVED_ROW_DISPLAY_TO_LOOKUP_SLOT = {
         'Head': 'head', 'Cloak': 'cloak', 'Body': 'body', 'Hands': 'hands',
         'Legs': 'legs', 'Feet': 'feet', 'Weapon': 'weapon', 'Off-Hand': 'weapon_off',
@@ -12777,6 +12874,8 @@ class App(tk.Tk):
                       command=lambda i=index: self._export_saved_build(i)).pack(side='right', padx=(0,6))
             ttk.Button(header_frame, text="📥 Load",
                       command=lambda i=index: self._load_saved_build_to_results(i)).pack(side='right', padx=(0,6))
+            ttk.Button(header_frame, text="🔄 Recheck Ownership",
+                      command=lambda i=index: self._recheck_saved_build_ownership(i)).pack(side='right', padx=(0,6))
 
             tree_frame = ttk.Frame(tab_frame)
             tree_frame.pack(fill='both', expand=True)

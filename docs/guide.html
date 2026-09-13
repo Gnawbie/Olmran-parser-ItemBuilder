@@ -114,7 +114,7 @@
 <body>
   <div class="wrap">
     <h1>Olmran Item Builder</h1>
-    <p class="tagline">Full usage guide - v7.7.3</p>
+    <p class="tagline">Full usage guide - v7.7.4</p>
 
     <div class="topbar">
       <a class="btn" href="USER_GUIDE.pdf" download>Download as PDF</a>
@@ -174,6 +174,7 @@
           <li>This sub-tab's own "Load Log Files" table is drag-resizable from its bottom edge (a small handle just below it) - shrink it to give more room to the XP/Damage/PvP Damage/Item Counter notebook below. Ranges from 8 lines (its original size, the maximum) down to 3, starting at 4 by default; the size you leave it at persists across restarts. Files & Search's own copy of this table is unaffected and stays fixed at 8.</li>
         </ul>
       </li>
+      <li>Right-click any row in a "Load Log Files" table (either copy - Files & Search or Counters, both share the same underlying list) for <b>Copy Log file name to clipboard</b> (the full filename, including extension) or <b>Remove Log</b> (drops just that one file - a quicker way to undo an accidental add than selecting it first and clicking the toolbar's own ❌ Remove button).</li>
       <li><b>Search Logs</b> finds every time an item actually dropped across a whole batch of loaded logs, independent of running a full parse:
         <ul>
           <li><b>Drops only</b> (default, on) - matches real drop events the same way the Loot parser does, so quality/material prefixes ("bright", "glowing", "shining", etc.) don't cause misses or false confidence. For each drop it shows a <b>snapshot</b>: every line from the last timestamp seen through the drop line itself, so you can see the fight and kill that led up to it. Click a result row to view its snapshot.</li>
@@ -374,7 +375,8 @@
     <h2 id="saved-builds">5. Saved Builds Tab</h2>
     <ul>
       <li>Click <b>Save Build</b> from the Results tab to add the current results as a new sub-tab here - a Notebook, not a stacked scrollable list, so having many saves just adds more tabs rather than a taller page.</li>
-      <li>Each sub-tab has its own renamable name (also shown right on the tab label itself), a <b>📥 Load</b> button (copies that build's rows into the Results tab and jumps there), an <b>📤 Export As...</b> (Excel/HTML/Image/Text), and a <b>✕ Remove</b> button.</li>
+      <li>Each sub-tab has its own renamable name (also shown right on the tab label itself), a <b>📥 Load</b> button (copies that build's rows into the Results tab and jumps there), a <b>🔄 Recheck Ownership</b> button, an <b>📤 Export As...</b> (Excel/HTML/Image/Text), and a <b>✕ Remove</b> button.</li>
+      <li><b>🔄 Recheck Ownership</b> - a saved build's 📦 Bank/Locker icon is a frozen snapshot from whenever it was saved; importing new gear afterward doesn't retroactively update it. This button recomputes just those icon cells against your current Saved Items, leaving every other column in the build untouched.</li>
       <li>Saved Builds persist across closing and reopening the program.</li>
     </ul>
 
